@@ -41,7 +41,11 @@ Defined in `src/rail/network.ts`.
 - **Aspects:** red when the block isn't free or the signal is held, yellow when the next signal can't be entered or the line dead-ends, otherwise green.
 - **Train position** is a trail of `{seg, dir}` pieces plus the head's distance along the last piece. Cars are placed by walking back along the trail.
 - **Reversing** swaps head and tail and flips the consist. There is no negative speed.
-- **Gradients** use the slope at the head in the direction of travel. The AI plans with less braking on a descent and adds a holding brake to cancel gravity, or it would creep past red signals.
+- **Fixed step:** `Sim.update(dt)` runs whole steps of `STEP` seconds and keeps the remainder, so results don't depend on frame rate. `Game` scales `dt` for pause and fast-forward. Renderers use `Sim.drawn()` and `carPose()`, which show a train part of a step back so it moves smoothly between steps. Simulation code uses `behind()` and `head()`.
+- **Vehicles:** `src/rail/vehicles.ts` is the one table of length, mass, brake force, top speed and traction. A new type needs a row there, a model of the same name and an entry in `CAR_TYPES` in `src/saveData.ts`.
+- **Forces** come from the whole train. Gravity and curve resistance are averaged by mass over each car. Pulling force is limited by adhesion on the locomotives' weight: above it a manual train slips and loses grip, while the AI stops at the limit. Trains stop at speed 0, so they can't roll back until #64 settles reversing.
+- **Brakes:** `t.brake` is the demand and `t.airBrake` is what is applied. It chases the demand over `brakeLag`, which grows with train length, and releases more slowly. Friction fades with speed. `t.dynamic` is the engine brake, which acts at once but fades at walking pace. `t.emergency` is stronger and faster, and cuts power.
+- **AI braking** plans from its own train's brakes, with less on a descent, and adds a holding brake to cancel gravity, or it would creep past red signals. Only a heavy train on a steep descent uses the emergency brake.
 - **AI** plans a route to the next timetabled station, reversing only when no forward route exists. A waiting train backs away only for a true deadlock, where the train holding its block is also stuck. The train with the higher id gives way, and a player-held signal never triggers this.
 
 ## Terrain
@@ -67,6 +71,8 @@ After an edit, call `Game.commitEdit()`, which regrades terrain and calls `Sim.s
 `parseSave()` in the same file validates a whole save (types, ids that point to real nodes, allowed values) and returns the data or a reason. It must stay free of Three.js and the DOM so tests can run it. Browser saves and imports both go through it. If you add a field or enum value to `SaveData`, update `parseSave()` and its tests too.
 
 A browser save that fails validation is copied to the `vibe-train-sim/map-v1-backup` key, a fresh starter map starts, and the player gets a toast. A bad import leaves the current map unchanged.
+
+Each train's full state is saved: trail, speed, route, brakes, dwell and grants, from `Sim.captureState()`. `Sim.restoreState()` puts it back exactly, and if the trail no longer fits the track the train goes on the nearest track, stopped. Version 1 saves have no state, so they load that way too. Undo uses the same path, so undoing an edit doesn't disturb running trains. A new `Train` field that changes how a train runs must be added to `TrainState`.
 
 If you change the format incompatibly, bump `v` and handle or reject older saves, since `parseSave()` checks it.
 

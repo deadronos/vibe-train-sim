@@ -37,6 +37,15 @@ describe('parseSave', () => {
     expect(r.ok && Network.fromJSON(r.data.net).nodes.size).toBeGreaterThan(0);
   });
 
+  it('accepts a version 1 save, which has no train state, and raises its version', () => {
+    const v1 = JSON.parse(JSON.stringify(starterSave())) as Record<string, unknown> & SaveData;
+    v1.v = 1 as never;
+    for (const t of v1.trains) delete t.state;
+    const r = parse(v1);
+    expect(r.ok && r.data.v).toBe(2);
+    expect(r.ok && r.data.trains[0].state).toBeUndefined();
+  });
+
   it('accepts an empty map', () => {
     expect(
       mutate((d) =>
@@ -77,7 +86,16 @@ describe('parseSave', () => {
     ['driven train', (d: SaveData) => (d.drivenId = 99999 as never)],
     ['train x', (d: SaveData) => (d.trains[0].x = 'far' as never)],
     ['trains not a list', (d: SaveData) => (d.trains = {} as never)],
-    ['version', (d: SaveData) => (d.v = 2 as never)],
+    ['version', (d: SaveData) => (d.v = 3 as never)],
+    ['trail not a list', (d: SaveData) => (d.trains[0].state!.trail = 5 as never)],
+    ['empty trail', (d: SaveData) => (d.trains[0].state!.trail = [])],
+    ['trail direction', (d: SaveData) => (d.trains[0].state!.trail[0].dir = 0 as never)],
+    ['negative speed', (d: SaveData) => (d.trains[0].state!.speed = -1)],
+    ['speed as text', (d: SaveData) => (d.trains[0].state!.speed = 'fast' as never)],
+    ['emergency as text', (d: SaveData) => (d.trains[0].state!.emergency = 'no' as never)],
+    ['target as text', (d: SaveData) => (d.trains[0].state!.targetStation = 'x' as never)],
+    ['grant as number', (d: SaveData) => (d.trains[0].state!.grants = [1] as never)],
+    ['score missing', (d: SaveData) => (d.trains[0].state!.score = null as never)],
   ])('rejects a wrong %s', (_name, fn) => {
     const r = mutate(fn);
     expect(r).toEqual({ ok: false, reason: expect.stringMatching(/\S/) });

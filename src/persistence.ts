@@ -36,10 +36,11 @@ export function captureSave(w: WorldState): SaveData {
       z: h.z,
       hx: h.tx * h.dir,
       hz: h.tz * h.dir,
+      state: w.sim.captureState(t),
     };
   });
   return {
-    v: 1,
+    v: 2,
     preset: w.hf.preset,
     seed: w.hf.seed,
     edits: w.hf.exportEdits(),
@@ -59,7 +60,7 @@ export function buildWorld(data: SaveData): { hf: Heightfield; net: Network } {
   return { hf, net: Network.fromJSON(data.net) };
 }
 
-/** Places the saved trains, dropping any no longer on track, and returns the driven one. */
+/** Places the saved trains, dropping any with no track left, and returns the driven one. */
 export function restoreTrains(sim: Sim, data: SaveData): Train | null {
   for (const j of data.trains) {
     const t = new Train(j.id, j.name, j.cars);
@@ -67,6 +68,8 @@ export function restoreTrains(sim: Sim, data: SaveData): Train | null {
     t.schedIdx = j.schedIdx;
     t.ai = j.ai;
     sim.trains.push(t);
+    if (j.state && sim.restoreState(t, j.state)) continue;
+    // A save from before full state, or track that has changed: put the train on the nearest track, stopped.
     if (sim.replace(t, j.x, j.z, j.hx, j.hz)) sim.plan(t, false);
     else sim.trains.pop();
   }

@@ -12,8 +12,9 @@ import {
   writeQuality,
   writeSave,
 } from '../src/persistence';
-import { buildDemoNetwork, populateDemoTrains } from '../src/rail/demoMap';
-import { Sim } from '../src/rail/sim';
+import { buildDemoNetwork, populateDemoTrains, SHUTTLE } from '../src/rail/demoMap';
+import { Network } from '../src/rail/network';
+import { Sim, Train } from '../src/rail/sim';
 import type { PlacedItem } from '../src/render/scatter';
 import type { SaveData } from '../src/saveData';
 import { parseSave } from '../src/saveData';
@@ -121,6 +122,116 @@ describe('saving and loading a full world', () => {
     });
     expect(loaded.sim.trains).toEqual([]);
     expect(loaded.driven).toBeNull();
+  });
+});
+
+describe('trains after saving mid-journey', () => {
+  const copy = (d: SaveData) => JSON.parse(JSON.stringify(d)) as SaveData;
+
+  it('come back in the same place, at the same speed and on the same route', () => {
+    const w = world();
+    expect(w.sim.trains.some((t) => t.speed > 1)).toBe(true);
+    // A value the train might not otherwise have at this moment, so a field left out shows up.
+    w.sim.trains[1].airBrake = 0.37;
+    const d = copy(captureSave(w));
+    const { sim } = load(d);
+    expect(sim.trains).toHaveLength(w.sim.trains.length);
+    w.sim.trains.forEach((t, i) => {
+      const u = sim.trains[i];
+      expect(u.trail).toEqual(t.trail);
+      expect(u.headS).toBe(t.headS);
+      expect(u.speed).toBe(t.speed);
+      expect(u.route).toEqual(t.route);
+      expect(u.targetStation).toBe(t.targetStation);
+      expect(u.dwell).toBe(t.dwell);
+      expect(u.stopRemain).toBe(t.stopRemain);
+      expect(u.grants).toEqual(t.grants);
+      expect(u.score).toEqual(t.score);
+      expect(u.airBrake).toBe(t.airBrake);
+      expect(sim.head(u).x).toBeCloseTo(w.sim.head(t).x, 3);
+    });
+  });
+
+  it('carry on as if nothing happened, with no sudden change of speed', () => {
+    const w = world();
+    // world() leaves one train manual, and it would just block the line.
+    w.sim.trains[0].ai = true;
+    w.sim.plan(w.sim.trains[0], false);
+    const { sim } = load(copy(captureSave(w)));
+    const speeds = sim.trains.map((t) => t.speed);
+    sim.update(0.2);
+    sim.trains.forEach((t, i) => expect(Math.abs(t.speed - speeds[i])).toBeLessThan(0.5));
+    const problems: string[] = [];
+    sim.onEvent = (e) => {
+      if (e.kind === 'collision' || e.kind === 'buffer' || e.kind === 'spad') problems.push(e.text);
+    };
+    const stops = sim.trains.map((t) => t.score.stops);
+    for (let i = 0; i < 300 * 30; i++) sim.update(1 / 30);
+    expect(problems).toEqual([]);
+    sim.trains.forEach((t, i) => expect(t.score.stops).toBeGreaterThan(stops[i]));
+  });
+
+  it('keep a train on the route it took through a junction, wherever the points now lie', () => {
+    const net = new Network();
+    const a = net.addNode(0, 50, 0, 1, 0);
+    const j = net.addNode(300, 50, 0, 1, 0);
+    const main = net.addNode(800, 50, 0, 1, 0);
+    const branch = net.addNode(800, 50, 200, 1, 0);
+    const first = net.addSegment(a.id, 1, j.id, -1);
+    const onMain = net.addSegment(j.id, 1, main.id, -1);
+    const onBranch = net.addSegment(j.id, 1, branch.id, -1);
+    net.nodes.get(j.id)!.sw[1] = onBranch.id;
+    const sim = new Sim(net);
+    const t = new Train(1, 'T', SHUTTLE());
+    t.ai = false;
+    sim.trains.push(t);
+    sim.place(t, first.id, 280, 1);
+    t.speed = 5;
+    while (t.trail.at(-1)!.seg !== onBranch.id) sim.update(1 / 30);
+    const hf = new Heightfield('plains', 1);
+    const d = copy(captureSave({ hf, net, sim, placed: [], hours: 12, drivenId: 1 }));
+    // Points change after the save was taken, so rebuilding from the head would send the rear the wrong way.
+    d.net.nodes.find((n) => n.id === j.id)!.sw[1] = onMain.id;
+    const loaded = load(d);
+    expect(loaded.sim.trains[0].trail.map((p) => p.seg)).toEqual(t.trail.map((p) => p.seg));
+  });
+
+  it('fall back to the nearest track if a piece of their trail has gone', () => {
+    const d = copy(captureSave(world()));
+    const t = d.trains[0];
+    t.state!.trail = [{ seg: 999999, dir: 1 }];
+    const { sim } = load(d);
+    expect(sim.trains.find((u) => u.id === t.id)!.speed).toBe(0);
+    expect(Math.hypot(sim.head(sim.trains[0]).x - t.x, sim.head(sim.trains[0]).z - t.z)).toBeLessThan(40);
+  });
+
+  it('fall back if their trail no longer joins up', () => {
+    const d = copy(captureSave(world()));
+    const t = d.trains[0];
+    const other = d.net.segs.find((s) => !t.state!.trail.some((p) => p.seg === s.id))!;
+    t.state!.trail = [...t.state!.trail, { seg: other.id, dir: 1 }];
+    const { sim } = load(d);
+    expect(sim.trains[0].trail.at(-1)!.seg === other.id && sim.trains[0].speed > 0).toBe(false);
+  });
+
+  it('plan again if only the route ahead has gone', () => {
+    const d = copy(captureSave(world()));
+    const t = d.trains[1];
+    const speed = t.state!.speed;
+    t.state!.route = [{ seg: 999999, dir: 1 }];
+    const { sim } = load(d);
+    expect(sim.trains[1].speed).toBe(speed);
+    expect(sim.trains[1].route).toEqual([]);
+    sim.update(1);
+    expect(sim.trains[1].targetStation).not.toBeNull();
+  });
+
+  it('load from a version 1 save at the nearest track, stopped', () => {
+    const d = copy(captureSave(world()));
+    for (const t of d.trains) delete t.state;
+    const { sim } = load(d);
+    expect(sim.trains).toHaveLength(d.trains.length);
+    for (const t of sim.trains) expect(t.speed).toBe(0);
   });
 });
 

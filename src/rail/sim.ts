@@ -39,6 +39,26 @@ export interface NextSignal {
   dist: number;
 }
 
+/** Everything a save needs to put a moving train back exactly as it was. */
+export interface TrainState {
+  trail: Piece[];
+  headS: number;
+  speed: number;
+  throttle: number;
+  brake: number;
+  dynamic: number;
+  emergency: boolean;
+  airBrake: number;
+  route: Piece[];
+  targetStation: number | null;
+  dwell: number;
+  stopRemain: number;
+  stuck: number;
+  crashCooldown: number;
+  grants: string[];
+  score: { spads: number; stops: number };
+}
+
 export class Train {
   id: number;
   name: string;
@@ -258,6 +278,69 @@ export class Sim {
       }
     }
     return lost;
+  }
+
+  captureState(t: Train): TrainState {
+    return {
+      trail: t.trail.map((p) => ({ ...p })),
+      headS: t.headS,
+      speed: t.speed,
+      throttle: t.throttle,
+      brake: t.brake,
+      dynamic: t.dynamic,
+      emergency: t.emergency,
+      airBrake: t.airBrake,
+      route: t.route.map((p) => ({ ...p })),
+      targetStation: t.targetStation,
+      dwell: t.dwell,
+      stopRemain: t.stopRemain,
+      stuck: t.stuck,
+      crashCooldown: t.crashCooldown,
+      grants: [...t.grants],
+      score: { ...t.score },
+    };
+  }
+
+  /** True when pieces exist and each one leads on to the next. */
+  private connected(pieces: Piece[]) {
+    const net = this.net;
+    return pieces.every((p, i) => {
+      if (!net.segs.has(p.seg)) return false;
+      const next = pieces[i + 1];
+      if (!next) return true;
+      if (!net.segs.has(next.seg)) return false;
+      const e = net.exit(p.seg, p.dir);
+      return e.options.includes(next.seg) && net.entryDir(next.seg, e.node, e.side) === next.dir;
+    });
+  }
+
+  /** Puts a train back exactly as saved. Returns false, changing nothing, if the track no longer matches. */
+  restoreState(t: Train, s: TrainState): boolean {
+    const last = s.trail.at(-1);
+    if (!last || !this.connected(s.trail)) return false;
+    const length = this.net.geom.get(last.seg)!.length;
+    if (s.headS < 0 || s.headS > length) return false;
+    t.trail = s.trail.map((p) => ({ ...p }));
+    t.headS = s.headS;
+    t.speed = s.speed;
+    t.throttle = s.throttle;
+    t.brake = s.brake;
+    t.dynamic = s.dynamic;
+    t.emergency = s.emergency;
+    t.airBrake = s.airBrake;
+    // The trail is what must fit the track. A route that doesn't is simply planned again.
+    const keepRoute = this.connected(s.route);
+    t.route = keepRoute ? s.route.map((p) => ({ ...p })) : [];
+    t.targetStation = keepRoute ? s.targetStation : null;
+    t.dwell = s.dwell;
+    t.stopRemain = s.stopRemain;
+    t.stuck = s.stuck;
+    t.crashCooldown = s.crashCooldown;
+    t.grants = [...s.grants];
+    t.score = { ...s.score };
+    t.next = null;
+    this.remember(t);
+    return true;
   }
 
   /** Moves a train back onto the nearest track after edits; returns false when no track exists. */
