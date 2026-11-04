@@ -2,7 +2,9 @@
 
 ## Code
 
-- Use TypeScript in strict mode. Avoid `any` and keep type-only imports where they prevent cycles, as `src/editor/editor.ts` does with `Game`.
+- Use TypeScript in strict mode. Don't use `any`, and use `import type` for anything only used as a type. The linter enforces both.
+- Let the formatter decide layout and import order. Don't hand-format around it.
+- Copy an array before removing items from it in a loop, for example `for (const c of [...group.children])`. Don't "simplify" these copies.
 - Keep Three.js and the DOM out of `src/rail/`, `src/world/` and `src/core/`.
 - Prefer small, direct code over abstractions. Add a helper when a second caller needs it, not before.
 - Comments explain why, not what.

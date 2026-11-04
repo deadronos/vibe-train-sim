@@ -73,7 +73,16 @@ export function bezierHandle(chord: number, cosTheta: number): number {
 }
 
 /** Planar curve shared by real segments and editor previews. d0/d1 are the tangents leaving each end. */
-export function planCurve(x0: number, z0: number, d0x: number, d0z: number, x1: number, z1: number, d1x: number, d1z: number) {
+export function planCurve(
+  x0: number,
+  z0: number,
+  d0x: number,
+  d0z: number,
+  x1: number,
+  z1: number,
+  d1x: number,
+  d1z: number,
+) {
   const chord = Math.hypot(x1 - x0, z1 - z0);
   // Angle between the direction of travel at each end.
   const h = bezierHandle(chord, d0x * -d1x + d0z * -d1z);
@@ -179,7 +188,10 @@ export class Network {
     this.segs.delete(id);
     this.geom.delete(id);
     this.dirty.add(id);
-    for (const [nid, side] of [[s.a, s.sa], [s.b, s.sb]] as [number, Side][]) {
+    for (const [nid, side] of [
+      [s.a, s.sa],
+      [s.b, s.sb],
+    ] as [number, Side][]) {
       const list = this.attached(nid, side);
       const i = list.indexOf(id);
       if (i >= 0) list.splice(i, 1);

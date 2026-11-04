@@ -6,7 +6,10 @@
     <title>Vibe Train Sim</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600&family=Overpass:wght@400;600;700&display=swap" rel="stylesheet" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600&family=Overpass:wght@400;600;700&display=swap"
+      rel="stylesheet"
+    />
   </head>
   <body data-mode="drive">
     <canvas id="view"></canvas>
@@ -84,7 +87,16 @@
           <circle cx="100" cy="100" r="88" fill="#ebe7d6" />
           <g id="dial-ticks"></g>
           <path id="dial-limit" fill="none" stroke="#c9302a" stroke-width="7" />
-          <line id="dial-needle" x1="100" y1="112" x2="100" y2="28" stroke="#15282a" stroke-width="3.5" stroke-linecap="round" />
+          <line
+            id="dial-needle"
+            x1="100"
+            y1="112"
+            x2="100"
+            y2="28"
+            stroke="#15282a"
+            stroke-width="3.5"
+            stroke-linecap="round"
+          />
           <circle cx="100" cy="100" r="7" fill="#15282a" />
           <text id="dial-speed" x="100" y="150" text-anchor="middle">0</text>
           <text x="100" y="165" text-anchor="middle" class="unit">km/h</text>
@@ -94,7 +106,16 @@
       <div class="desk-group" id="controls">
         <div id="lever-wrap">
           <label for="power-lever">Power</label>
-          <input id="power-lever" type="range" min="-1" max="1" step="0.01" value="0" orient="vertical" aria-label="Power and brake lever" />
+          <input
+            id="power-lever"
+            type="range"
+            min="-1"
+            max="1"
+            step="0.01"
+            value="0"
+            orient="vertical"
+            aria-label="Power and brake lever"
+          />
           <label for="power-lever">Brake</label>
         </div>
         <div class="desk-buttons">
@@ -117,7 +138,8 @@
     <dialog id="dlg-new" class="plate">
       <form method="dialog">
         <h2>New map</h2>
-        <label>Landscape
+        <label
+          >Landscape
           <select id="new-preset">
             <option value="alpine">Alpine valley</option>
             <option value="plains">Rolling plains</option>
@@ -140,27 +162,45 @@
         <div class="help-cols">
           <dl>
             <h3>Driving</h3>
-            <dt>W, S</dt><dd>More power, less power then brake</dd>
-            <dt>Space</dt><dd>Full brake while held</dd>
-            <dt>P</dt><dd>Autopilot on or off</dd>
-            <dt>J</dt><dd>Throw the next points ahead</dd>
-            <dt>R</dt><dd>Change ends when stopped</dd>
-            <dt>H</dt><dd>Horn</dd>
-            <dt>C</dt><dd>Change camera; drag to look around</dd>
-            <dt>N</dt><dd>Drive the next train</dd>
-            <dt>M</dt><dd>Sound on or off</dd>
-            <dt>Tab</dt><dd>Switch between driving and editing</dd>
+            <dt>W, S</dt>
+            <dd>More power, less power then brake</dd>
+            <dt>Space</dt>
+            <dd>Full brake while held</dd>
+            <dt>P</dt>
+            <dd>Autopilot on or off</dd>
+            <dt>J</dt>
+            <dd>Throw the next points ahead</dd>
+            <dt>R</dt>
+            <dd>Change ends when stopped</dd>
+            <dt>H</dt>
+            <dd>Horn</dd>
+            <dt>C</dt>
+            <dd>Change camera; drag to look around</dd>
+            <dt>N</dt>
+            <dd>Drive the next train</dd>
+            <dt>M</dt>
+            <dd>Sound on or off</dd>
+            <dt>Tab</dt>
+            <dd>Switch between driving and editing</dd>
           </dl>
           <dl>
             <h3>Editing</h3>
-            <dt>Right drag</dt><dd>Rotate the view</dd>
-            <dt>Middle drag, WASD</dt><dd>Move the view</dd>
-            <dt>Wheel</dt><dd>Zoom</dd>
-            <dt>[ and ]</dt><dd>Lower or raise the track being laid</dd>
-            <dt>Shift</dt><dd>Snap a new line to 15° steps</dd>
-            <dt>Esc</dt><dd>Stop laying track</dd>
-            <dt>Delete</dt><dd>Remove the selected point</dd>
-            <dt>Ctrl+Z</dt><dd>Undo; add Shift to redo</dd>
+            <dt>Right drag</dt>
+            <dd>Rotate the view</dd>
+            <dt>Middle drag, WASD</dt>
+            <dd>Move the view</dd>
+            <dt>Wheel</dt>
+            <dd>Zoom</dd>
+            <dt>[ and ]</dt>
+            <dd>Lower or raise the track being laid</dd>
+            <dt>Shift</dt>
+            <dd>Snap a new line to 15° steps</dd>
+            <dt>Esc</dt>
+            <dd>Stop laying track</dd>
+            <dt>Delete</dt>
+            <dd>Remove the selected point</dd>
+            <dt>Ctrl+Z</dt>
+            <dd>Undo; add Shift to redo</dd>
           </dl>
         </div>
         <menu><button value="ok">Close</button></menu>

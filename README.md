@@ -10,17 +10,20 @@ npm run dev
 ## What's in it
 
 **Driving**
+
 - Train physics: power limits, gradients, rolling resistance, braking and curve speed limits
 - Autopilot that follows a timetable, stops at stations and turns around at termini
 - Chase, cab and trackside cameras
 - Synthesised engine, rail joint and horn sounds
 
 **Railway**
+
 - Track graph with junctions you can throw while driving
 - Block signals showing red, yellow and green, with route locking so opposing trains can't enter the same section
 - Warnings for passing a signal at danger, buffer stop hits and collisions
 
 **Map editor** (press Tab)
+
 - Lay curved track, branch from existing track and join lines, with radius and gradient checks
 - Place signals, stations, scenery and trains
 - Bridges appear where track runs high or crosses water; river crossings get a steel truss. You can force a bridge or an embankment per section
@@ -28,6 +31,7 @@ npm run dev
 - Undo and redo, browser saves, and JSON import and export
 
 **World**
+
 - Alpine, plains, desert and island landscapes, each from a seed
 - Day and night cycle with atmospheric sky, clouds, stars, moon and image-based lighting
 - Sun shadows, bloom, lit windows, platform lamps and a train headlight
@@ -36,29 +40,31 @@ Press `?` in the app for all controls.
 
 ## Project layout
 
-| Path | Contents |
-| --- | --- |
-| `src/rail/` | Track network, signalling, train physics and AI. No rendering code, so it runs in tests |
-| `src/world/` | Height data and terrain grading |
-| `src/render/` | Terrain, track, bridges, props, trains, sky and cameras |
-| `src/editor/` | Map editor tools |
-| `src/ui/` | Interface and styling |
-| `tools/blender/build_assetpack.py` | Generates `public/assets/assetpack.glb` and a preview render |
-| `tests/` | Simulation tests, including a 40-minute run of the starter map |
+| Path                               | Contents                                                                                |
+| ---------------------------------- | --------------------------------------------------------------------------------------- |
+| `src/rail/`                        | Track network, signalling, train physics and AI. No rendering code, so it runs in tests |
+| `src/world/`                       | Height data and terrain grading                                                         |
+| `src/render/`                      | Terrain, track, bridges, props, trains, sky and cameras                                 |
+| `src/editor/`                      | Map editor tools                                                                        |
+| `src/ui/`                          | Interface and styling                                                                   |
+| `tools/blender/build_assetpack.py` | Generates `public/assets/assetpack.glb` and a preview render                            |
+| `tests/`                           | Simulation tests, including a 40-minute run of the starter map                          |
 
 ## Commands
 
 ```bash
-npm test
+npm run check
 ```
 
 ```bash
-npm run build
+npm run format
 ```
 
 ```bash
 npm run assets
 ```
+
+`npm run check` checks formatting and lint, runs the tests, then builds.
 
 `npm run assets` needs Blender at `/Applications/Blender.app`. Change the path in `package.json` if yours is elsewhere. The built `assetpack.glb` is included, so you only need Blender to change the models.
 

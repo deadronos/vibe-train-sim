@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
+
+import { buildDemoNetwork, populateDemoTrains, SHUTTLE } from '../src/rail/demoMap';
 import { Network } from '../src/rail/network';
 import { Sim, Train } from '../src/rail/sim';
-import { buildDemoNetwork, populateDemoTrains, SHUTTLE } from '../src/rail/demoMap';
 import { Heightfield } from '../src/world/heightfield';
 
 function line() {
@@ -73,7 +74,7 @@ describe('signals', () => {
     expect(stopped.x).toBeLessThan(500);
     expect(stopped.x).toBeGreaterThan(440);
     expect(sim.aspects.get(`${b.id}:1`)).toBe('red');
-    b.signals[1]!.hold = false;
+    b.signals[1].hold = false;
     for (let i = 0; i < 30 * 30; i++) sim.update(1 / 30);
     expect(sim.head(t).x).toBeGreaterThan(500);
   });

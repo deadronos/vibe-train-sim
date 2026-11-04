@@ -1,7 +1,10 @@
 // The starter layout: an oval main line over the river with a passing loop, a branch to a terminus and block signals.
-import { Heightfield, riverCenter, WATER_LEVEL } from '../world/heightfield';
-import { Network, RailNode, Side, Station } from './network';
-import { Car, CarType, Sim, Train } from './sim';
+import type { Heightfield } from '../world/heightfield';
+import { riverCenter, WATER_LEVEL } from '../world/heightfield';
+import type { RailNode, Side, Station } from './network';
+import { Network } from './network';
+import type { Car, CarType, Sim } from './sim';
+import { Train } from './sim';
 
 const consist = (...types: CarType[]): Car[] => types.map((type) => ({ type, flip: false }));
 
@@ -103,8 +106,8 @@ export function buildDemoNetwork(hf: Heightfield): { net: Network; stations: Rec
     return st;
   };
   const stations = {
-    larchmere: addStation('Larchmere', midMain, (-outward) as Side),
-    wrenfield: addStation('Wrenfield', midB, (-outB) as Side),
+    larchmere: addStation('Larchmere', midMain, -outward as Side),
+    wrenfield: addStation('Wrenfield', midB, -outB as Side),
     pinegate: addStation('Pinegate', b2, 1, 130),
     stonebeck: addStation('Stonebeck Junction', b1, -1, 120),
   };

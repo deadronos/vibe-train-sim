@@ -1,7 +1,8 @@
 // Driving cameras: chase, cab and trackside. The editor uses MapControls instead.
 import * as THREE from 'three';
-import { Sim, Train } from '../rail/sim';
-import { Heightfield } from '../world/heightfield';
+
+import type { Sim, Train } from '../rail/sim';
+import type { Heightfield } from '../world/heightfield';
 
 export type CamMode = 'chase' | 'cab' | 'trackside';
 export const CAM_LABEL: Record<CamMode, string> = { chase: 'Chase', cab: 'Cab', trackside: 'Trackside' };
@@ -23,7 +24,11 @@ export class CameraRig {
   private lastX = 0;
   private lastY = 0;
 
-  constructor(private camera: THREE.PerspectiveCamera, dom: HTMLElement, private active: () => boolean) {
+  constructor(
+    private camera: THREE.PerspectiveCamera,
+    dom: HTMLElement,
+    private active: () => boolean,
+  ) {
     dom.addEventListener('pointerdown', (e) => {
       if (!this.active()) return;
       this.dragging = true;
@@ -76,7 +81,11 @@ export class CameraRig {
       cam.position.set(head.x + fx * 0.3, head.y + 3.05, head.z + fz * 0.3);
       const l = Math.hypot(fx, fz) || 1;
       const a = Math.atan2(fx / l, fz / l) + this.cabYaw;
-      this.lookTarget.set(cam.position.x + Math.sin(a) * 10, cam.position.y + Math.sin(this.cabPitch) * 10 + fy * 10, cam.position.z + Math.cos(a) * 10);
+      this.lookTarget.set(
+        cam.position.x + Math.sin(a) * 10,
+        cam.position.y + Math.sin(this.cabPitch) * 10 + fy * 10,
+        cam.position.z + Math.cos(a) * 10,
+      );
       cam.lookAt(this.lookTarget);
       return;
     }

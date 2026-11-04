@@ -1,11 +1,21 @@
 // Trees, rocks and buildings. Random nature comes from the seed; "placed" items are the player's.
 import * as THREE from 'three';
-import { fbm, mulberry } from '../core/noise';
-import { Network } from '../rail/network';
-import { Heightfield, Preset, WATER_LEVEL, WORLD_SIZE } from '../world/heightfield';
-import { Assets } from './assets';
 
-export type SceneryType = 'tree_pine' | 'tree_oak' | 'tree_birch' | 'rock_a' | 'rock_b' | 'house_a' | 'house_b' | 'house_c';
+import { fbm, mulberry } from '../core/noise';
+import type { Network } from '../rail/network';
+import type { Heightfield, Preset } from '../world/heightfield';
+import { WATER_LEVEL, WORLD_SIZE } from '../world/heightfield';
+import type { Assets } from './assets';
+
+export type SceneryType =
+  | 'tree_pine'
+  | 'tree_oak'
+  | 'tree_birch'
+  | 'rock_a'
+  | 'rock_b'
+  | 'house_a'
+  | 'house_b'
+  | 'house_c';
 
 export interface PlacedItem {
   type: SceneryType;
@@ -26,10 +36,43 @@ interface Inst {
 }
 
 const MIX: Record<Preset, { density: number; types: [SceneryType, number][] }> = {
-  alpine: { density: 1, types: [['tree_pine', 0.72], ['tree_oak', 0.1], ['tree_birch', 0.1], ['rock_a', 0.05], ['rock_b', 0.03]] },
-  plains: { density: 0.55, types: [['tree_oak', 0.55], ['tree_birch', 0.28], ['tree_pine', 0.1], ['rock_a', 0.07]] },
-  desert: { density: 0.3, types: [['rock_a', 0.55], ['rock_b', 0.35], ['tree_birch', 0.1]] },
-  islands: { density: 0.65, types: [['tree_oak', 0.45], ['tree_birch', 0.3], ['tree_pine', 0.13], ['rock_a', 0.07], ['rock_b', 0.05]] },
+  alpine: {
+    density: 1,
+    types: [
+      ['tree_pine', 0.72],
+      ['tree_oak', 0.1],
+      ['tree_birch', 0.1],
+      ['rock_a', 0.05],
+      ['rock_b', 0.03],
+    ],
+  },
+  plains: {
+    density: 0.55,
+    types: [
+      ['tree_oak', 0.55],
+      ['tree_birch', 0.28],
+      ['tree_pine', 0.1],
+      ['rock_a', 0.07],
+    ],
+  },
+  desert: {
+    density: 0.3,
+    types: [
+      ['rock_a', 0.55],
+      ['rock_b', 0.35],
+      ['tree_birch', 0.1],
+    ],
+  },
+  islands: {
+    density: 0.65,
+    types: [
+      ['tree_oak', 0.45],
+      ['tree_birch', 0.3],
+      ['tree_pine', 0.13],
+      ['rock_a', 0.07],
+      ['rock_b', 0.05],
+    ],
+  },
 };
 
 export class ScatterRenderer {
@@ -38,7 +81,10 @@ export class ScatterRenderer {
   private density = 1;
   private tmp = new THREE.Object3D();
 
-  constructor(scene: THREE.Scene, private assets: Assets) {
+  constructor(
+    scene: THREE.Scene,
+    private assets: Assets,
+  ) {
     scene.add(this.group);
   }
 

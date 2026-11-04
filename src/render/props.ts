@@ -1,8 +1,10 @@
 // Lineside objects driven by the network: signals, point levers, buffer stops, stations and their lights.
 import * as THREE from 'three';
-import { Network, RailNode, Side, Station } from '../rail/network';
-import { keyOf, Sim } from '../rail/sim';
-import { Assets } from './assets';
+
+import type { Network, RailNode, Side, Station } from '../rail/network';
+import type { Sim } from '../rail/sim';
+import { keyOf } from '../rail/sim';
+import type { Assets } from './assets';
 
 const LAMP_INTENSITY = { red: 26, yellow: 22, green: 16 };
 
@@ -59,7 +61,10 @@ export class PropsRenderer {
   private stationPadMat = new THREE.SpriteMaterial();
   private night = 0;
 
-  constructor(scene: THREE.Scene, private assets: Assets) {
+  constructor(
+    scene: THREE.Scene,
+    private assets: Assets,
+  ) {
     scene.add(this.group);
     for (let i = 0; i < 5; i++) {
       const l = new THREE.PointLight(0xffc27a, 0, 34, 1.8);
@@ -85,7 +90,7 @@ export class PropsRenderer {
       this.group.remove(child);
       child.traverse((o) => {
         const s = o as THREE.Sprite;
-        if (s.isSprite) (s.material as THREE.SpriteMaterial).dispose();
+        if (s.isSprite) s.material.dispose();
         const im = o as THREE.InstancedMesh;
         if (im.isInstancedMesh) im.dispose();
       });
@@ -139,7 +144,13 @@ export class PropsRenderer {
     });
     this.group.add(obj);
     const glow = new THREE.Sprite(
-      new THREE.SpriteMaterial({ map: this.glowTex, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, opacity: 0 }),
+      new THREE.SpriteMaterial({
+        map: this.glowTex,
+        blending: THREE.AdditiveBlending,
+        transparent: true,
+        depthWrite: false,
+        opacity: 0,
+      }),
     );
     glow.scale.setScalar(2.6);
     const lampPos = pos.clone();
@@ -159,7 +170,10 @@ export class PropsRenderer {
     obj.position.copy(pos);
     obj.rotation.y = Math.atan2(tx, tz);
     // Painted target that turns with the switch position.
-    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.46, 0.04), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5 }));
+    const arm = new THREE.Mesh(
+      new THREE.BoxGeometry(0.46, 0.46, 0.04),
+      new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5 }),
+    );
     arm.position.y = 1.35;
     obj.add(arm);
     this.group.add(obj);
@@ -252,13 +266,26 @@ export class PropsRenderer {
     // Name board.
     const board = new THREE.Mesh(
       new THREE.PlaneGeometry(6.4, 1.2),
-      new THREE.MeshStandardMaterial({ map: signTexture(st.name), roughness: 0.5, emissive: 0xffffff, emissiveIntensity: 0, side: THREE.DoubleSide }),
+      new THREE.MeshStandardMaterial({
+        map: signTexture(st.name),
+        roughness: 0.5,
+        emissive: 0xffffff,
+        emissiveIntensity: 0,
+        side: THREE.DoubleSide,
+      }),
     );
-    board.position.set(node.x + node.dx * 16 + rx * (offset + 0.2), y + 2.5, node.z + node.dz * 16 + rz * (offset + 0.2));
+    board.position.set(
+      node.x + node.dx * 16 + rx * (offset + 0.2),
+      y + 2.5,
+      node.z + node.dz * 16 + rz * (offset + 0.2),
+    );
     board.rotation.y = Math.atan2(-rx, -rz);
     this.group.add(board);
     for (const leg of [-2.8, 2.8]) {
-      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 2.5, 6), new THREE.MeshStandardMaterial({ color: 0x25292c, roughness: 0.6 }));
+      const post = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.05, 0.05, 2.5, 6),
+        new THREE.MeshStandardMaterial({ color: 0x25292c, roughness: 0.6 }),
+      );
       post.position.set(board.position.x + node.dx * leg, y + 1.25, board.position.z + node.dz * leg);
       this.group.add(post);
     }
@@ -275,10 +302,10 @@ export class PropsRenderer {
         v.lamps.red.emissiveIntensity = aspect === 'red' ? LAMP_INTENSITY.red : 0;
         v.lamps.yellow.emissiveIntensity = aspect === 'yellow' ? LAMP_INTENSITY.yellow : 0;
         v.lamps.green.emissiveIntensity = aspect === 'green' ? LAMP_INTENSITY.green : 0;
-        const mat = v.glow.material as THREE.SpriteMaterial;
+        const mat = v.glow.material;
         mat.color.set(aspect === 'red' ? 0xff2a18 : aspect === 'yellow' ? 0xffa820 : 0x30ff88);
       }
-      (v.glow.material as THREE.SpriteMaterial).opacity = 0.15 + night * 0.75;
+      v.glow.material.opacity = 0.15 + night * 0.75;
     }
     for (const [key, lever] of this.levers) {
       const [nid, sideStr] = key.split(':');

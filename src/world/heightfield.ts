@@ -1,6 +1,6 @@
-// Terrain heights. "base" holds noise plus editor brush work; "h" adds embankments and cuttings around track.
-import { Network, Segment } from '../rail/network';
 import { fbm, ridged, smoothstep } from '../core/noise';
+// Terrain heights. "base" holds noise plus editor brush work; "h" adds embankments and cuttings around track.
+import type { Network, Segment } from '../rail/network';
 
 export type Preset = 'alpine' | 'plains' | 'desert' | 'islands';
 
@@ -25,7 +25,10 @@ export function baseHeight(preset: Preset, seed: number, x: number, z: number): 
   let riverWidth = 1;
   switch (preset) {
     case 'plains':
-      h = 14 + fbm(nx * 0.0014, nz * 0.0014, 5) * 26 + ridged(nx * 0.0009, nz * 0.0009, 3) * 16 * smoothstep(0.5, 0.85, r);
+      h =
+        14 +
+        fbm(nx * 0.0014, nz * 0.0014, 5) * 26 +
+        ridged(nx * 0.0009, nz * 0.0009, 3) * 16 * smoothstep(0.5, 0.85, r);
       break;
     case 'desert': {
       const n = fbm(nx * 0.0011, nz * 0.0011, 5);
@@ -174,7 +177,14 @@ export class Heightfield {
   }
 
   /** Editor brush. mode: raise, lower, smooth or flatten toward flattenTo. */
-  brush(mode: 'raise' | 'lower' | 'smooth' | 'flatten', x: number, z: number, radius: number, strength: number, flattenTo = 0) {
+  brush(
+    mode: 'raise' | 'lower' | 'smooth' | 'flatten',
+    x: number,
+    z: number,
+    radius: number,
+    strength: number,
+    flattenTo = 0,
+  ) {
     const half = WORLD_SIZE / 2;
     const cell = WORLD_SIZE / RES;
     const i0 = Math.max(1, Math.floor((x - radius + half) / cell));

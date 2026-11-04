@@ -4,22 +4,26 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
 import './ui/style.css';
 import { SimAudio } from './audio';
 import { Editor } from './editor/editor';
 import { buildDemoNetwork, populateDemoTrains } from './rail/demoMap';
 import { Network } from './rail/network';
-import { Car, Sim, Train } from './rail/sim';
+import type { Car } from './rail/sim';
+import { Sim, Train } from './rail/sim';
 import { Assets } from './render/assets';
 import { CameraRig } from './render/cameraRig';
 import { Environment } from './render/environment';
 import { PropsRenderer } from './render/props';
-import { PlacedItem, ScatterRenderer } from './render/scatter';
+import type { PlacedItem } from './render/scatter';
+import { ScatterRenderer } from './render/scatter';
 import { TerrainRenderer } from './render/terrain';
 import { TrackRenderer } from './render/track';
 import { TrainRenderer } from './render/trains';
 import { Hud } from './ui/hud';
-import { Heightfield, Preset } from './world/heightfield';
+import type { Preset } from './world/heightfield';
+import { Heightfield } from './world/heightfield';
 
 export type Quality = 'high' | 'low';
 const SAVE_KEY = 'vibe-train-sim/map-v1';
@@ -34,7 +38,18 @@ export interface SaveData {
   placed: PlacedItem[];
   hours: number;
   drivenId: number | null;
-  trains: { id: number; name: string; cars: Car[]; schedule: number[]; schedIdx: number; ai: boolean; x: number; z: number; hx: number; hz: number }[];
+  trains: {
+    id: number;
+    name: string;
+    cars: Car[];
+    schedule: number[];
+    schedIdx: number;
+    ai: boolean;
+    x: number;
+    z: number;
+    hx: number;
+    hz: number;
+  }[];
 }
 
 function readQuality(): Quality {
@@ -82,14 +97,22 @@ export class Game {
 
   constructor() {
     const canvas = document.getElementById('view') as HTMLCanvasElement;
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance', logarithmicDepthBuffer: true });
+    this.renderer = new THREE.WebGLRenderer({
+      canvas,
+      antialias: false,
+      powerPreference: 'high-performance',
+      logarithmicDepthBuffer: true,
+    });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, this.quality === 'high' ? 1.75 : 1));
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 
-    const target = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: this.quality === 'high' ? 4 : 0 });
+    const target = new THREE.WebGLRenderTarget(1, 1, {
+      type: THREE.HalfFloatType,
+      samples: this.quality === 'high' ? 4 : 0,
+    });
     this.composer = new EffectComposer(this.renderer, target);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
     if (this.quality === 'high') this.composer.addPass(new UnrealBloomPass(new THREE.Vector2(1, 1), 0.28, 0.4, 3.2));
@@ -103,7 +126,10 @@ export class Game {
   async start() {
     const loading = document.getElementById('loading')!;
     const bar = document.getElementById('loadbar') as HTMLElement;
-    await this.assets.load(`${import.meta.env.BASE_URL}assets/assetpack.glb`, (f) => (bar.style.width = `${Math.round(f * 100)}%`));
+    await this.assets.load(
+      `${import.meta.env.BASE_URL}assets/assetpack.glb`,
+      (f) => (bar.style.width = `${Math.round(f * 100)}%`),
+    );
 
     this.env = new Environment(this.scene, this.renderer, this.quality === 'high' ? 4096 : 2048);
     this.hud = new Hud(this);
@@ -175,7 +201,18 @@ export class Game {
   private snapshot(): SaveData {
     const trains = this.sim.trains.map((t) => {
       const h = this.sim.head(t);
-      return { id: t.id, name: t.name, cars: t.cars, schedule: t.schedule, schedIdx: t.schedIdx, ai: t.ai, x: h.x, z: h.z, hx: h.tx * h.dir, hz: h.tz * h.dir };
+      return {
+        id: t.id,
+        name: t.name,
+        cars: t.cars,
+        schedule: t.schedule,
+        schedIdx: t.schedIdx,
+        ai: t.ai,
+        x: h.x,
+        z: h.z,
+        hx: h.tx * h.dir,
+        hz: h.tz * h.dir,
+      };
     });
     return {
       v: 1,
@@ -220,7 +257,8 @@ export class Game {
       localStorage.setItem(SAVE_KEY, JSON.stringify(this.snapshot()));
       if (!silent) this.hud.toast('Map saved in this browser');
     } catch {
-      if (!silent) this.hud.toast('Saving failed: browser storage is full or blocked. Export the map to a file instead');
+      if (!silent)
+        this.hud.toast('Saving failed: browser storage is full or blocked. Export the map to a file instead');
     }
   }
 

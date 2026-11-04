@@ -1,7 +1,8 @@
 // Draws each train from the simulation and provides the headlight of the driven train.
 import * as THREE from 'three';
-import { Sim, Train } from '../rail/sim';
-import { Assets } from './assets';
+
+import type { Sim, Train } from '../rail/sim';
+import type { Assets } from './assets';
 
 interface CarVisual {
   root: THREE.Group;
@@ -16,7 +17,11 @@ interface TrainVisual {
   signature: string;
 }
 
-const signature = (t: Train) => t.cars.map((c) => c.type).sort().join(',');
+const signature = (t: Train) =>
+  t.cars
+    .map((c) => c.type)
+    .sort()
+    .join(',');
 
 export class TrainRenderer {
   group = new THREE.Group();
@@ -26,7 +31,10 @@ export class TrainRenderer {
   private dirB = new THREE.Vector3();
   private look = new THREE.Vector3();
 
-  constructor(private scene: THREE.Scene, private assets: Assets) {
+  constructor(
+    private scene: THREE.Scene,
+    private assets: Assets,
+  ) {
     scene.add(this.group);
     this.headlight = new THREE.SpotLight(0xfff3d6, 0, 420, 0.3, 0.6, 1.5);
     scene.add(this.headlight, this.headlight.target);
@@ -85,7 +93,11 @@ export class TrainRenderer {
       const rz = p.rear.z;
       cv.root.position.set((fx + rx) / 2, (fy + ry) / 2, (fz + rz) / 2);
       const sign = car.flip ? -1 : 1;
-      this.look.set(cv.root.position.x + (fx - rx) * sign, cv.root.position.y + (fy - ry) * sign, cv.root.position.z + (fz - rz) * sign);
+      this.look.set(
+        cv.root.position.x + (fx - rx) * sign,
+        cv.root.position.y + (fy - ry) * sign,
+        cv.root.position.z + (fz - rz) * sign,
+      );
       cv.root.lookAt(this.look);
       cv.bogieA.position.set(fx, fy, fz);
       cv.bogieB.position.set(rx, ry, rz);

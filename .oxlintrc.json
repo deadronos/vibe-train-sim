@@ -1,0 +1,51 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc", "import", "vitest"],
+  "options": {
+    "typeAware": true,
+    "denyWarnings": true,
+    "reportUnusedDisableDirectives": "warn"
+  },
+  "env": { "browser": true, "es2022": true },
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error",
+    "perf": "warn"
+  },
+  "ignorePatterns": ["dist/**", "public/**"],
+  "rules": {
+    // Extra checks that suit this codebase.
+    "eqeqeq": "error",
+    "no-var": "error",
+    "prefer-const": "error",
+    "typescript/consistent-type-imports": "error",
+    "typescript/no-explicit-any": "error",
+    "typescript/no-floating-promises": "error",
+    "typescript/no-misused-promises": "error",
+    "typescript/await-thenable": "error",
+    "typescript/no-unnecessary-type-assertion": "error",
+
+    // Loops copy arrays on purpose when they remove items as they iterate. Autofixing this rule adds bugs.
+    "unicorn/no-useless-spread": "off",
+    // Three.js and DOM lookups return base types, so narrowing casts are normal here.
+    "typescript/no-unsafe-type-assertion": "off",
+    // The interface rebuilds its panels, and assigning a handler replaces the old one cleanly.
+    "unicorn/prefer-add-event-listener": "off",
+    // Reversing a consist and sorting the route queue are meant to change the array in place.
+    "unicorn/no-array-reverse": "off",
+    "unicorn/no-array-sort": "off",
+    // Small local helpers read better next to the code that uses them.
+    "unicorn/consistent-function-scoping": "off",
+    // Saves copy each object so a snapshot can't change after it is taken.
+    "oxc/no-map-spread": "off",
+    // window.__game is the documented debug hook.
+    "no-underscore-dangle": "off"
+  },
+  "overrides": [
+    {
+      // Stylesheets are imported for their side effects.
+      "files": ["src/main.ts"],
+      "rules": { "import/no-unassigned-import": "off" }
+    }
+  ]
+}

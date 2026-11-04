@@ -1,11 +1,14 @@
 // Map editor tools: laying track, junctions, signals, stations, bridges, terrain brushes, scenery and trains.
 import * as THREE from 'three';
 import { MapControls } from 'three/addons/controls/MapControls.js';
+
 import type { Game } from '../main';
-import { curveMinRadius, MAX_GRADE, MIN_RADIUS, planCurve, RailNode, Side } from '../rail/network';
-import { Car, CarType, Train } from '../rail/sim';
 import { FREIGHT, PASSENGER, SHUTTLE } from '../rail/demoMap';
-import { SceneryType } from '../render/scatter';
+import type { RailNode, Side } from '../rail/network';
+import { curveMinRadius, MAX_GRADE, MIN_RADIUS, planCurve } from '../rail/network';
+import type { Car, CarType } from '../rail/sim';
+import { Train } from '../rail/sim';
+import type { SceneryType } from '../render/scatter';
 import { WATER_LEVEL } from '../world/heightfield';
 
 export type Tool = 'select' | 'track' | 'signal' | 'station' | 'bridge' | 'terrain' | 'scenery' | 'train' | 'delete';
@@ -16,7 +19,20 @@ type Anchor =
   | { kind: 'seg'; seg: number; s: number; x: number; y: number; z: number }
   | { kind: 'free'; x: number; y: number; z: number };
 
-const STATION_NAMES = ['Ashcombe', 'Birchford', 'Coldwater', 'Dunmoor', 'Elmstead', 'Fernhollow', 'Greyhaven', 'Hartsmere', 'Ivybridge Road', 'Juniper Halt', 'Kestrel Lane', 'Low Marsh'];
+const STATION_NAMES = [
+  'Ashcombe',
+  'Birchford',
+  'Coldwater',
+  'Dunmoor',
+  'Elmstead',
+  'Fernhollow',
+  'Greyhaven',
+  'Hartsmere',
+  'Ivybridge Road',
+  'Juniper Halt',
+  'Kestrel Lane',
+  'Low Marsh',
+];
 const ANCHOR_NODE = 14;
 const ANCHOR_SEG = 9;
 const HANDLE_CAPACITY = 2048;
@@ -65,8 +81,22 @@ export class Editor {
     this.controls.dampingFactor = 0.12;
     this.controls.screenSpacePanning = false;
 
-    this.ribbonGood = new THREE.MeshBasicMaterial({ color: 0x4fe08a, transparent: true, opacity: 0.8, depthTest: false, side: THREE.DoubleSide, fog: false });
-    this.ribbonBad = new THREE.MeshBasicMaterial({ color: 0xff5242, transparent: true, opacity: 0.8, depthTest: false, side: THREE.DoubleSide, fog: false });
+    this.ribbonGood = new THREE.MeshBasicMaterial({
+      color: 0x4fe08a,
+      transparent: true,
+      opacity: 0.8,
+      depthTest: false,
+      side: THREE.DoubleSide,
+      fog: false,
+    });
+    this.ribbonBad = new THREE.MeshBasicMaterial({
+      color: 0xff5242,
+      transparent: true,
+      opacity: 0.8,
+      depthTest: false,
+      side: THREE.DoubleSide,
+      fog: false,
+    });
     this.ribbon = new THREE.Mesh(new THREE.BufferGeometry(), this.ribbonGood);
     this.ribbon.frustumCulled = false;
     this.ribbon.renderOrder = 10;
@@ -81,7 +111,8 @@ export class Editor {
     this.handles.frustumCulled = false;
 
     const pts: THREE.Vector3[] = [];
-    for (let i = 0; i < 64; i++) pts.push(new THREE.Vector3(Math.cos((i / 64) * Math.PI * 2), 0, Math.sin((i / 64) * Math.PI * 2)));
+    for (let i = 0; i < 64; i++)
+      pts.push(new THREE.Vector3(Math.cos((i / 64) * Math.PI * 2), 0, Math.sin((i / 64) * Math.PI * 2)));
     this.ring = new THREE.LineLoop(
       new THREE.BufferGeometry().setFromPoints(pts),
       new THREE.LineBasicMaterial({ color: 0xffe9a8, depthTest: false, transparent: true, fog: false }),
@@ -99,7 +130,10 @@ export class Editor {
 
     const arrowGeo = new THREE.ConeGeometry(2.2, 7, 4);
     arrowGeo.rotateX(Math.PI / 2);
-    this.arrow = new THREE.Mesh(arrowGeo, new THREE.MeshBasicMaterial({ color: 0xffe9a8, depthTest: false, transparent: true, fog: false }));
+    this.arrow = new THREE.Mesh(
+      arrowGeo,
+      new THREE.MeshBasicMaterial({ color: 0xffe9a8, depthTest: false, transparent: true, fog: false }),
+    );
     this.arrow.renderOrder = 12;
     this.arrow.visible = false;
 
@@ -157,7 +191,7 @@ export class Editor {
     this.ring.visible = false;
     // Left button pans only with the select tool; every other tool owns the click.
     this.controls.mouseButtons = {
-      LEFT: tool === 'select' ? THREE.MOUSE.PAN : (null as unknown as THREE.MOUSE),
+      LEFT: tool === 'select' ? THREE.MOUSE.PAN : null,
       MIDDLE: THREE.MOUSE.PAN,
       RIGHT: THREE.MOUSE.ROTATE,
     };
@@ -224,7 +258,13 @@ export class Editor {
         break;
       case 'scenery':
         g.pushUndo();
-        g.scatter.placed.push({ type: this.sceneryType, x: p.x, z: p.z, rot: Math.random() * Math.PI * 2, scale: this.sceneryType.startsWith('house') ? 1 : 0.8 + Math.random() * 0.5 });
+        g.scatter.placed.push({
+          type: this.sceneryType,
+          x: p.x,
+          z: p.z,
+          rot: Math.random() * Math.PI * 2,
+          scale: this.sceneryType.startsWith('house') ? 1 : 0.8 + Math.random() * 0.5,
+        });
         g.commitEdit({ scenery: true });
         break;
       case 'train':
@@ -306,7 +346,18 @@ export class Editor {
     const P = this.anchorPos(startA);
     const Q = this.anchorPos(endA);
     const chord = Math.hypot(Q.x - P.x, Q.z - P.z);
-    if (chord < 15) return { ok: false, reason: 'Too short', curve: null as ReturnType<typeof planCurve> | null, P, Q, d0x: 1, d0z: 0, d1x: -1, d1z: 0 };
+    if (chord < 15)
+      return {
+        ok: false,
+        reason: 'Too short',
+        curve: null as ReturnType<typeof planCurve> | null,
+        P,
+        Q,
+        d0x: 1,
+        d0z: 0,
+        d1x: -1,
+        d1z: 0,
+      };
     const cx = (Q.x - P.x) / chord;
     const cz = (Q.z - P.z) / chord;
     let d0x = cx;
@@ -554,7 +605,11 @@ export class Editor {
     g.net.dirty.add(seg.id);
     g.net.version++;
     g.commitEdit({ scenery: true });
-    const text = { auto: 'Automatic: bridges where the track is high above ground', force: 'Always a bridge on this section', none: 'Always an embankment on this section' };
+    const text = {
+      auto: 'Automatic: bridges where the track is high above ground',
+      force: 'Always a bridge on this section',
+      none: 'Always an embankment on this section',
+    };
     g.hud.toast(text[seg.bridge]);
   }
 
@@ -653,7 +708,13 @@ export class Editor {
           this.highlight.scale.setScalar(5);
         }
         if (this.start) this.refreshPreview();
-        else this.status = a.kind === 'node' ? 'Click to continue from here' : a.kind === 'seg' ? 'Click to branch from this track' : 'Click to start a new line';
+        else
+          this.status =
+            a.kind === 'node'
+              ? 'Click to continue from here'
+              : a.kind === 'seg'
+                ? 'Click to branch from this track'
+                : 'Click to start a new line';
         break;
       }
       case 'signal':
@@ -666,7 +727,10 @@ export class Editor {
           this.highlight.visible = true;
           this.highlight.position.set(pt.x, pt.y + 0.5, pt.z);
           this.highlight.scale.setScalar(4);
-          this.status = this.tool === 'signal' ? 'The signal controls trains running in the arrow direction. Move to the other side of the track to flip it' : 'The platform is built on the side the mouse is on';
+          this.status =
+            this.tool === 'signal'
+              ? 'The signal controls trains running in the arrow direction. Move to the other side of the track to flip it'
+              : 'The platform is built on the side the mouse is on';
         } else {
           this.status = 'Move close to a track';
         }
@@ -687,7 +751,8 @@ export class Editor {
           this.highlight.visible = true;
           this.highlight.position.set(s.x, s.y + 0.5, s.z);
           this.highlight.scale.setScalar(4);
-          if (this.tool === 'bridge') this.status = `This section: ${{ auto: 'automatic', force: 'always a bridge', none: 'always an embankment' }[g.net.segs.get(near.seg)!.bridge]}. Click to change`;
+          if (this.tool === 'bridge')
+            this.status = `This section: ${{ auto: 'automatic', force: 'always a bridge', none: 'always an embankment' }[g.net.segs.get(near.seg)!.bridge]}. Click to change`;
         }
         break;
       }
@@ -742,7 +807,16 @@ export class Editor {
       this.tmp.scale.setScalar(n.id === this.selected ? r * 1.5 : r);
       this.tmp.updateMatrix();
       this.handles.setMatrixAt(i, this.tmp.matrix);
-      const color = n.id === this.selected ? 0xffffff : net.isJunction(n.id) ? 0xf0a62b : n.signals[1] || n.signals[-1] ? 0xe5392c : net.stations.some((s) => s.nodeId === n.id) ? 0x4fa6e0 : 0xb7c2bb;
+      const color =
+        n.id === this.selected
+          ? 0xffffff
+          : net.isJunction(n.id)
+            ? 0xf0a62b
+            : n.signals[1] || n.signals[-1]
+              ? 0xe5392c
+              : net.stations.some((s) => s.nodeId === n.id)
+                ? 0x4fa6e0
+                : 0xb7c2bb;
       this.handles.setColorAt(i, this.nodeColor.set(color));
       i++;
     }

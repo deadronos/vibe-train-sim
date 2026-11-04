@@ -1,7 +1,7 @@
 {
   "name": "vibe-train-sim",
-  "private": true,
   "version": "0.1.0",
+  "private": true,
   "license": "MIT",
   "type": "module",
   "scripts": {
@@ -9,13 +9,21 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "assets": "/Applications/Blender.app/Contents/MacOS/Blender --background --factory-startup --python tools/blender/build_assetpack.py"
+    "assets": "/Applications/Blender.app/Contents/MacOS/Blender --background --factory-startup --python tools/blender/build_assetpack.py",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "check": "npm run format:check && npm run lint && npm test && npm run build"
   },
   "dependencies": {
     "three": "^0.187.0"
   },
   "devDependencies": {
     "@types/three": "^0.187.0",
+    "oxfmt": "^0.76.0",
+    "oxlint": "^1.91.0",
+    "oxlint-tsgolint": "^7.0.2005",
     "typescript": "^7.0.2",
     "vite": "^8.3.5",
     "vitest": "^5.1.0"

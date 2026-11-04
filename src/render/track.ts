@@ -1,20 +1,51 @@
 // Builds rails, sleepers, ballast and bridges for each segment by sweeping profiles along its curve.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { Network, SegGeom } from '../rail/network';
-import { Heightfield, WATER_LEVEL } from '../world/heightfield';
-import { Assets } from './assets';
+
+import type { Network, SegGeom } from '../rail/network';
+import type { Heightfield } from '../world/heightfield';
+import { WATER_LEVEL } from '../world/heightfield';
+import type { Assets } from './assets';
 
 type Profile = [number, number][];
 
 const RAIL: Profile = [
-  [-0.04, -0.17], [0.04, -0.17], [0.04, -0.15], [0.016, -0.14], [0.016, -0.03], [0.036, -0.02], [0.036, 0.0], [-0.036, 0.0], [-0.036, -0.02], [-0.016, -0.03], [-0.016, -0.14], [-0.04, -0.15],
+  [-0.04, -0.17],
+  [0.04, -0.17],
+  [0.04, -0.15],
+  [0.016, -0.14],
+  [0.016, -0.03],
+  [0.036, -0.02],
+  [0.036, 0.0],
+  [-0.036, 0.0],
+  [-0.036, -0.02],
+  [-0.016, -0.03],
+  [-0.016, -0.14],
+  [-0.04, -0.15],
 ];
-const BALLAST: Profile = [[-2.5, -0.74], [2.5, -0.74], [1.45, -0.23], [-1.45, -0.23]];
-const DECK: Profile = [[-2.9, -0.62], [2.9, -0.62], [2.9, -0.3], [-2.9, -0.3]];
-const GIRDER: Profile = [[-1.7, -2.3], [1.7, -2.3], [2.4, -0.62], [-2.4, -0.62]];
+const BALLAST: Profile = [
+  [-2.5, -0.74],
+  [2.5, -0.74],
+  [1.45, -0.23],
+  [-1.45, -0.23],
+];
+const DECK: Profile = [
+  [-2.9, -0.62],
+  [2.9, -0.62],
+  [2.9, -0.3],
+  [-2.9, -0.3],
+];
+const GIRDER: Profile = [
+  [-1.7, -2.3],
+  [1.7, -2.3],
+  [2.4, -0.62],
+  [-2.4, -0.62],
+];
 const BOX = (cx: number, cy: number, w: number, h: number): Profile => [
-  [cx - w, cy - h], [cx + w, cy - h], [cx + w, cy + h], [cx - w, cy + h],
+  [cx - w, cy - h],
+  [cx + w, cy - h],
+  [cx + w, cy + h],
+  [cx - w, cy + h],
 ];
 
 interface Frame {
@@ -45,7 +76,12 @@ function sweep(frames: Frame[], profile: Profile, uvScale = 0.25): THREE.BufferG
     for (let k = 0; k < m; k++) {
       const [ax, ay] = profile[k];
       const [bx, by] = profile[(k + 1) % m];
-      const corners: [Frame, number, number][] = [[A, ax, ay], [A, bx, by], [B, bx, by], [B, ax, ay]];
+      const corners: [Frame, number, number][] = [
+        [A, ax, ay],
+        [A, bx, by],
+        [B, bx, by],
+        [B, ax, ay],
+      ];
       // Profiles wind counter-clockwise seen along travel, so the outward normal is this edge's perpendicular.
       const ex = bx - ax;
       const ey = by - ay;
@@ -129,7 +165,10 @@ export class TrackRenderer {
   private strutGeo = new THREE.BoxGeometry(0.16, 0.16, 1);
   private tmp = new THREE.Object3D();
 
-  constructor(scene: THREE.Scene, private assets: Assets) {
+  constructor(
+    scene: THREE.Scene,
+    private assets: Assets,
+  ) {
     scene.add(this.group);
   }
 
@@ -246,7 +285,7 @@ export class TrackRenderer {
 
     const addMerged = (geos: THREE.BufferGeometry[], mat: THREE.Material, castShadow: boolean) => {
       if (!geos.length) return;
-      const merged = geos.length === 1 ? geos[0] : mergeGeometries(geos, false)!;
+      const merged = geos.length === 1 ? geos[0] : mergeGeometries(geos, false);
       if (geos.length > 1) for (const x of geos) x.dispose();
       const mesh = new THREE.Mesh(merged, mat);
       mesh.castShadow = castShadow;
@@ -258,7 +297,16 @@ export class TrackRenderer {
     addMerged(deckGeos, this.mats.deck, true);
     addMerged(girderGeos, this.mats.girder, true);
     addMerged(steelGeos, this.mats.girder, true);
-    const rails = [sweep(frames, RAIL.map(([a, b]) => [a - 0.7175, b])), sweep(frames, RAIL.map(([a, b]) => [a + 0.7175, b]))];
+    const rails = [
+      sweep(
+        frames,
+        RAIL.map(([a, b]) => [a - 0.7175, b]),
+      ),
+      sweep(
+        frames,
+        RAIL.map(([a, b]) => [a + 0.7175, b]),
+      ),
+    ];
     addMerged(rails, this.mats.rail, false);
 
     // Sleepers.
@@ -295,7 +343,8 @@ export class TrackRenderer {
     let idx = 0;
     let prev = run[0];
     let last: Frame | null = null;
-    const point = (f: Frame, lat: number, up: number) => new THREE.Vector3(f.x + f.rx * lat, f.y + up, f.z + f.rz * lat);
+    const point = (f: Frame, lat: number, up: number) =>
+      new THREE.Vector3(f.x + f.rx * lat, f.y + up, f.z + f.rz * lat);
     for (let k = 1; k < run.length; k++) {
       acc += Math.hypot(run[k].x - prev.x, run[k].z - prev.z);
       prev = run[k];
@@ -315,7 +364,12 @@ export class TrackRenderer {
     }
   }
 
-  private addBridgeInstances(group: THREE.Group, piers: Frame[], abutments: { f: Frame; flip: boolean }[], struts: [THREE.Vector3, THREE.Vector3][]) {
+  private addBridgeInstances(
+    group: THREE.Group,
+    piers: Frame[],
+    abutments: { f: Frame; flip: boolean }[],
+    struts: [THREE.Vector3, THREE.Vector3][],
+  ) {
     const t = this.tmp;
     const place = (name: string, list: { f: Frame; flip?: boolean }[]) => {
       if (!list.length) return;
@@ -334,7 +388,10 @@ export class TrackRenderer {
         group.add(inst);
       }
     };
-    place('pier', piers.map((f) => ({ f })));
+    place(
+      'pier',
+      piers.map((f) => ({ f })),
+    );
     place('abutment', abutments);
     if (struts.length) {
       const inst = new THREE.InstancedMesh(this.strutGeo, this.mats.girder, struts.length);

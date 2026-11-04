@@ -1,12 +1,13 @@
+import type { BrushMode, Tool } from '../editor/editor';
 // HTML interface: mode lever, clock, train register, driver's desk and the editor's lever frame.
 import type { Game } from '../main';
-import { BrushMode, Tool } from '../editor/editor';
-import { Side } from '../rail/network';
-import { SimEvent } from '../rail/sim';
+import type { Side } from '../rail/network';
+import type { SimEvent } from '../rail/sim';
 import { CAM_LABEL } from '../render/cameraRig';
-import { SceneryType } from '../render/scatter';
-import { Preset } from '../world/heightfield';
+import type { SceneryType } from '../render/scatter';
+import type { Preset } from '../world/heightfield';
 
+// oxlint-disable-next-line typescript/no-unnecessary-type-parameters -- Callers name the element type they expect.
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const MAX_KMH = 160;
 const DIAL_START = -135;
@@ -93,7 +94,9 @@ export class Hud {
     const help = $<HTMLDialogElement>('dlg-help');
     $('btn-help').onclick = () => help.showModal();
     window.addEventListener('keydown', (e) => {
-      if (e.key === '?') help.open ? help.close() : help.showModal();
+      if (e.key !== '?') return;
+      if (help.open) help.close();
+      else help.showModal();
     });
     const q = $<HTMLSelectElement>('quality');
     q.value = g.quality;
@@ -212,7 +215,9 @@ export class Hud {
     const g = this.game;
     if (!g.editor) return;
     const ed = g.editor;
-    document.querySelectorAll<HTMLButtonElement>('.lever').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.tool === ed.tool)));
+    document
+      .querySelectorAll<HTMLButtonElement>('.lever')
+      .forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.tool === ed.tool)));
     const p = $('tool-panel');
     p.innerHTML = '';
     switch (ed.tool) {
@@ -312,13 +317,20 @@ export class Hud {
       return;
     }
     const station = g.net.stations.find((s) => s.nodeId === n.id);
-    const rows: string[] = [`<h2>Track point</h2>`, `<label><span>Rail height: <output id="sel-y">${n.y.toFixed(1)}</output> m</span><input id="sel-h" type="range" min="-5" max="160" step="0.5" value="${n.y}" /></label>`];
+    const rows: string[] = [
+      `<h2>Track point</h2>`,
+      `<label><span>Rail height: <output id="sel-y">${n.y.toFixed(1)}</output> m</span><input id="sel-h" type="range" min="-5" max="160" step="0.5" value="${n.y}" /></label>`,
+    ];
     if (station) rows.push(`<label>Station name<input id="sel-name" type="text" maxlength="24" /></label>`);
     for (const side of [1, -1] as Side[]) {
       const count = g.net.attached(n.id, side).length;
       const label = side === 1 ? 'Forward' : 'Backward';
-      if (count > 1) rows.push(`<div class="row"><button data-throw="${side}">Throw ${label.toLowerCase()} points</button></div>`);
-      if (n.signals[side]) rows.push(`<label class="check"><input type="checkbox" data-hold="${side}" ${n.signals[side]!.hold ? 'checked' : ''}/> Hold the ${label.toLowerCase()} signal at red</label>`);
+      if (count > 1)
+        rows.push(`<div class="row"><button data-throw="${side}">Throw ${label.toLowerCase()} points</button></div>`);
+      if (n.signals[side])
+        rows.push(
+          `<label class="check"><input type="checkbox" data-hold="${side}" ${n.signals[side].hold ? 'checked' : ''}/> Hold the ${label.toLowerCase()} signal at red</label>`,
+        );
     }
     rows.push(`<div class="row"><button id="sel-del">Remove point</button></div>`);
     p.innerHTML = rows.join('');

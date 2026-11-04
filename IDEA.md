@@ -22,12 +22,12 @@ Driving and building are two views of the same world. A line you lay in the edit
 
 These filled gaps in the goal. They can change, but [architecture.md](docs/agents/architecture.md) and the code must change with them.
 
-| Open question | Choice | Why |
-| --- | --- | --- |
-| Three.js or React Three Fiber | Plain Three.js with TypeScript | A per-frame simulation and an imperative editor gain little from React's component model |
-| How to make the assets | A Blender Python script that writes one GLB | Models can be rebuilt, reviewed as code and changed without hand-editing binaries |
-| How signals work | Block signalling with route locking | It makes signals meaningful and keeps trains apart without a scripted scenario |
-| Where the map is stored | Browser storage and JSON files | The game stays a static site with no backend or accounts |
+| Open question                 | Choice                                      | Why                                                                                      |
+| ----------------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Three.js or React Three Fiber | Plain Three.js with TypeScript              | A per-frame simulation and an imperative editor gain little from React's component model |
+| How to make the assets        | A Blender Python script that writes one GLB | Models can be rebuilt, reviewed as code and changed without hand-editing binaries        |
+| How signals work              | Block signalling with route locking         | It makes signals meaningful and keeps trains apart without a scripted scenario           |
+| Where the map is stored       | Browser storage and JSON files              | The game stays a static site with no backend or accounts                                 |
 
 ## Out of scope for now
 

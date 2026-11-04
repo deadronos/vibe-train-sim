@@ -1,6 +1,8 @@
 // Chunked terrain mesh with procedural slope and height shading, plus the water surface.
 import * as THREE from 'three';
-import { Heightfield, Preset, RES, WATER_LEVEL, WORLD_SIZE } from '../world/heightfield';
+
+import type { Heightfield, Preset } from '../world/heightfield';
+import { RES, WATER_LEVEL, WORLD_SIZE } from '../world/heightfield';
 
 const CHUNKS = 16;
 const CELLS = RES / CHUNKS;
@@ -16,10 +18,42 @@ interface Palette {
 }
 
 const PALETTES: Record<Preset, Palette> = {
-  alpine: { grass: 0x3f6a2c, grass2: 0x5f7f33, dirt: 0x5c5138, rock: 0x6d6a65, sand: 0x8f8460, snow: 0xeef1f5, snowLine: 215 },
-  plains: { grass: 0x5d7f33, grass2: 0x8c9440, dirt: 0x6a5a3a, rock: 0x77726a, sand: 0x9c9068, snow: 0xeef1f5, snowLine: 9000 },
-  desert: { grass: 0xb98f58, grass2: 0xc9a56e, dirt: 0xa36f42, rock: 0x955c3a, sand: 0xd9b985, snow: 0xeef1f5, snowLine: 9000 },
-  islands: { grass: 0x4b7f33, grass2: 0x6e9338, dirt: 0x6a5a3a, rock: 0x6e6b63, sand: 0xdcc998, snow: 0xeef1f5, snowLine: 9000 },
+  alpine: {
+    grass: 0x3f6a2c,
+    grass2: 0x5f7f33,
+    dirt: 0x5c5138,
+    rock: 0x6d6a65,
+    sand: 0x8f8460,
+    snow: 0xeef1f5,
+    snowLine: 215,
+  },
+  plains: {
+    grass: 0x5d7f33,
+    grass2: 0x8c9440,
+    dirt: 0x6a5a3a,
+    rock: 0x77726a,
+    sand: 0x9c9068,
+    snow: 0xeef1f5,
+    snowLine: 9000,
+  },
+  desert: {
+    grass: 0xb98f58,
+    grass2: 0xc9a56e,
+    dirt: 0xa36f42,
+    rock: 0x955c3a,
+    sand: 0xd9b985,
+    snow: 0xeef1f5,
+    snowLine: 9000,
+  },
+  islands: {
+    grass: 0x4b7f33,
+    grass2: 0x6e9338,
+    dirt: 0x6a5a3a,
+    rock: 0x6e6b63,
+    sand: 0xdcc998,
+    snow: 0xeef1f5,
+    snowLine: 9000,
+  },
 };
 
 function makeNormalTexture() {
@@ -83,7 +117,10 @@ export class TerrainRenderer {
   private water: THREE.Mesh;
   private waterNormal: THREE.Texture;
 
-  constructor(scene: THREE.Scene, private hf: Heightfield) {
+  constructor(
+    scene: THREE.Scene,
+    private hf: Heightfield,
+  ) {
     this.material = this.makeMaterial();
     this.setPalette(hf.preset);
     const index: number[] = [];
@@ -138,7 +175,10 @@ export class TerrainRenderer {
       Object.assign(shader.uniforms, uniforms);
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', '#include <common>\nvarying vec3 vWPos;\nvarying vec3 vWNorm;')
-        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWPos = (modelMatrix * vec4(position, 1.0)).xyz;\nvWNorm = normal;');
+        .replace(
+          '#include <begin_vertex>',
+          '#include <begin_vertex>\nvWPos = (modelMatrix * vec4(position, 1.0)).xyz;\nvWNorm = normal;',
+        );
       shader.fragmentShader = shader.fragmentShader
         .replace(
           '#include <common>',

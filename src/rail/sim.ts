@@ -1,5 +1,5 @@
 // Train physics, block signalling with route locking, and timetable AI. Contains no rendering code.
-import { Dir, Network, Piece, Side } from './network';
+import type { Dir, Network, Piece, Side } from './network';
 
 export type Aspect = 'red' | 'yellow' | 'green';
 export type CarType = 'loco_diesel' | 'coach' | 'wagon_box' | 'wagon_tank';
@@ -134,7 +134,7 @@ export class Sim {
       }
       return { pieces, have };
     };
-    let { pieces, have } = buildBack(seg, s, dir);
+    const { pieces, have } = buildBack(seg, s, dir);
     t.trail = pieces;
     t.headS = s;
     if (have < L) {
@@ -507,7 +507,11 @@ export class Sim {
       const nxt = this.pick(t, p.seg, e.node, e.side);
       if (nxt === undefined) {
         if (!silent && t.speed > 1.5) {
-          this.onEvent({ kind: 'buffer', train: t.id, text: `${t.name} hit the buffer stop at ${Math.round(t.speed * 3.6)} km/h` });
+          this.onEvent({
+            kind: 'buffer',
+            train: t.id,
+            text: `${t.name} hit the buffer stop at ${Math.round(t.speed * 3.6)} km/h`,
+          });
         }
         t.speed = 0;
         break;
@@ -559,7 +563,7 @@ export class Sim {
     if (t.stopRemain >= 0) stationAt = t.stopRemain;
     const seen = new Set<number>();
     let current = true;
-    let lineLimit = geo.vmax;
+    const lineLimit = geo.vmax;
     while (dist < range && !seen.has(seg)) {
       seen.add(seg);
       if (!current) {
@@ -659,7 +663,9 @@ export class Sim {
       }
     } else {
       t.stuck = 0;
-      t.statusText = t.targetStation ? `Next stop: ${this.net.stations.find((s) => s.id === t.targetStation)?.name ?? ''}` : 'Running';
+      t.statusText = t.targetStation
+        ? `Next stop: ${this.net.stations.find((s) => s.id === t.targetStation)?.name ?? ''}`
+        : 'Running';
     }
   }
 
@@ -719,7 +725,11 @@ export class Sim {
         }
         if (hit) {
           const fast = Math.max(A.speed, B.speed);
-          this.onEvent({ kind: 'collision', train: A.id, text: `${A.name} and ${B.name} collided at ${Math.round(fast * 3.6)} km/h` });
+          this.onEvent({
+            kind: 'collision',
+            train: A.id,
+            text: `${A.name} and ${B.name} collided at ${Math.round(fast * 3.6)} km/h`,
+          });
           for (const t of [A, B]) {
             t.speed = 0;
             t.crashCooldown = 12;

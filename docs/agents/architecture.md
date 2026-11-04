@@ -4,12 +4,12 @@
 
 Dependencies point downward only.
 
-| Layer | Path | Responsibility |
-| --- | --- | --- |
-| Interface | `src/ui/` | HTML interface; reads game state and calls `Game` methods |
-| Editor | `src/editor/` | Turns pointer input into map edits |
-| Game | `src/main.ts` | Owns the world, frame loop, modes, saves and undo |
-| Rendering | `src/render/` | Draws simulation and terrain state with Three.js |
+| Layer      | Path                                   | Responsibility                                                 |
+| ---------- | -------------------------------------- | -------------------------------------------------------------- |
+| Interface  | `src/ui/`                              | HTML interface; reads game state and calls `Game` methods      |
+| Editor     | `src/editor/`                          | Turns pointer input into map edits                             |
+| Game       | `src/main.ts`                          | Owns the world, frame loop, modes, saves and undo              |
+| Rendering  | `src/render/`                          | Draws simulation and terrain state with Three.js               |
 | Simulation | `src/rail/`, `src/world/`, `src/core/` | Rail model, trains, heights and noise, with no Three.js or DOM |
 
 The editor and interface import `Game` as a type, while `main.ts` creates them.

@@ -1,6 +1,7 @@
 // Sky, sun and moon, stars, fog, image-based lighting and the day/night cycle.
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
+
 import { smoothstep } from '../core/noise';
 
 const LAT = THREE.MathUtils.degToRad(47);
@@ -43,11 +44,15 @@ export class Environment {
   shadowTexelSnap = 0;
   private tmp = new THREE.Vector3();
 
-  constructor(private scene: THREE.Scene, private renderer: THREE.WebGLRenderer, shadowSize: number) {
+  constructor(
+    private scene: THREE.Scene,
+    private renderer: THREE.WebGLRenderer,
+    shadowSize: number,
+  ) {
     this.sky.scale.setScalar(16000);
     this.sky.frustumCulled = false;
     scene.add(this.sky);
-    const skyMat = this.sky.material as THREE.ShaderMaterial;
+    const skyMat = this.sky.material;
     // Bloom should catch lamps, not the sky: cap sky radiance below the bloom threshold.
     // The small constant is the night sky colour, matched to the night fog.
     skyMat.fragmentShader = skyMat.fragmentShader.replace(
@@ -139,7 +144,7 @@ export class Environment {
     const golden = 1 - smoothstep(0.02, 0.32, el);
 
     // Sky scattering.
-    const u = (this.sky.material as THREE.ShaderMaterial).uniforms;
+    const u = this.sky.material.uniforms;
     u.turbidity.value = 2.2 + golden * 3.5;
     u.rayleigh.value = 1.05 + golden * 1.6;
     u.mieCoefficient.value = 0.0035;
@@ -172,7 +177,10 @@ export class Environment {
     this.hemi.intensity = 0.42 + golden * day * 0.35;
 
     const fog = this.scene.fog as THREE.FogExp2;
-    fog.color.copy(COLORS.fogNight).lerp(COLORS.fogDusk, smoothstep(-0.12, 0.0, el)).lerp(COLORS.fogDay, smoothstep(0.02, 0.34, el));
+    fog.color
+      .copy(COLORS.fogNight)
+      .lerp(COLORS.fogDusk, smoothstep(-0.12, 0.0, el))
+      .lerp(COLORS.fogDay, smoothstep(0.02, 0.34, el));
 
     (this.stars.material as THREE.PointsMaterial).opacity = this.night;
     this.stars.position.copy(this.tmp.set(focus.x, 0, focus.z));
@@ -184,7 +192,8 @@ export class Environment {
 
     // Image-based lighting comes from the sky itself; regenerated only as the sky changes.
     this.envCooldown -= dt;
-    const changed = Math.abs(el - this.lastEnvElevation) > 0.012 || Math.abs(this.cloudCover - this.lastEnvCloud) > 0.03;
+    const changed =
+      Math.abs(el - this.lastEnvElevation) > 0.012 || Math.abs(this.cloudCover - this.lastEnvCloud) > 0.03;
     if (changed && this.envCooldown <= 0) {
       this.envCooldown = 0.35;
       this.lastEnvElevation = el;

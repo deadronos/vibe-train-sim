@@ -2,43 +2,56 @@
 
 ## Stack
 
-| Tool | Used for |
-| --- | --- |
-| Three.js | Rendering, loaded from npm with addons from `three/addons/` |
-| TypeScript | Language, type-checked by `tsc --noEmit` |
-| Vite | Dev server and build, with `base: './'` so `dist/` can be hosted from any path |
-| Vitest | Simulation tests |
-| Blender 5.x | Asset pack generation, optional unless models change |
+| Tool        | Used for                                                                       |
+| ----------- | ------------------------------------------------------------------------------ |
+| Three.js    | Rendering, loaded from npm with addons from `three/addons/`                    |
+| TypeScript  | Language, type-checked by `tsc --noEmit`                                       |
+| Vite        | Dev server and build, with `base: './'` so `dist/` can be hosted from any path |
+| Vitest      | Simulation tests                                                               |
+| Oxlint      | Linting, with type-aware rules through `oxlint-tsgolint`                       |
+| Oxfmt       | Formatting code, styles, HTML, JSON and Markdown                               |
+| Blender 5.x | Asset pack generation, optional unless models change                           |
 
 Exact versions are in `package.json` and `package-lock.json`. Use `npm` and commit the lockfile.
 
 ## Commands
 
-| Command | What it does |
-| --- | --- |
-| `npm run dev` | Starts the dev server |
-| `npm test` | Runs the tests once |
-| `npm run build` | Type-checks, then builds to `dist/` |
-| `npm run preview` | Serves the built site |
-| `npm run assets` | Rebuilds `assetpack.glb` and `tools/blender/preview.png` |
+| Command           | What it does                                                 |
+| ----------------- | ------------------------------------------------------------ |
+| `npm run dev`     | Starts the dev server                                        |
+| `npm test`        | Runs the tests once                                          |
+| `npm run build`   | Type-checks, then builds to `dist/`                          |
+| `npm run check`   | Checks formatting and lint, runs the tests, then builds      |
+| `npm run lint`    | Lints; warnings also fail, and `lint:fix` applies safe fixes |
+| `npm run format`  | Formats files in place; `format:check` only reports          |
+| `npm run preview` | Serves the built site                                        |
+| `npm run assets`  | Rebuilds `assetpack.glb` and `tools/blender/preview.png`     |
 
 `npm run assets` expects Blender at `/Applications/Blender.app`. Check the preview render after changing models. It is ignored by git.
 
 ## Verifying a change
 
-1. Run `npm test` and `npm run build`.
+1. Run `npm run check`.
 2. For visual or editor changes, run the app and try the change, watching the browser console for errors.
 3. For lighting changes, check noon, dusk and night, since a fix for one often breaks another.
 4. For terrain or bridge changes, check more than one landscape through **New map**.
+
+## Lint and format settings
+
+Rules are in `.oxlintrc.json` and formatter settings in `.oxfmtrc.json`. Each rule switched off has its reason beside it there.
+
+- To turn a rule off everywhere, add it to the config with a reason.
+- For a single justified exception, use `// oxlint-disable-next-line rule-name -- reason`. Unused disable comments are reported.
+- Review autofixes, and avoid `--fix-suggestions` and `--fix-dangerously`, which can change behaviour.
 
 ## Debugging
 
 `window.__game` exposes the running `Game` in dev and production builds. For example:
 
 ```js
-__game.env.timeScale = 0;              // Stop the clock
-__game.env.hours = 21.5;               // Jump to night
-__game.newWorld('desert', 3, true);    // Load a landscape with the starter railway
+__game.env.timeScale = 0; // Stop the clock
+__game.env.hours = 21.5; // Jump to night
+__game.newWorld('desert', 3, true); // Load a landscape with the starter railway
 __game.sim.trains.map((t) => t.statusText);
 ```
 
