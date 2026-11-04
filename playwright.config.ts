@@ -5,7 +5,9 @@ export default defineConfig({
   testMatch: '*.e2e.ts',
   // Software GL is slow enough that tests running side by side starve each other.
   workers: 1,
-  timeout: 60_000,
+  timeout: 90_000,
+  // CI renders so slowly that the simulation, capped at 0.1 s a frame, runs far behind real time.
+  expect: { timeout: 30_000 },
   reporter: 'list',
   use: {
     baseURL: 'http://localhost:4173',
