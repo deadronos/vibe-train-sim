@@ -19,6 +19,9 @@ const COLORS = {
   hemiGround: new THREE.Color(0.3, 0.3, 0.28),
 };
 
+/** Hours per second that keeps the clock in step with the trains. Faster rates are a time-lapse of the sky alone. */
+export const REAL_TIME = 0.0003;
+
 export class Environment {
   hours = 15.2;
   /** In-game hours per real second. */
@@ -127,9 +130,11 @@ export class Environment {
     return p;
   }
 
-  update(dt: number, focus: THREE.Vector3) {
+  /** trainSpeed is the railway's speed multiplier: the clock stops with it, and at REAL_TIME it keeps pace with it. */
+  update(dt: number, focus: THREE.Vector3, trainSpeed = 1) {
     this.time += dt;
-    this.hours = (this.hours + dt * this.timeScale + 24) % 24;
+    const clock = this.timeScale === REAL_TIME ? trainSpeed : Math.min(trainSpeed, 1);
+    this.hours = (this.hours + dt * this.timeScale * clock + 24) % 24;
     const H = ((this.hours - 12) * Math.PI) / 12;
     const sinD = Math.sin(DECL);
     const cosD = Math.cos(DECL);

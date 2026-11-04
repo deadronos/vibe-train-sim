@@ -66,12 +66,16 @@ export class Hud {
 
     const slider = $<HTMLInputElement>('time-slider');
     slider.oninput = () => (g.env.hours = Number(slider.value));
-    document.querySelectorAll<HTMLButtonElement>('.rate button').forEach((b) => {
+    document.querySelectorAll<HTMLButtonElement>('[data-rate]').forEach((b) => {
       b.onclick = () => {
         g.env.timeScale = Number(b.dataset.rate);
         this.syncRate();
       };
     });
+    document.querySelectorAll<HTMLButtonElement>('[data-speed]').forEach((b) => {
+      b.onclick = () => g.setTrainSpeed(Number(b.dataset.speed));
+    });
+    this.syncTrainSpeed();
     g.env.timeScale = 0.0167;
     this.syncRate();
     const cloud = $<HTMLInputElement>('cloud-slider');
@@ -170,8 +174,14 @@ export class Hud {
     }
   }
 
+  syncTrainSpeed() {
+    document.querySelectorAll<HTMLButtonElement>('[data-speed]').forEach((b) => {
+      b.setAttribute('aria-pressed', String(Number(b.dataset.speed) === this.game.trainSpeed));
+    });
+  }
+
   private syncRate() {
-    document.querySelectorAll<HTMLButtonElement>('.rate button').forEach((b) => {
+    document.querySelectorAll<HTMLButtonElement>('[data-rate]').forEach((b) => {
       b.setAttribute('aria-pressed', String(Math.abs(Number(b.dataset.rate) - this.game.env.timeScale) < 1e-6));
     });
   }

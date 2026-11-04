@@ -70,6 +70,20 @@ test('trains move', async ({ page }) => {
     .toBeGreaterThan(1);
 });
 
+test('pauses and fast-forwards the railway', async ({ page }) => {
+  await load(page);
+  const position = () => page.evaluate(() => window.__game.sim.steps);
+  await page.locator('[data-speed="0"]').click();
+  await frames(page);
+  const paused = await position();
+  await frames(page, 10);
+  expect(await position()).toBe(paused);
+  await page.locator('[data-speed="8"]').click();
+  await expect.poll(position).toBeGreaterThan(paused + 30);
+  await page.keyboard.press('Comma');
+  expect(await page.evaluate(() => window.__game.trainSpeed)).toBe(4);
+});
+
 test('lays a section of track in the editor, then undoes and redoes it', async ({ page }) => {
   await load(page);
   await page.evaluate(() => window.__game.newWorld('plains', 1, false));

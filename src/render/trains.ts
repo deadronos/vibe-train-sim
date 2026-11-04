@@ -127,7 +127,7 @@ export class TrainRenderer {
       this.headlight.intensity = 0;
       return;
     }
-    const h = sim.head(t);
+    const h = sim.drawn(t);
     const fx = h.tx * h.dir;
     const fz = h.tz * h.dir;
     const fy = h.ty * h.dir;

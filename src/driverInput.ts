@@ -77,6 +77,12 @@ export class DriverInput {
         case 'KeyR':
           g.reverseDriven();
           break;
+        case 'Comma':
+          g.changeTrainSpeed(-1);
+          break;
+        case 'Period':
+          g.changeTrainSpeed(1);
+          break;
         case 'KeyM':
           g.audio.setMuted(!g.audio.muted);
           g.hud.toast(g.audio.muted ? 'Sound off' : 'Sound on');

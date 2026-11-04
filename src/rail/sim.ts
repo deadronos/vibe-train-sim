@@ -4,6 +4,9 @@ import type { Car } from './vehicles';
 import { carBrake, carMass, VEHICLES } from './vehicles';
 
 export type Aspect = 'red' | 'yellow' | 'green';
+/** Seconds per simulation step. Results don't depend on how often frames arrive. */
+export const STEP = 1 / 30;
+const MAX_STEPS_PER_UPDATE = 32; // Beyond this a slow machine falls behind rather than stalling further
 const GAP = 0.8;
 const G = 9.81;
 const EMERGENCY = 1.5; // Emergency brake force, as a multiple of full service braking
@@ -150,7 +153,10 @@ export class Sim {
   nodeClaims = new Map<number, number>();
   segClaims = new Map<number, number>();
   occ = new Map<number, Occupancy[]>();
+  /** Simulation steps run so far. */
+  steps = 0;
   private interlockTimer = 0;
+  private unspent = 0;
   private prints: Map<number, string>;
 
   constructor(net: Network) {
@@ -293,12 +299,17 @@ export class Sim {
     return this.behind(t, 0);
   }
 
+  /** Like behind, for drawing: frames fall between steps, so trains are shown part of a step back to stay smooth. */
+  drawn(t: Train, d = 0) {
+    return this.behind(t, d + t.speed * (STEP - this.unspent));
+  }
+
   /** Front and rear bogie positions of a car, ordered along the consist. */
   carPose(t: Train, index: number) {
     let d = 0;
     for (let i = 0; i < index; i++) d += VEHICLES[t.cars[i].type].length + GAP;
     const len = VEHICLES[t.cars[index].type].length;
-    return { front: this.behind(t, d + len * 0.18), rear: this.behind(t, d + len * 0.82) };
+    return { front: this.drawn(t, d + len * 0.18), rear: this.drawn(t, d + len * 0.82) };
   }
 
   /** Rise per metre in the direction of travel and curve resistance per unit weight, averaged by mass along the train. */
@@ -918,28 +929,32 @@ export class Sim {
     }
   }
 
+  /** Runs as many whole steps as dt has paid for, keeping the remainder for next time. */
   update(dt: number) {
-    if (!this.trains.length) {
-      this.interlockTimer += dt;
-      if (this.interlockTimer > 0.25) {
-        this.interlockTimer = 0;
-        this.interlock();
-      }
-      return;
+    this.unspent += dt;
+    let n = 0;
+    while (this.unspent >= STEP && n < MAX_STEPS_PER_UPDATE) {
+      this.step();
+      this.unspent -= STEP;
+      n++;
     }
-    const h = Math.min(dt, 0.1);
-    this.interlockTimer += h;
+    if (this.unspent >= STEP) this.unspent = 0;
+  }
+
+  private step() {
+    this.steps++;
+    this.interlockTimer += STEP;
     if (this.interlockTimer > 0.15) {
       this.interlockTimer = 0;
       this.interlock();
     }
     for (const t of this.trains) {
-      if (t.ai) this.driveAI(t, h);
+      if (t.ai) this.driveAI(t, STEP);
       else this.updatePlayerLimit(t);
-      this.physics(t, h);
+      this.physics(t, STEP);
       this.remember(t);
     }
-    this.collisions(h);
+    this.collisions(STEP);
   }
 
   private updatePlayerLimit(t: Train) {
