@@ -162,6 +162,78 @@ describe('train motion', () => {
   });
 });
 
+describe('gradients', () => {
+  // A 5% grade rising from a to b, 2 km long.
+  function grade(rising = true) {
+    const net = new Network();
+    const a = net.addNode(0, rising ? 0 : 100, 0, 1, 0);
+    const b = net.addNode(2000, rising ? 100 : 0, 0, 1, 0);
+    const seg = net.addSegment(a.id, 1, b.id, -1);
+    return { net, seg };
+  }
+
+  // Coasts for 10 s from 20 m/s and returns the height change and final speed.
+  function coast(rising: boolean, dir: 1 | -1) {
+    const { net, seg } = grade(rising);
+    const sim = new Sim(net);
+    const t = new Train(1, 'T', SHUTTLE());
+    t.ai = false;
+    sim.trains.push(t);
+    sim.place(t, seg.id, dir > 0 ? 400 : 1600, dir);
+    t.speed = 20;
+    const y0 = sim.head(t).y;
+    for (let i = 0; i < 100; i++) sim.update(0.1);
+    return { climb: sim.head(t).y - y0, speed: t.speed };
+  }
+
+  it.each([
+    ['a to b on a rising segment', true, 1],
+    ['b to a on a falling segment', false, -1],
+  ] as const)('slows a climbing train, travelling %s', (_name, rising, dir) => {
+    const { climb, speed } = coast(rising, dir);
+    expect(climb).toBeGreaterThan(0);
+    expect(speed).toBeLessThan(16);
+  });
+
+  it.each([
+    ['b to a on a rising segment', true, -1],
+    ['a to b on a falling segment', false, 1],
+  ] as const)('speeds up a descending train, travelling %s', (_name, rising, dir) => {
+    const { climb, speed } = coast(rising, dir);
+    expect(climb).toBeLessThan(0);
+    expect(speed).toBeGreaterThan(20);
+  });
+
+  it('feels the same grade whichever way the segment was drawn', () => {
+    expect(coast(true, 1).speed).toBeCloseTo(coast(false, -1).speed, 1);
+    expect(coast(true, -1).speed).toBeCloseTo(coast(false, 1).speed, 1);
+  });
+
+  it.each([
+    ['along', 1],
+    ['against', -1],
+  ] as const)('lets the autopilot stop at a red signal on a steep descent, travelling %s the segment', (_name, dir) => {
+    const net = new Network();
+    // Falls 7% in the direction of travel, the steepest grade the editor allows.
+    const a = net.addNode(0, dir > 0 ? 140 : 0, 0, 1, 0);
+    const b = net.addNode(2000, dir > 0 ? 0 : 140, 0, 1, 0);
+    const seg = net.addSegment(a.id, 1, b.id, -1);
+    const sig = net.split(seg.id, 1000);
+    sig.signals[dir] = { hold: true };
+    const start = dir > 0 ? seg.id : net.attached(sig.id, 1)[0];
+    const sim = new Sim(net);
+    const t = new Train(1, 'T', SHUTTLE());
+    sim.trains.push(t);
+    sim.place(t, start, dir > 0 ? 300 : net.geom.get(start)!.length - 300, dir);
+    const events: string[] = [];
+    sim.onEvent = (e) => events.push(e.kind);
+    for (let i = 0; i < 180 * 30; i++) sim.update(1 / 30);
+    expect(events).not.toContain('spad');
+    expect(t.speed).toBeLessThan(0.3);
+    expect(Math.abs(sim.head(t).x - sig.x)).toBeLessThan(60);
+  });
+});
+
 describe('deadlock handling', () => {
   it('never reverses a train waiting at a held signal', () => {
     const { net, b, s1 } = line();

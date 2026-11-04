@@ -34,6 +34,7 @@ Defined in `src/rail/network.ts`.
 - **Aspects:** red when the block isn't free or the signal is held, yellow when the next signal can't be entered or the line dead-ends, otherwise green.
 - **Train position** is a trail of `{seg, dir}` pieces plus the head's distance along the last piece. Cars are placed by walking back along the trail.
 - **Reversing** swaps head and tail and flips the consist. There is no negative speed.
+- **Gradients** use the slope at the head in the direction of travel. The AI plans with less braking on a descent and adds a holding brake to cancel gravity, or it would creep past red signals.
 - **AI** plans a route to the next timetabled station, reversing only when no forward route exists. A waiting train backs away only for a true deadlock, where the train holding its block is also stuck. The train with the higher id gives way, and a player-held signal never triggers this.
 
 ## Terrain
