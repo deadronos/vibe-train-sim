@@ -384,7 +384,7 @@ export class Game {
   }
 
   /** Call after any change to the map. Keeps terrain and trains consistent with the new track. */
-  commitEdit(opts: { scenery?: boolean; light?: boolean }) {
+  commitEdit(opts: { scenery?: boolean } = {}) {
     this.hf.grade(this.net);
     for (const t of this.sim.syncTrack()) this.removeTrain(t);
     if (opts.scenery) this.scatterTimer = 0.25;

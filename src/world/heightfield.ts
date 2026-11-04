@@ -64,10 +64,6 @@ export function baseHeight(preset: Preset, seed: number, x: number, z: number): 
   return h + (-14 - h) * edge;
 }
 
-export function chunkBounds() {
-  return WORLD_SIZE / RES;
-}
-
 export class Heightfield {
   preset: Preset;
   seed: number;

@@ -344,7 +344,7 @@ export class Hud {
       }
       g.net.moveNode(n.id, n.x, Number(h.value), n.z);
       y.textContent = Number(h.value).toFixed(1);
-      g.commitEdit({ light: true });
+      g.commitEdit();
     };
     h.onchange = () => g.commitEdit({ scenery: true });
     if (station) {

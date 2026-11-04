@@ -58,7 +58,6 @@ export class PropsRenderer {
   private lightPool: THREE.PointLight[] = [];
   private glowTex = glowTexture();
   private levers = new Map<string, { arm: THREE.Object3D }>();
-  private stationPadMat = new THREE.SpriteMaterial();
   // Shared by every rebuild, so never disposed when props are cleared.
   private armGeo = new THREE.BoxGeometry(0.46, 0.46, 0.04);
   private boardGeo = new THREE.PlaneGeometry(6.4, 1.2);
@@ -66,7 +65,6 @@ export class PropsRenderer {
   private postMat = new THREE.MeshStandardMaterial({ color: 0x25292c, roughness: 0.6 });
   /** Per-instance materials and textures made by the current build, freed on the next. */
   private owned: { dispose(): void }[] = [];
-  private night = 0;
 
   constructor(
     scene: THREE.Scene,
@@ -115,7 +113,7 @@ export class PropsRenderer {
       for (const side of [1, -1] as Side[]) {
         if (node.signals[side]) this.addSignal(node, side);
         const opts = net.attached(node.id, side);
-        if (opts.length > 1) this.addLever(net, node, side);
+        if (opts.length > 1) this.addLever(node, side);
         if (opts.length === 0 && net.attached(node.id, -side as Side).length > 0) this.addBuffer(node, side);
       }
     }
@@ -172,7 +170,7 @@ export class PropsRenderer {
     this.signals.set(keyOf(node.id, side), { key: keyOf(node.id, side), lamps, glow, pos: lampPos });
   }
 
-  private addLever(net: Network, node: RailNode, side: Side) {
+  private addLever(node: RailNode, side: Side) {
     const obj = this.assets.clone('switch_stand');
     const tx = node.dx * side;
     const tz = node.dz * side;
@@ -187,7 +185,6 @@ export class PropsRenderer {
     obj.add(arm);
     this.group.add(obj);
     this.levers.set(keyOf(node.id, side), { arm });
-    void net;
   }
 
   private addBuffer(node: RailNode, side: Side) {
@@ -261,8 +258,7 @@ export class PropsRenderer {
     for (const along of [-42, 42]) place('shelter', along, offset - 0.1);
     // Lamps on the platform; the nearest few get real point lights.
     for (let along = -st.length / 2 + 12; along < st.length / 2 - 4; along += 26) {
-      const obj = place('lamp_post', along, offset - 1.2);
-      void obj;
+      place('lamp_post', along, offset - 1.2);
       const yawR = yaw;
       this.lamps.push(
         new THREE.Vector3(
@@ -298,7 +294,6 @@ export class PropsRenderer {
 
   /** Lamp states, lever flags and the nearest platform lights. */
   update(sim: Sim, camera: THREE.Camera, night: number) {
-    this.night = night;
     const net = sim.net;
     for (const v of this.signals.values()) {
       const aspect = sim.aspects.get(v.key) ?? 'red';

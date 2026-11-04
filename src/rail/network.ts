@@ -217,7 +217,6 @@ export class Network {
   /** Inserts a node at distance s along a segment and returns it; the two halves keep their shape closely. */
   split(segId: number, s: number): RailNode {
     const seg = this.segs.get(segId)!;
-    const g = this.geom.get(segId)!;
     const p = this.sample(segId, s);
     const node = this.addNode(p.x, p.y, p.z, p.tx, p.tz);
     const { b, sb, bridge } = seg;
@@ -233,7 +232,6 @@ export class Network {
     const tail = this.addSegment(node.id, 1, b, sb, bridge);
     if (swWasThis) nb.sw[sb] = tail.id;
     this.touchNodes([seg.a, node.id, b]);
-    void g;
     return node;
   }
 
