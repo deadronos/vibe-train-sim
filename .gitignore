@@ -3,3 +3,5 @@ dist
 .DS_Store
 *.blend1
 tools/blender/preview.png
+test-results
+playwright-report
