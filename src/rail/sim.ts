@@ -9,7 +9,10 @@ const CAR_MASS: Record<CarType, number> = { loco_diesel: 90, coach: 42, wagon_bo
 const GAP = 0.8;
 const G = 9.81;
 const SERVICE_BRAKE = 0.75;
+const FULL_BRAKE = SERVICE_BRAKE * 1.25;
 const PLAN_BRAKE = 0.55; // AI plans softer than the brake can deliver
+const PLAN_MARGIN = 0.7; // Share of the deceleration left on a descent that the AI relies on
+const MIN_PLAN_BRAKE = 0.1;
 const POWER = 2800; // kW per locomotive
 const TRACTIVE = 300; // kN per locomotive
 
@@ -190,6 +193,18 @@ export class Sim {
     for (let i = 0; i < index; i++) d += CAR_LENGTH[t.cars[i].type] + GAP;
     const len = CAR_LENGTH[t.cars[index].type];
     return { front: this.behind(t, d + len * 0.18), rear: this.behind(t, d + len * 0.82) };
+  }
+
+  /** Rise per metre in the direction of travel, so negative on a descent. */
+  private slope(t: Train) {
+    const h = this.head(t);
+    return h.ty * h.dir;
+  }
+
+  /** Deceleration the AI can count on here: gravity eats into the brakes on a descent. */
+  private planBrake(t: Train) {
+    const available = (FULL_BRAKE + G * this.slope(t)) * PLAN_MARGIN;
+    return Math.max(MIN_PLAN_BRAKE, Math.min(PLAN_BRAKE, available));
   }
 
   private prune(t: Train) {
@@ -388,7 +403,7 @@ export class Sim {
     for (const t of this.trains) this.walkClaims(t);
     for (const t of this.trains) {
       if (!t.next || t.crashCooldown > 0) continue;
-      const stopping = (t.speed * t.speed) / (2 * PLAN_BRAKE);
+      const stopping = (t.speed * t.speed) / (2 * this.planBrake(t));
       if (t.next.dist > stopping + 220) continue;
       const node = net.nodes.get(t.next.node)!;
       const def = node.signals[t.next.side];
@@ -555,7 +570,8 @@ export class Sim {
     let geo = net.geom.get(seg)!;
     let toEnd = dir > 0 ? geo.length - t.headS : t.headS;
     let dist = 0; // Distance from head to the start of this piece (0 for the current one)
-    const range = Math.max(400, (t.speed * t.speed) / (2 * PLAN_BRAKE) + 300);
+    const planBrake = this.planBrake(t);
+    const range = Math.max(400, (t.speed * t.speed) / (2 * planBrake) + 300);
     let allowed = geo.vmax;
     let stopAt = Infinity;
     let stationAt = Infinity;
@@ -567,7 +583,7 @@ export class Sim {
     while (dist < range && !seen.has(seg)) {
       seen.add(seg);
       if (!current) {
-        allowed = Math.min(allowed, Math.sqrt(geo.vmax ** 2 + 2 * PLAN_BRAKE * dist));
+        allowed = Math.min(allowed, Math.sqrt(geo.vmax ** 2 + 2 * planBrake * dist));
       }
       for (const o of this.occ.get(seg) ?? []) {
         if (o.train === t.id) continue;
@@ -601,7 +617,7 @@ export class Sim {
     }
     if (bufferAt < stationAt) stationAt = bufferAt;
     stopAt = Math.min(stopAt, bufferAt, stationAt);
-    return { allowed, stopAt, stationAt, lineLimit };
+    return { allowed, stopAt, stationAt, lineLimit, planBrake };
   }
 
   private driveAI(t: Train, dt: number) {
@@ -620,18 +636,21 @@ export class Sim {
     const lim = this.collectLimits(t);
     t.limit = lim.lineLimit;
     let target = lim.allowed;
-    if (lim.stopAt !== Infinity) target = Math.min(target, Math.sqrt(2 * PLAN_BRAKE * Math.max(0, lim.stopAt - 0.5)));
+    if (lim.stopAt !== Infinity)
+      target = Math.min(target, Math.sqrt(2 * lim.planBrake * Math.max(0, lim.stopAt - 0.5)));
     if (lim.stopAt <= 0.6) target = 0;
     const diff = target - t.speed;
+    // Without this share the train settles at a creep on a descent, where gravity balances a light brake.
+    const hold = Math.max(0, -G * this.slope(t)) / FULL_BRAKE;
     if (diff > 0.3) {
       t.throttle = Math.min(1, diff * 0.45);
       t.brake = 0;
     } else if (diff < -0.1) {
       t.throttle = 0;
-      t.brake = Math.min(1, -diff * 0.7 + 0.2);
+      t.brake = Math.min(1, hold - diff * 0.7 + 0.2);
     } else {
       t.throttle = 0;
-      t.brake = target < 0.2 ? 1 : 0;
+      t.brake = target < 0.2 ? 1 : hold;
     }
     // Arrival.
     if (t.speed < 0.25 && lim.stationAt <= 2.5) {
@@ -684,14 +703,13 @@ export class Sim {
   }
 
   private physics(t: Train, dt: number) {
-    const headP = this.head(t);
-    const slope = headP.ty;
+    const slope = this.slope(t);
     const m = t.mass; // tonnes -> force in kN gives m/s^2
     const v = Math.max(t.speed, 0.5);
     const force = Math.min(TRACTIVE * t.locos, (POWER * t.locos) / v) * t.throttle;
     const drag = 0.012 * G * m + 0.0035 * m * t.speed + 0.012 * t.speed * t.speed;
     let a = force / m - G * slope;
-    const resist = drag / m + t.brake * SERVICE_BRAKE * 1.25;
+    const resist = drag / m + t.brake * FULL_BRAKE;
     if (t.speed > 0 || a > resist) {
       a -= resist;
     } else {
