@@ -55,9 +55,17 @@ After an edit, call `Game.commitEdit()`, which regrades terrain and re-seats tra
 
 ## Saves
 
-`SaveData` in `src/main.ts` stores the preset and seed, sparse terrain edits, the network, placed scenery and each train's position. Terrain noise and geometry are regenerated on load.
+`SaveData` in `src/saveData.ts` stores the preset and seed, sparse terrain edits, the network, placed scenery and each train's position. Terrain noise and geometry are regenerated on load.
 
-If you change the format incompatibly, bump `v` and handle or reject older saves, since `readSave()` and `importMap()` check it.
+`parseSave()` in the same file validates a whole save (types, ids that point to real nodes, allowed values) and returns the data or a reason. It must stay free of Three.js and the DOM so tests can run it. Browser saves and imports both go through it. If you add a field or enum value to `SaveData`, update `parseSave()` and its tests too.
+
+A browser save that fails validation is copied to the `vibe-train-sim/map-v1-backup` key, a fresh starter map starts, and the player gets a toast. A bad import leaves the current map unchanged.
+
+If you change the format incompatibly, bump `v` and handle or reject older saves, since `parseSave()` checks it.
+
+## Start-up failures
+
+`boot()` at the bottom of `src/main.ts` checks for WebGL, creates `Game` and starts it inside one error handler, so any failure replaces the loading bar with a message. Wording and classification live in `src/startupError.ts`. Players get plain advice; developer detail such as `npm run assets` shows only when `import.meta.env.DEV` is true. A `webglcontextlost` event saves the map, stops the frame loop and offers a reload.
 
 ## Assets
 

@@ -696,3 +696,21 @@ dialog menu {
     transition: none;
   }
 }
+
+/* Start-up failure and lost-context messages replace the loading bar. */
+#loading.failed {
+  padding: 24px;
+  text-align: center;
+}
+#loading .fatal {
+  max-width: 34em;
+  font: 400 18px/1.45 var(--sans);
+}
+#loading .fatal-btn {
+  font: 600 16px var(--sans);
+  background: var(--enamel-lift);
+  color: var(--text);
+  border: 1px solid var(--brass);
+  border-radius: 2px;
+  padding: 8px 18px;
+}
