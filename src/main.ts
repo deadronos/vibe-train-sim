@@ -386,37 +386,9 @@ export class Game {
   /** Call after any change to the map. Keeps terrain and trains consistent with the new track. */
   commitEdit(opts: { scenery?: boolean; light?: boolean }) {
     this.hf.grade(this.net);
-    this.reseatTrains();
+    for (const t of this.sim.syncTrack()) this.removeTrain(t);
     if (opts.scenery) this.scatterTimer = 0.25;
     this.hud.syncTrains();
-  }
-
-  /** Track was edited under the trains, so put each one back on the nearest track. */
-  private reseatTrains() {
-    for (const t of [...this.sim.trains]) {
-      const valid = t.trail.every((p) => this.net.segs.has(p.seg));
-      let x = 0;
-      let z = 0;
-      let hx = 1;
-      let hz = 0;
-      if (valid) {
-        const h = this.sim.head(t);
-        x = h.x;
-        z = h.z;
-        hx = h.tx * h.dir;
-        hz = h.tz * h.dir;
-      } else {
-        const last = t.lastPos;
-        if (last) {
-          x = last.x;
-          z = last.z;
-          hx = last.hx;
-          hz = last.hz;
-        }
-      }
-      if (!this.sim.replace(t, x, z, hx, hz)) this.removeTrain(t);
-      else if (t.ai) this.sim.plan(t, false);
-    }
   }
 
   removeTrain(t: Train) {
@@ -609,10 +581,6 @@ export class Game {
     if (!this.editing) this.driveInput(dt);
     if (!this.editing || this.editor.runTrains) {
       this.sim.update(dt);
-      for (const t of this.sim.trains) {
-        const h = this.sim.head(t);
-        t.lastPos = { x: h.x, z: h.z, hx: h.tx * h.dir, hz: h.tz * h.dir };
-      }
     } else {
       this.interlockTimer += dt;
       if (this.interlockTimer > 0.3) {

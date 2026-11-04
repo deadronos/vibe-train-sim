@@ -102,9 +102,11 @@ export class Sim {
   segClaims = new Map<number, number>();
   occ = new Map<number, Occupancy[]>();
   private interlockTimer = 0;
+  private prints: Map<number, string>;
 
   constructor(net: Network) {
     this.net = net;
+    this.prints = this.segPrints();
   }
 
   // ------------------------------------------------------------ placement
@@ -146,6 +148,60 @@ export class Sim {
     }
     this.prune(t);
     t.next = null;
+    this.remember(t);
+  }
+
+  private remember(t: Train) {
+    const h = this.head(t);
+    t.lastPos = { x: h.x, z: h.z, hx: h.tx * h.dir, hz: h.tz * h.dir };
+  }
+
+  /** Fingerprint of each segment's shape and ends: when it changes, trains on it may no longer sit where they were. */
+  private segPrints(): Map<number, string> {
+    const out = new Map<number, string>();
+    for (const [id, s] of this.net.segs) {
+      const g = this.net.geom.get(id);
+      out.set(id, `${s.a}:${s.sa}:${s.b}:${s.sb}:${g ? g.length.toFixed(2) : ''}`);
+    }
+    return out;
+  }
+
+  /**
+   * Call after the track was edited. Trains standing on a changed or removed
+   * segment are re-seated where they were, keeping speed, dwell and timetable
+   * progress; every other train carries on untouched. Returns trains that no
+   * longer have any track to stand on.
+   */
+  syncTrack(): Train[] {
+    const before = this.prints;
+    const after = this.segPrints();
+    this.prints = after;
+    const changed = new Set<number>();
+    for (const [id, p] of after) if (before.get(id) !== p) changed.add(id);
+    for (const id of before.keys()) if (!after.has(id)) changed.add(id);
+    const lost: Train[] = [];
+    if (!changed.size) return lost;
+    for (const t of [...this.trains]) {
+      if (t.trail.some((p) => changed.has(p.seg))) {
+        const keep = { speed: t.speed, dwell: t.dwell, stopRemain: t.stopRemain, schedIdx: t.schedIdx };
+        // The head position from before the edit: the trail may no longer match the track.
+        const at = t.lastPos ?? { x: 0, z: 0, hx: 1, hz: 0 };
+        if (!this.replace(t, at.x, at.z, at.hx, at.hz)) {
+          lost.push(t);
+          continue;
+        }
+        t.speed = keep.speed;
+        t.dwell = keep.dwell;
+        t.stopRemain = keep.stopRemain;
+        t.schedIdx = keep.schedIdx;
+        if (t.ai) this.plan(t, false);
+      } else if (t.route.some((p) => changed.has(p.seg))) {
+        // Track ahead changed: plan again, but keep how the train is moving.
+        if (t.ai) this.plan(t, false);
+        else t.route = [];
+      }
+    }
+    return lost;
   }
 
   /** Moves a train back onto the nearest track after edits; returns false when no track exists. */
@@ -783,6 +839,7 @@ export class Sim {
       if (t.ai) this.driveAI(t, h);
       else this.updatePlayerLimit(t);
       this.physics(t, h);
+      this.remember(t);
     }
     this.collisions(h);
   }
