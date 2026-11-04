@@ -1,11 +1,9 @@
 // Train physics, block signalling with route locking, and timetable AI. Contains no rendering code.
 import type { Dir, Network, Piece, Side } from './network';
+import type { Car } from './vehicles';
+import { carMass, VEHICLES } from './vehicles';
 
 export type Aspect = 'red' | 'yellow' | 'green';
-export type CarType = 'loco_diesel' | 'coach' | 'wagon_box' | 'wagon_tank';
-
-export const CAR_LENGTH: Record<CarType, number> = { loco_diesel: 20, coach: 23, wagon_box: 16, wagon_tank: 14 };
-const CAR_MASS: Record<CarType, number> = { loco_diesel: 90, coach: 42, wagon_box: 38, wagon_tank: 50 }; // tonnes
 const GAP = 0.8;
 const G = 9.81;
 const SERVICE_BRAKE = 0.75;
@@ -13,13 +11,6 @@ const FULL_BRAKE = SERVICE_BRAKE * 1.25;
 const PLAN_BRAKE = 0.55; // AI plans softer than the brake can deliver
 const PLAN_MARGIN = 0.7; // Share of the deceleration left on a descent that the AI relies on
 const MIN_PLAN_BRAKE = 0.1;
-const POWER = 2800; // kW per locomotive
-const TRACTIVE = 300; // kN per locomotive
-
-export interface Car {
-  type: CarType;
-  flip: boolean;
-}
 
 export const keyOf = (node: number, side: Side) => `${node}:${side}`;
 
@@ -76,18 +67,31 @@ export class Train {
 
   get length() {
     let l = 0;
-    for (const c of this.cars) l += CAR_LENGTH[c.type] + GAP;
+    for (const c of this.cars) l += VEHICLES[c.type].length + GAP;
     return l - GAP;
   }
 
   get mass() {
     let m = 0;
-    for (const c of this.cars) m += CAR_MASS[c.type];
+    for (const c of this.cars) m += carMass(c);
     return m;
   }
 
-  get locos() {
-    return Math.max(1, this.cars.filter((c) => c.type === 'loco_diesel').length);
+  /** The slowest vehicle sets the speed of the whole train. */
+  get topSpeed() {
+    let v = Infinity;
+    for (const c of this.cars) v = Math.min(v, VEHICLES[c.type].topSpeed);
+    return v;
+  }
+
+  /** Pulling force available at a speed, from every locomotive, in kN. */
+  tractiveForce(speed: number) {
+    let f = 0;
+    for (const c of this.cars) {
+      const tr = VEHICLES[c.type].traction;
+      if (tr) f += Math.min(tr.tractive, tr.power / Math.max(speed, 0.5));
+    }
+    return f;
   }
 }
 
@@ -246,8 +250,8 @@ export class Sim {
   /** Front and rear bogie positions of a car, ordered along the consist. */
   carPose(t: Train, index: number) {
     let d = 0;
-    for (let i = 0; i < index; i++) d += CAR_LENGTH[t.cars[i].type] + GAP;
-    const len = CAR_LENGTH[t.cars[index].type];
+    for (let i = 0; i < index; i++) d += VEHICLES[t.cars[i].type].length + GAP;
+    const len = VEHICLES[t.cars[index].type].length;
     return { front: this.behind(t, d + len * 0.18), rear: this.behind(t, d + len * 0.82) };
   }
 
@@ -371,7 +375,7 @@ export class Sim {
     }
     t.trail = (pieces.length ? pieces : t.trail).reverse().map((p) => ({ seg: p.seg, dir: -p.dir as Dir }));
     t.headS = tail.s;
-    t.cars = t.cars.reverse().map((c) => ({ type: c.type, flip: !c.flip }));
+    t.cars = t.cars.reverse().map((c) => ({ ...c, flip: !c.flip }));
     t.grants = [];
     t.route = [];
     t.next = null;
@@ -628,14 +632,14 @@ export class Sim {
     let dist = 0; // Distance from head to the start of this piece (0 for the current one)
     const planBrake = this.planBrake(t);
     const range = Math.max(400, (t.speed * t.speed) / (2 * planBrake) + 300);
-    let allowed = geo.vmax;
+    let allowed = Math.min(geo.vmax, t.topSpeed);
     let stopAt = Infinity;
     let stationAt = Infinity;
     let bufferAt = Infinity;
     if (t.stopRemain >= 0) stationAt = t.stopRemain;
     const seen = new Set<number>();
     let current = true;
-    const lineLimit = geo.vmax;
+    const lineLimit = Math.min(geo.vmax, t.topSpeed);
     while (dist < range && !seen.has(seg)) {
       seen.add(seg);
       if (!current) {
@@ -761,8 +765,7 @@ export class Sim {
   private physics(t: Train, dt: number) {
     const slope = this.slope(t);
     const m = t.mass; // tonnes -> force in kN gives m/s^2
-    const v = Math.max(t.speed, 0.5);
-    const force = Math.min(TRACTIVE * t.locos, (POWER * t.locos) / v) * t.throttle;
+    const force = t.speed < t.topSpeed ? t.tractiveForce(t.speed) * t.throttle : 0;
     const drag = 0.012 * G * m + 0.0035 * m * t.speed + 0.012 * t.speed * t.speed;
     let a = force / m - G * slope;
     const resist = drag / m + t.brake * FULL_BRAKE;

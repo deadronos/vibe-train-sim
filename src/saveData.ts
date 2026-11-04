@@ -1,6 +1,6 @@
 // Save format and validation. Kept free of Three.js and the DOM so tests can run it without WebGL.
 import type { Network } from './rail/network';
-import type { Car, CarType } from './rail/sim';
+import type { Car, CarType } from './rail/vehicles';
 import type { PlacedItem, SceneryType } from './render/scatter';
 import type { Preset } from './world/heightfield';
 import { RES } from './world/heightfield';
@@ -42,7 +42,14 @@ const SCENERY: Record<SceneryType, true> = {
   house_b: true,
   house_c: true,
 };
-const CAR_TYPES: Record<CarType, true> = { loco_diesel: true, coach: true, wagon_box: true, wagon_tank: true };
+const CAR_TYPES: Record<CarType, true> = {
+  loco_diesel: true,
+  loco_freight: true,
+  loco_light: true,
+  coach: true,
+  wagon_box: true,
+  wagon_tank: true,
+};
 const BRIDGES = ['auto', 'force', 'none'];
 
 class Bad extends Error {}
@@ -144,6 +151,7 @@ function check(d: Record<string, unknown>): SaveData {
       const co = obj(c, `train ${id} has a bad car`);
       oneOf(co.type, CAR_TYPES, `train ${id} has a car of an unknown type`);
       bool(co.flip, `train ${id} has a bad car`);
+      if (co.loaded !== undefined) bool(co.loaded, `train ${id} has a bad car`);
     }
     for (const s of arr(o.schedule, `train ${id} has no timetable`)) {
       if (!stationIds.has(s as number)) fail(`train ${id} has a timetable stop at a station that does not exist`);

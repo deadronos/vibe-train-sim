@@ -261,7 +261,7 @@ export class Hud {
         }
         break;
       case 'train':
-        p.innerHTML = `<h2>Add a train</h2><label>Type<select id="train-kind"><option value="passenger">Express: 3 coaches, 2 locomotives</option><option value="shuttle">Local: 2 coaches</option><option value="freight">Freight: 5 wagons</option></select></label><p>Click a track to place it. New trains call at every station.</p>
+        p.innerHTML = `<h2>Add a train</h2><label>Type<select id="train-kind"><option value="passenger">Express: 3 coaches, 2 locomotives</option><option value="shuttle">Local: 2 coaches</option><option value="freight">Freight: 5 loaded wagons</option><option value="emptyFreight">Empties: 5 empty wagons</option></select></label><p>Click a track to place it. New trains call at every station.</p>
           <label class="check"><input id="run-trains" type="checkbox" /> Keep trains moving while editing</label>`;
         {
           const k = $<HTMLSelectElement>('train-kind');
