@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { captureSave } from '../src/persistence';
 import { buildDemoNetwork, populateDemoTrains } from '../src/rail/demoMap';
 import { Network } from '../src/rail/network';
 import { Sim } from '../src/rail/sim';
@@ -7,37 +8,19 @@ import { parseSave } from '../src/saveData';
 import type { SaveData } from '../src/saveData';
 import { Heightfield } from '../src/world/heightfield';
 
-// Mirrors Game.snapshot() for the starter map.
 function starterSave(): SaveData {
   const hf = new Heightfield('alpine', 1);
   const { net, stations } = buildDemoNetwork(hf);
   const sim = new Sim(net);
   populateDemoTrains(sim, stations);
-  return {
-    v: 1,
-    preset: 'alpine',
-    seed: 1,
-    edits: [],
-    net: net.toJSON(),
+  return captureSave({
+    hf,
+    net,
+    sim,
     placed: [{ type: 'tree_pine', x: 1, z: 2, rot: 0.5, scale: 1 }],
     hours: 12,
     drivenId: sim.trains[0].id,
-    trains: sim.trains.map((t) => {
-      const h = sim.head(t);
-      return {
-        id: t.id,
-        name: t.name,
-        cars: t.cars,
-        schedule: t.schedule,
-        schedIdx: t.schedIdx,
-        ai: t.ai,
-        x: h.x,
-        z: h.z,
-        hx: h.tx * h.dir,
-        hz: h.tz * h.dir,
-      };
-    }),
-  };
+  });
 }
 
 const parse = (d: unknown) => parseSave(JSON.stringify(d));

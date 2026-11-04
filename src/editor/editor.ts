@@ -2,12 +2,12 @@
 import * as THREE from 'three';
 import { MapControls } from 'three/addons/controls/MapControls.js';
 
+import type { Game } from '../game';
 import { gameKey } from '../keyFilter';
-import type { Game } from '../main';
 import { FREIGHT, PASSENGER, SHUTTLE } from '../rail/demoMap';
-import type { RailNode, Side } from '../rail/network';
+import type { Dir, RailNode, Side } from '../rail/network';
 import { curveMinRadius, MAX_GRADE, MIN_RADIUS, planCurve } from '../rail/network';
-import type { Car, CarType } from '../rail/sim';
+import type { Car } from '../rail/sim';
 import { Train } from '../rail/sim';
 import type { SceneryType } from '../render/scatter';
 import { WATER_LEVEL } from '../world/heightfield';
@@ -144,7 +144,7 @@ export class Editor {
 
     dom.addEventListener('pointerdown', (e) => this.onDown(e));
     dom.addEventListener('pointermove', (e) => this.onMove(e));
-    dom.addEventListener('pointerup', (e) => this.onUp(e));
+    dom.addEventListener('pointerup', () => this.onUp());
     dom.addEventListener('contextmenu', (e) => e.preventDefault());
     window.addEventListener('keydown', (e) => {
       this.shift = e.shiftKey;
@@ -295,7 +295,7 @@ export class Editor {
       const n = g.net.nodes.get(this.selected);
       if (n) {
         g.net.moveNode(n.id, p.x, n.y, p.z);
-        g.commitEdit({ light: true });
+        g.commitEdit();
         g.hud.syncEditor();
       }
       return;
@@ -304,7 +304,7 @@ export class Editor {
     this.updateHover(p);
   }
 
-  private onUp(e: PointerEvent) {
+  private onUp() {
     if (!this.game.editing) return;
     if (this.dragging) {
       this.dragging = false;
@@ -316,7 +316,6 @@ export class Editor {
       this.game.net.dirty = new Set(this.game.net.segs.keys());
       this.game.commitEdit({ scenery: true });
     }
-    void e;
   }
 
   private brushAt(p: { x: number; z: number }) {
@@ -542,7 +541,7 @@ export class Editor {
     const tz = s.tz / l;
     // Trains keep the signal on their right, so the mouse side picks the direction of travel.
     const cross = (p.x - s.x) * -tz + (p.z - s.z) * tx;
-    const travel: Dir2 = cross >= 0 ? 1 : -1;
+    const travel: Dir = cross >= 0 ? 1 : -1;
     return { seg: near.seg, s: near.s, x: s.x, y: s.y, z: s.z, tx: tx * travel, tz: tz * travel, travel, cross };
   }
 
@@ -571,7 +570,7 @@ export class Editor {
       g.hud.toast('Signal placed');
     }
     g.net.version++;
-    g.commitEdit({});
+    g.commitEdit();
   }
 
   private clickStation(p: { x: number; z: number }) {
@@ -658,7 +657,7 @@ export class Editor {
       g.pushUndo();
       n.signals = {};
       net.version++;
-      g.commitEdit({});
+      g.commitEdit();
       g.hud.toast('Signal removed');
       return;
     }
@@ -831,6 +830,3 @@ export class Editor {
     if (this.handles.instanceColor) this.handles.instanceColor.needsUpdate = true;
   }
 }
-
-type Dir2 = 1 | -1;
-export type { CarType };

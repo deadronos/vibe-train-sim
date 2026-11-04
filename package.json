@@ -9,6 +9,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:smoke": "vite build && playwright test",
     "assets": "/Applications/Blender.app/Contents/MacOS/Blender --background --factory-startup --python tools/blender/build_assetpack.py",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
@@ -20,6 +21,7 @@
     "three": "^0.187.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.1",
     "@types/three": "^0.187.0",
     "oxfmt": "^0.76.0",
     "oxlint": "^1.91.0",

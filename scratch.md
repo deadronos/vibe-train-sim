@@ -1,8 +1,8 @@
 # Next issues
 
-Suggested order for the review issues, written on 2026-11-04. [#55](https://github.com/deadronos/vibe-train-sim/issues/55), the gradient bug, is done.
+Suggested order for the review issues, written on 2026-11-04. [#55](https://github.com/deadronos/vibe-train-sim/issues/55), the gradient bug, and groups 1 and 2 below are done.
 
-## 1. Fix what can hurt a normal session
+## 1. Fix what can hurt a normal session (done)
 
 Do these first. Each is a contained bug, and most players could hit them.
 
@@ -15,9 +15,9 @@ Do these first. Each is a contained bug, and most players could hit them.
 | [#14](https://github.com/deadronos/vibe-train-sim/issues/14) | GPU memory grows with every prop rebuild                                   | Small  |
 | [#22](https://github.com/deadronos/vibe-train-sim/issues/22) | The scene is almost black after sunset, for part of every day              | Small  |
 
-## 2. Add a safety net
+## 2. Add a safety net (done)
 
-Do these before any large refactor.
+Do these before any large refactor. The follow-ups #5, #6 and #7 are still open.
 
 - [#9](https://github.com/deadronos/vibe-train-sim/issues/9): remove dead code. A quick warm-up that makes the next steps easier.
 - [#10](https://github.com/deadronos/vibe-train-sim/issues/10): test saves, undo and terrain grading.

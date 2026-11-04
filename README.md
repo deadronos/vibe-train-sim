@@ -53,6 +53,7 @@ Press `?` in the app for all controls.
 | `src/ui/`                          | Interface and styling                                                                   |
 | `tools/blender/build_assetpack.py` | Generates `public/assets/assetpack.glb` and a preview render                            |
 | `tests/`                           | Simulation tests, including a 40-minute run of the starter map                          |
+| `e2e/`                             | Browser smoke test of the built site                                                    |
 
 ## Commands
 
@@ -68,7 +69,7 @@ npm run format
 npm run assets
 ```
 
-`npm run check` checks formatting and lint, runs the tests, then builds.
+`npm run check` checks formatting and lint, runs the tests, then builds. `npm run test:smoke` runs the browser smoke test, which needs `npx playwright install chromium` once.
 
 `npm run assets` needs Blender at `/Applications/Blender.app`. Change the path in `package.json` if yours is elsewhere. The built `assetpack.glb` is included, so you only need Blender to change the models.
 

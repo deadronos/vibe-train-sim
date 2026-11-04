@@ -1,6 +1,6 @@
 import type { BrushMode, Tool } from '../editor/editor';
 // HTML interface: mode lever, clock, train register, driver's desk and the editor's lever frame.
-import type { Game } from '../main';
+import type { Game } from '../game';
 import type { Side } from '../rail/network';
 import type { SimEvent } from '../rail/sim';
 import { CAM_LABEL } from '../render/cameraRig';
@@ -44,7 +44,6 @@ function polar(angleDeg: number, r: number) {
 const kmhToAngle = (k: number) => DIAL_START + (Math.min(k, MAX_KMH) / MAX_KMH) * DIAL_SWEEP;
 
 export class Hud {
-  lever = 0;
   autopilot = true;
   private trainRows = new Map<number, { speed: HTMLElement; state: HTMLElement; li: HTMLElement }>();
   private frameCounter = 0;
@@ -344,7 +343,7 @@ export class Hud {
       }
       g.net.moveNode(n.id, n.x, Number(h.value), n.z);
       y.textContent = Number(h.value).toFixed(1);
-      g.commitEdit({ light: true });
+      g.commitEdit();
     };
     h.onchange = () => g.commitEdit({ scenery: true });
     if (station) {
@@ -424,7 +423,7 @@ export class Hud {
     $('dial-speed').textContent = String(Math.round(kmh));
     this.setDialLimit(t.limit * 3.6);
     const leverEl = $<HTMLInputElement>('power-lever');
-    leverEl.value = String(t.ai ? t.throttle - t.brake : this.lever);
+    leverEl.value = String(t.ai ? t.throttle - t.brake : g.input.lever);
 
     if (this.frameCounter % 8 !== 0) return;
     this.autopilot = t.ai;
