@@ -8,11 +8,18 @@ Dependencies point downward only.
 | ---------- | -------------------------------------- | -------------------------------------------------------------- |
 | Interface  | `src/ui/`                              | HTML interface; reads game state and calls `Game` methods      |
 | Editor     | `src/editor/`                          | Turns pointer input into map edits                             |
-| Game       | `src/main.ts`                          | Owns the world, frame loop, modes, saves and undo              |
+| Game       | `src/game.ts`                          | Owns the world, frame loop and modes, and coordinates the rest |
 | Rendering  | `src/render/`                          | Draws simulation and terrain state with Three.js               |
 | Simulation | `src/rail/`, `src/world/`, `src/core/` | Rail model, trains, heights and noise, with no Three.js or DOM |
 
-The editor and interface import `Game` as a type, while `main.ts` creates them.
+`src/main.ts` is the entry point and the only module that runs anything on import. Next to `Game`, and needing no WebGL so tests can use them:
+
+- `src/persistence.ts` moves a world to and from save data, browser storage and files.
+- `src/saveData.ts` defines the save format and validates it.
+- `src/history.ts` holds the undo and redo stacks.
+- `src/driverInput.ts` holds held keys and the power lever, and binds the keyboard.
+
+The editor, interface and `driverInput.ts` import `Game` as a type, while `game.ts` creates them.
 
 The simulation layer's isolation is a hard rule: it is what lets `tests/` run the whole railway headlessly.
 
@@ -65,7 +72,7 @@ If you change the format incompatibly, bump `v` and handle or reject older saves
 
 ## Start-up failures
 
-`boot()` at the bottom of `src/main.ts` checks for WebGL, creates `Game` and starts it inside one error handler, so any failure replaces the loading bar with a message. Wording and classification live in `src/startupError.ts`. Players get plain advice; developer detail such as `npm run assets` shows only when `import.meta.env.DEV` is true. A `webglcontextlost` event saves the map, stops the frame loop and offers a reload.
+`boot()` in `src/main.ts` checks for WebGL, creates `Game` and starts it inside one error handler, so any failure replaces the loading bar with a message. Wording and classification live in `src/startupError.ts`. Players get plain advice; developer detail such as `npm run assets` shows only when `import.meta.env.DEV` is true. A `webglcontextlost` event saves the map, stops the frame loop and offers a reload.
 
 ## Assets
 

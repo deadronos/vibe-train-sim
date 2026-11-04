@@ -5,12 +5,13 @@ A browser train simulator and map editor built with Three.js and TypeScript. It 
 ## Commands
 
 ```bash
-npm run dev     # Start the app
-npm test        # Run the simulation tests
-npm run build   # Type-check and build
-npm run check   # Check formatting and lint, run tests, then build
-npm run format  # Format the code
-npm run assets  # Rebuild the Blender asset pack
+npm run dev         # Start the app
+npm test            # Run the simulation tests
+npm run test:smoke  # Run the browser smoke test on a fresh build
+npm run build       # Type-check and build
+npm run check       # Check formatting and lint, run tests, then build
+npm run format      # Format the code
+npm run assets      # Rebuild the Blender asset pack
 ```
 
 Before finishing a code change, run `npm run check`. For anything visual, also look at it in a browser.
