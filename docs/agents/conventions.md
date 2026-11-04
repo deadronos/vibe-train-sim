@@ -41,7 +41,7 @@ The look is a signal box: painted steel, enamel plates and brass. The lever fram
 ## Tests
 
 - Put behaviour tests in `tests/`, driving `Network`, `Sim` and the modules beside `Game` directly.
-- A rail or signalling change needs a test. A bug fix needs one that fails without the fix.
+- A rail or signalling change needs a test. A bug fix needs one that fails without the fix. A physics change also needs the autopilot stopping tests in `tests/brakes.test.ts` to pass for every kind of train.
 - The 40-minute starter map run guards against collisions and stalled trains. If it fails, fix the cause before touching its thresholds.
 - Terrain changes need a check on every preset, since they can behave differently per landscape.
 - `e2e/` holds a browser smoke test of the built site. It checks console output and game state, not pixels. Rendering details and most editor behaviour aren't covered, so still check those in a browser.

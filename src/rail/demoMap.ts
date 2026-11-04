@@ -3,8 +3,9 @@ import type { Heightfield } from '../world/heightfield';
 import { riverCenter, WATER_LEVEL } from '../world/heightfield';
 import type { RailNode, Side, Station } from './network';
 import { Network } from './network';
-import type { Car, CarType, Sim } from './sim';
+import type { Sim } from './sim';
 import { Train } from './sim';
+import type { Car, CarType } from './vehicles';
 
 const consist = (...types: CarType[]): Car[] => types.map((type) => ({ type, flip: false }));
 
@@ -13,8 +14,9 @@ export const PASSENGER = () => {
   cars[cars.length - 1].flip = true; // Rear locomotive faces outward: a push-pull set
   return cars;
 };
-export const SHUTTLE = () => consist('loco_diesel', 'coach', 'coach');
-export const FREIGHT = () => consist('loco_diesel', 'wagon_box', 'wagon_tank', 'wagon_box', 'wagon_tank', 'wagon_box');
+export const SHUTTLE = () => consist('loco_light', 'coach', 'coach');
+export const FREIGHT = () => consist('loco_freight', 'wagon_box', 'wagon_tank', 'wagon_box', 'wagon_tank', 'wagon_box');
+export const EMPTY_FREIGHT = () => FREIGHT().map((c) => ({ ...c, loaded: c.type === 'loco_freight' }));
 
 export function buildDemoNetwork(hf: Heightfield): { net: Network; stations: Record<string, Station> } {
   const net = new Network();

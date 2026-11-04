@@ -24,6 +24,10 @@ Do these before any large refactor. The follow-ups #5, #6 and #7 are still open.
 - [#11](https://github.com/deadronos/vibe-train-sim/issues/11): add a browser smoke test to CI. Nothing checks the running game automatically today.
 - [#4](https://github.com/deadronos/vibe-train-sim/issues/4): split `Game`, once the tests above are in. [#5](https://github.com/deadronos/vibe-train-sim/issues/5), [#6](https://github.com/deadronos/vibe-train-sim/issues/6) and [#7](https://github.com/deadronos/vibe-train-sim/issues/7) can follow as needed.
 
+## Physics batch (done)
+
+[#67](https://github.com/deadronos/vibe-train-sim/issues/67), [#57](https://github.com/deadronos/vibe-train-sim/issues/57), [#56](https://github.com/deadronos/vibe-train-sim/issues/56), [#61](https://github.com/deadronos/vibe-train-sim/issues/61) and [#66](https://github.com/deadronos/vibe-train-sim/issues/66) were done ahead of group 3. Rolling back, part of #56, waits for [#64](https://github.com/deadronos/vibe-train-sim/issues/64).
+
 ## 3. Make driving a game
 
 Driving by hand has no goal or consequences yet, so this adds the most for players.
@@ -36,7 +40,6 @@ Driving by hand has no goal or consequences yet, so this adds the most for playe
 
 ## 4. Protect players' maps
 
-- [#66](https://github.com/deadronos/vibe-train-sim/issues/66): save full train state. It changes the save format, so build it on the validation from #3.
 - [#36](https://github.com/deadronos/vibe-train-sim/issues/36): add save slots and warnings before work is overwritten.
 - [#37](https://github.com/deadronos/vibe-train-sim/issues/37), [#35](https://github.com/deadronos/vibe-train-sim/issues/35) and [#38](https://github.com/deadronos/vibe-train-sim/issues/38): fix the remaining editor bugs.
 
@@ -49,5 +52,4 @@ Driving by hand has no goal or consequences yet, so this adds the most for playe
 ## Wait on these
 
 - **Large graphics work** ([#18](https://github.com/deadronos/vibe-train-sim/issues/18), [#23](https://github.com/deadronos/vibe-train-sim/issues/23)): do [#19](https://github.com/deadronos/vibe-train-sim/issues/19) first, so there are real numbers from slower hardware to compare against.
-- **Deeper physics** ([#56](https://github.com/deadronos/vibe-train-sim/issues/56), [#57](https://github.com/deadronos/vibe-train-sim/issues/57)): these matter more once driving has a score. The autopilot must keep stopping accurately through both.
 - **Shunting** ([#64](https://github.com/deadronos/vibe-train-sim/issues/64)): this needs a design note first, because it changes how trains reverse.

@@ -29,11 +29,15 @@
       <div class="plate" id="clock-plate">
         <output id="clock">12:00</output>
         <input id="time-slider" type="range" min="0" max="24" step="0.05" aria-label="Time of day" />
-        <div class="rate" role="group" aria-label="Time speed">
+        <div class="rate" role="group" aria-label="Clock speed">
           <button data-rate="0" title="Stop the clock">Stop</button>
-          <button data-rate="0.0003" title="Real time">Real</button>
-          <button data-rate="0.0167" title="One minute per second">1 min/s</button>
-          <button data-rate="0.1667" title="Ten minutes per second">10 min/s</button>
+          <button data-rate="0.0003" title="Keep the clock in time with the trains">Real</button>
+          <button data-rate="0.0167" title="Time-lapse of the sky: one minute per second. Trains keep their own speed">
+            1 min/s
+          </button>
+          <button data-rate="0.1667" title="Time-lapse of the sky: ten minutes per second. Trains keep their own speed">
+            10 min/s
+          </button>
         </div>
         <label class="inline">Cloud <input id="cloud-slider" type="range" min="0" max="1" step="0.01" /></label>
       </div>
@@ -56,6 +60,13 @@
     <!-- Train register -->
     <aside id="trains" class="plate" aria-label="Trains">
       <h2>Trains</h2>
+      <div class="rate" role="group" aria-label="Train speed">
+        <button data-speed="0" title="Pause the railway">Pause</button>
+        <button data-speed="1" title="Normal speed">1×</button>
+        <button data-speed="2" title="Twice as fast">2×</button>
+        <button data-speed="4" title="Four times as fast">4×</button>
+        <button data-speed="8" title="Eight times as fast">8×</button>
+      </div>
       <ul id="train-list"></ul>
     </aside>
 
@@ -71,6 +82,7 @@
           <span id="signal-text">No signal ahead</span>
           <span id="station-text"></span>
           <span id="junction-text"></span>
+          <span id="train-text"></span>
         </div>
       </div>
 
@@ -163,9 +175,9 @@
           <dl>
             <h3>Driving</h3>
             <dt>W, S</dt>
-            <dd>More power, less power then brake</dd>
+            <dd>More power; less power, then engine brake, then air brake</dd>
             <dt>Space</dt>
-            <dd>Full brake while held</dd>
+            <dd>Emergency brake while held</dd>
             <dt>P</dt>
             <dd>Autopilot on or off</dd>
             <dt>J</dt>
@@ -178,6 +190,8 @@
             <dd>Change camera; drag to look around</dd>
             <dt>N</dt>
             <dd>Drive the next train</dd>
+            <dt>, and .</dt>
+            <dd>Slow down or speed up the railway; the slowest is pause</dd>
             <dt>M</dt>
             <dd>Sound on or off</dd>
             <dt>E</dt>

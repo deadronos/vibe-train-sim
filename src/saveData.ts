@@ -1,12 +1,14 @@
 // Save format and validation. Kept free of Three.js and the DOM so tests can run it without WebGL.
 import type { Network } from './rail/network';
-import type { Car, CarType } from './rail/sim';
+import type { TrainState } from './rail/sim';
+import type { Car, CarType } from './rail/vehicles';
 import type { PlacedItem, SceneryType } from './render/scatter';
 import type { Preset } from './world/heightfield';
 import { RES } from './world/heightfield';
 
 export interface SaveData {
-  v: 1;
+  // Version 1 saves have no train state and load unchanged, with v raised to 2.
+  v: 2;
   preset: Preset;
   seed: number;
   edits: number[];
@@ -25,6 +27,7 @@ export interface SaveData {
     z: number;
     hx: number;
     hz: number;
+    state?: TrainState;
   }[];
 }
 
@@ -42,7 +45,14 @@ const SCENERY: Record<SceneryType, true> = {
   house_b: true,
   house_c: true,
 };
-const CAR_TYPES: Record<CarType, true> = { loco_diesel: true, coach: true, wagon_box: true, wagon_tank: true };
+const CAR_TYPES: Record<CarType, true> = {
+  loco_diesel: true,
+  loco_freight: true,
+  loco_light: true,
+  coach: true,
+  wagon_box: true,
+  wagon_tank: true,
+};
 const BRIDGES = ['auto', 'force', 'none'];
 
 class Bad extends Error {}
@@ -113,8 +123,34 @@ function checkNet(raw: unknown) {
   return stationIds;
 }
 
+function checkPieces(raw: unknown, what: string) {
+  for (const p of arr(raw, what)) {
+    const o = obj(p, what);
+    int(o.seg, what);
+    side(o.dir, what);
+  }
+}
+
+function checkTrainState(raw: unknown, id: number) {
+  const what = `train ${id} has a bad saved state`;
+  const s = obj(raw, what);
+  checkPieces(s.trail, what);
+  if (!(s.trail as unknown[]).length) fail(what);
+  checkPieces(s.route, what);
+  for (const k of ['headS', 'speed', 'throttle', 'brake', 'dynamic', 'airBrake', 'dwell', 'stopRemain', 'stuck'])
+    num(s[k], what);
+  num(s.crashCooldown, what);
+  if ((s.speed as number) < 0) fail(what);
+  bool(s.emergency, what);
+  if (s.targetStation !== null) int(s.targetStation, what);
+  for (const g of arr(s.grants, what)) str(g, what);
+  const score = obj(s.score, what);
+  num(score.spads, what);
+  num(score.stops, what);
+}
+
 function check(d: Record<string, unknown>): SaveData {
-  if (d.v !== 1) fail('it was saved by a different version of the game');
+  if (d.v !== 1 && d.v !== 2) fail('it was saved by a different version of the game');
   oneOf(d.preset, PRESETS, 'the landscape type is unknown');
   num(d.seed, 'the landscape seed is not a number');
   const edits = arr(d.edits, 'the terrain edits are missing');
@@ -144,6 +180,7 @@ function check(d: Record<string, unknown>): SaveData {
       const co = obj(c, `train ${id} has a bad car`);
       oneOf(co.type, CAR_TYPES, `train ${id} has a car of an unknown type`);
       bool(co.flip, `train ${id} has a bad car`);
+      if (co.loaded !== undefined) bool(co.loaded, `train ${id} has a bad car`);
     }
     for (const s of arr(o.schedule, `train ${id} has no timetable`)) {
       if (!stationIds.has(s as number)) fail(`train ${id} has a timetable stop at a station that does not exist`);
@@ -152,9 +189,10 @@ function check(d: Record<string, unknown>): SaveData {
       fail(`train ${id} has a bad timetable position`);
     bool(o.ai, `train ${id} has a bad driver setting`);
     for (const k of ['x', 'z', 'hx', 'hz']) num(o[k], `train ${id} has a bad position`);
+    if (o.state !== undefined) checkTrainState(o.state, id);
   }
   if (d.drivenId !== null && !trainIds.has(d.drivenId as number)) fail('the driven train does not exist');
-  return d as unknown as SaveData;
+  return { ...d, v: 2 } as unknown as SaveData;
 }
 
 /** Validates a whole save so applying it cannot fail halfway. The reason is a plain-words fragment. */

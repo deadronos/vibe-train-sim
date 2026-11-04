@@ -43,6 +43,8 @@ import { Hud } from './ui/hud';
 import type { Preset } from './world/heightfield';
 import { Heightfield } from './world/heightfield';
 
+const TRAIN_SPEEDS = [0, 1, 2, 4, 8];
+
 export class Game {
   renderer: THREE.WebGLRenderer;
   scene = new THREE.Scene();
@@ -65,6 +67,8 @@ export class Game {
   driven: Train | null = null;
   editing = false;
   quality: Quality = readQuality();
+  /** How fast the railway runs: 0 is paused. */
+  trainSpeed = 1;
   input = new DriverInput();
   private history = new History();
   private last = performance.now();
@@ -341,7 +345,7 @@ export class Game {
     if (on) this.sim.plan(t, false);
     else {
       t.throttle = 0;
-      this.input.lever = t.speed > 0.2 ? 0 : -0.3;
+      this.input.lever = t.speed > 0.2 ? 0 : -0.5;
       t.dwell = 0;
       t.stopRemain = -1;
     }
@@ -398,6 +402,17 @@ export class Game {
     if (!t.ai) this.input.drive(t, dt);
   }
 
+  setTrainSpeed(speed: number) {
+    this.trainSpeed = speed;
+    this.hud.syncTrainSpeed();
+  }
+
+  /** Steps through the train speeds from the keyboard. */
+  changeTrainSpeed(by: 1 | -1) {
+    const i = TRAIN_SPEEDS.indexOf(this.trainSpeed);
+    this.setTrainSpeed(TRAIN_SPEEDS[Math.max(0, Math.min(TRAIN_SPEEDS.length - 1, i + by))]);
+  }
+
   setLever(v: number) {
     if (this.driven?.ai) this.setAutopilot(false);
     this.input.lever = v;
@@ -408,7 +423,7 @@ export class Game {
     if (this.lost) return;
     requestAnimationFrame(() => this.frame());
     const now = performance.now();
-    const dt = Math.min(0.1, (now - this.last) / 1000);
+    const dt = Math.min(0.25, (now - this.last) / 1000);
     this.last = now;
     this.elapsed += dt;
     this.fpsAcc += dt;
@@ -419,9 +434,9 @@ export class Game {
       this.fpsFrames = 0;
     }
 
-    if (!this.editing) this.driveInput(dt);
+    if (!this.editing && this.trainSpeed > 0) this.driveInput(dt);
     if (!this.editing || this.editor.runTrains) {
-      this.sim.update(dt);
+      this.sim.update(dt * this.trainSpeed);
     } else {
       this.interlockTimer += dt;
       if (this.interlockTimer > 0.3) {
@@ -447,7 +462,7 @@ export class Game {
       const h = this.sim.head(this.driven);
       this.focus.set(h.x, h.y, h.z);
     }
-    this.env.update(dt, this.focus);
+    this.env.update(dt, this.focus, this.trainSpeed);
     this.assets.setNight(this.env.night);
     this.props.update(this.sim, this.camera, this.env.night);
     this.trainsR.updateHeadlight(this.sim, this.driven, this.env.night);
@@ -457,7 +472,8 @@ export class Game {
     if (t) {
       const h = this.sim.head(t);
       const d = this.camera.position.distanceTo(this.focus.set(h.x, h.y, h.z));
-      this.audio.update(dt, t.speed, t.throttle, this.editing ? 0 : Math.max(0.05, 1 - d / 500));
+      const quiet = this.editing || this.trainSpeed === 0;
+      this.audio.update(dt, t.speed, t.throttle, quiet ? 0 : Math.max(0.05, 1 - d / 500));
     }
     this.hud.update();
     this.composer.render();

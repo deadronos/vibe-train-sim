@@ -4,11 +4,11 @@ import { MapControls } from 'three/addons/controls/MapControls.js';
 
 import type { Game } from '../game';
 import { gameKey } from '../keyFilter';
-import { FREIGHT, PASSENGER, SHUTTLE } from '../rail/demoMap';
+import { EMPTY_FREIGHT, FREIGHT, PASSENGER, SHUTTLE } from '../rail/demoMap';
 import type { Dir, RailNode, Side } from '../rail/network';
 import { curveMinRadius, MAX_GRADE, MIN_RADIUS, planCurve } from '../rail/network';
-import type { Car } from '../rail/sim';
 import { Train } from '../rail/sim';
+import type { Car } from '../rail/vehicles';
 import type { SceneryType } from '../render/scatter';
 import { WATER_LEVEL } from '../world/heightfield';
 
@@ -46,7 +46,7 @@ export class Editor {
   brushRadius = 60;
   brushStrength = 0.6;
   sceneryType: SceneryType = 'tree_pine';
-  trainKind: 'passenger' | 'shuttle' | 'freight' = 'passenger';
+  trainKind: 'passenger' | 'shuttle' | 'freight' | 'emptyFreight' = 'passenger';
   selected: number | null = null;
   status = '';
   runTrains = false;
@@ -626,9 +626,16 @@ export class Editor {
       return;
     }
     g.pushUndo();
-    const types: Record<string, () => Car[]> = { passenger: PASSENGER, shuttle: SHUTTLE, freight: FREIGHT };
+    const types: Record<string, () => Car[]> = {
+      passenger: PASSENGER,
+      shuttle: SHUTTLE,
+      freight: FREIGHT,
+      emptyFreight: EMPTY_FREIGHT,
+    };
     const num = 400 + Math.floor(Math.random() * 500);
-    const label = { passenger: 'Express', shuttle: 'Local', freight: 'Freight' }[this.trainKind];
+    const label = { passenger: 'Express', shuttle: 'Local', freight: 'Freight', emptyFreight: 'Empties' }[
+      this.trainKind
+    ];
     const id = g.sim.trains.reduce((m, t) => Math.max(m, t.id), 0) + 1;
     const train = new Train(id, `${label} ${num}`, types[this.trainKind]());
     g.sim.trains.push(train);

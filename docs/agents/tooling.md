@@ -67,6 +67,7 @@ __game.env.timeScale = 0; // Stop the clock
 __game.env.hours = 21.5; // Jump to night
 __game.newWorld('desert', 3, true); // Load a landscape with the starter railway
 __game.sim.trains.map((t) => t.statusText);
+__game.setTrainSpeed(8); // Fast-forward the railway; 0 pauses it
 ```
 
 ## Gotchas
@@ -78,4 +79,6 @@ __game.sim.trains.map((t) => t.statusText);
 - **Bloom threshold is tied to sky brightness.** `src/render/environment.ts` caps the sky below the bloom threshold in `src/game.ts`. Change them together, or the whole sky blooms.
 - **Dusk must not be darker than night.** The key light hands over from sun to moon between about 18:45 and 19:30, and exposure and sky fill are raised through it. Check every half hour from 17:30 to 21:00 after touching `src/render/environment.ts`. With the pane hidden, set `__game.env.timeScale = 0` and `__game.env.hours`, then call `__game.env.update(0.5, __game.camera.position)` and `__game.composer.render()` yourself before a screenshot.
 - **The sky patch depends on three.js internals.** It replaces `#include <tonemapping_fragment>` in the Sky shader, so check it after upgrading three.js.
+- **The clock has two meanings.** The clock's Real setting follows train speed, and pausing the railway stops the clock at any setting. The faster settings are a time-lapse of the sky, so the sun moves far faster than the trains on purpose.
+- **Physics changes can make the 40-minute run slower, not just wrong.** The freight train's brakes and top speed set the pace on the starter map, so look at `t.score.stops` if that test fails before changing thresholds.
 - **`console.log` from passing tests may not appear in non-interactive runs.** Write to a file if you need output from a throwaway test.

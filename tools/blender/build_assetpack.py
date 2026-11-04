@@ -44,6 +44,9 @@ M = dict(
     livery=mat("livery_teal", (0.015, 0.16, 0.2), 0.32, 0.25),
     livery2=mat("livery_cream", (0.8, 0.72, 0.52), 0.35, 0.1),
     stripe=mat("livery_yellow", (0.9, 0.5, 0.03), 0.4),
+    freight=mat("livery_oxide", (0.18, 0.035, 0.018), 0.5, 0.15),
+    freight_band=mat("livery_white", (0.75, 0.75, 0.72), 0.45),
+    light=mat("livery_blue", (0.02, 0.05, 0.18), 0.3, 0.25),
     roof=mat("roof_grey", (0.11, 0.115, 0.12), 0.55, 0.5),
     steel=mat("steel_dark", (0.03, 0.03, 0.033), 0.55, 0.9),
     bright=mat("steel_bright", (0.45, 0.45, 0.47), 0.3, 1.0),
@@ -238,12 +241,13 @@ def wagon_tank():
     return join("wagon_tank", p)
 
 
-def locomotive():
+def locomotive(name="loco_diesel", L=19.0, livery=None, stripe=None, fans=(-3.8, 3.8)):
     """An original bonnet-free diesel-electric with a wedge cab at each end. Nose faces -Y."""
-    L = 19.0
+    livery = livery or M["livery"]
+    stripe = stripe or M["stripe"]
     hw, z0, z1 = 1.48, 1.2, 3.55
     y_cab = -L / 2 + 3.3
-    p = [prism("hood", body_section(hw, z0, z1, 0.5), y_cab, L / 2 - 3.3, M["livery"])]
+    p = [prism("hood", body_section(hw, z0, z1, 0.5), y_cab, L / 2 - 3.3, livery)]
 
     # Wedge cabs: lofted cross-sections sloping back to the windscreen.
     def cab(sign):
@@ -263,7 +267,7 @@ def locomotive():
         bm.faces.new(rings[-1])
         bm.faces.new(list(reversed(rings[0])))
         bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
-        out = [new_obj("cab", bm, M["livery"])]
+        out = [new_obj("cab", bm, livery)]
         # Windscreen panel on the raked section, side windows and nose stripe.
         ys = y_start + sign * 2.25
         ye = y_start + sign * 2.8
@@ -278,26 +282,28 @@ def locomotive():
         out.append(new_obj("screen", scr, M["glass"]))
         for sx in (-1, 1):
             out.append(box("sidewin", (sx * (hw - 0.01), y_start + sign * 1.0, 2.85), (0.05, 1.3, 0.75), M["glass"], 0.015))
-            out.append(box("nosebar", (sx * 0.0, y_start + sign * 3.33, 1.65), (2.3, 0.05, 0.42), M["stripe"]))
+            out.append(box("nosebar", (sx * 0.0, y_start + sign * 3.33, 1.65), (2.3, 0.05, 0.42), stripe))
             out.append(cyl("headlamp", (sx * 0.85, y_start + sign * 3.3, 2.12), (sx * 0.85, y_start + sign * 3.42, 2.12), 0.14, M["head"], 12))
             out.append(cyl("taillamp", (sx * 1.15, y_start + sign * 3.27, 2.12), (sx * 1.15, y_start + sign * 3.38, 2.12), 0.08, M["tail"], 10))
         return out
 
     p += cab(-1) + cab(1)
     for sx in (-1, 1):
-        p.append(box("stripe", (sx * (hw + 0.01), 0, 1.72), (0.03, L - 7, 0.16), M["stripe"]))
-        for i in range(7):
-            p.append(box("grille", (sx * (hw - 0.03), -5 + i * 1.65, 3.0), (0.08, 1.35, 0.55), M["steel"]))
-        for y in (-5.8, 5.8):
+        p.append(box("stripe", (sx * (hw + 0.01), 0, 1.72), (0.03, L - 7, 0.16), stripe))
+        grilles = int((L - 9) / 1.65) + 1
+        for i in range(grilles):
+            y = (i - (grilles - 1) / 2) * 1.65
+            p.append(box("grille", (sx * (hw - 0.03), y, 3.0), (0.08, 1.35, 0.55), M["steel"]))
+        for y in (-(L / 2 - 3.7), L / 2 - 3.7):
             p.append(box("door", (sx * (hw + 0.01), y, 2.5), (0.03, 0.85, 1.95), M["roof"]))
-    for y in (-3.8, 3.8):
+    for y in fans:
         p.append(cyl("fan", (0, y, 3.98), (0, y, 4.1), 0.75, M["steel"], 20))
         p.append(cyl("fanhub", (0, y, 4.08), (0, y, 4.14), 0.2, M["bright"], 10))
     p.append(box("deck", (0, 0, 1.08), (2.85, L - 0.4, 0.26), M["steel"]))
     p.append(box("fuel", (0, 0, 0.72), (2.2, 5.6, 0.62), M["steel"], 0.06))
     for y in (-L / 2 - 0.05, L / 2 + 0.05):
-        p.append(box("pilot", (0, y * 0.985, 0.75), (2.5, 0.38, 0.65), M["stripe"], 0.03, (0.95, 0.8)))
-    return join("loco_diesel", p)
+        p.append(box("pilot", (0, y * 0.985, 0.75), (2.5, 0.38, 0.65), stripe, 0.03, (0.95, 0.8)))
+    return join(name, p)
 
 
 # ---------------------------------------------------------------- lineside
@@ -442,7 +448,10 @@ def rock(name, r, sub=2):
 
 
 ASSETS = [
-    bogie, coach, wagon_box, wagon_tank, locomotive, signal, platform, lamp_post, shelter, station_building,
+    bogie, coach, wagon_box, wagon_tank, locomotive,
+    lambda: locomotive("loco_freight", 22.0, M["freight"], M["freight_band"], (-6.2, -2.1, 2.1, 6.2)),
+    lambda: locomotive("loco_light", 16.0, M["light"], M["livery2"], (0.0,)),
+    signal, platform, lamp_post, shelter, station_building,
     lambda: house("house_a", M["plaster"], M["tile"]),
     lambda: house("house_b", M["plaster2"], M["slate"], 6.0, 11.0, 3.2),
     lambda: house("house_c", M["brick"], M["slate"], 8.0, 8.0, 5.4),

@@ -72,7 +72,7 @@ export class CameraRig {
 
   update(sim: Sim, t: Train, hf: Heightfield, dt: number) {
     const cam = this.camera;
-    const head = sim.head(t);
+    const head = sim.drawn(t);
     const fx = head.tx * head.dir;
     const fy = head.ty * head.dir;
     const fz = head.tz * head.dir;
@@ -89,7 +89,7 @@ export class CameraRig {
       cam.lookAt(this.lookTarget);
       return;
     }
-    const mid = sim.behind(t, Math.min(t.length * 0.3, 40));
+    const mid = sim.drawn(t, Math.min(t.length * 0.3, 40));
     this.target.set(mid.x, mid.y + 2.4, mid.z);
     if (this.mode === 'trackside') {
       if (!this.sideValid || this.side.distanceTo(this.target) > 340) {

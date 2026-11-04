@@ -1,25 +1,22 @@
 // Train physics, block signalling with route locking, and timetable AI. Contains no rendering code.
 import type { Dir, Network, Piece, Side } from './network';
+import type { Car } from './vehicles';
+import { carBrake, carMass, VEHICLES } from './vehicles';
 
 export type Aspect = 'red' | 'yellow' | 'green';
-export type CarType = 'loco_diesel' | 'coach' | 'wagon_box' | 'wagon_tank';
-
-export const CAR_LENGTH: Record<CarType, number> = { loco_diesel: 20, coach: 23, wagon_box: 16, wagon_tank: 14 };
-const CAR_MASS: Record<CarType, number> = { loco_diesel: 90, coach: 42, wagon_box: 38, wagon_tank: 50 }; // tonnes
+/** Seconds per simulation step. Results don't depend on how often frames arrive. */
+export const STEP = 1 / 30;
+const MAX_STEPS_PER_UPDATE = 32; // Beyond this a slow machine falls behind rather than stalling further
 const GAP = 0.8;
 const G = 9.81;
-const SERVICE_BRAKE = 0.75;
-const FULL_BRAKE = SERVICE_BRAKE * 1.25;
-const PLAN_BRAKE = 0.55; // AI plans softer than the brake can deliver
+const EMERGENCY = 1.5; // Emergency brake force, as a multiple of full service braking
+const PLAN_SHARE = 0.6; // AI plans softer than the service brake can deliver
 const PLAN_MARGIN = 0.7; // Share of the deceleration left on a descent that the AI relies on
 const MIN_PLAN_BRAKE = 0.1;
-const POWER = 2800; // kW per locomotive
-const TRACTIVE = 300; // kN per locomotive
-
-export interface Car {
-  type: CarType;
-  flip: boolean;
-}
+const ADHESION = 0.3; // Share of the weight on driven wheels that the rail can take as pulling force
+const SLIP_GRIP = 0.75; // Share of that limit left once the wheels are slipping
+const CURVE_RESISTANCE = 0.6; // Divided by radius in metres, as a share of weight
+const DYNAMIC_FADE_SPEED = 2; // m/s; engine braking fades out below this
 
 export const keyOf = (node: number, side: Side) => `${node}:${side}`;
 
@@ -42,6 +39,26 @@ export interface NextSignal {
   dist: number;
 }
 
+/** Everything a save needs to put a moving train back exactly as it was. */
+export interface TrainState {
+  trail: Piece[];
+  headS: number;
+  speed: number;
+  throttle: number;
+  brake: number;
+  dynamic: number;
+  emergency: boolean;
+  airBrake: number;
+  route: Piece[];
+  targetStation: number | null;
+  dwell: number;
+  stopRemain: number;
+  stuck: number;
+  crashCooldown: number;
+  grants: string[];
+  score: { spads: number; stops: number };
+}
+
 export class Train {
   id: number;
   name: string;
@@ -50,7 +67,15 @@ export class Train {
   headS = 0;
   speed = 0;
   throttle = 0;
+  /** Air brake demand: 0 to 1 of full service braking. */
   brake = 0;
+  /** Engine brake demand, 0 to 1. Works at once but only from the locomotives. */
+  dynamic = 0;
+  emergency = false;
+  /** Air brake actually applied, in the same units as brake. It chases the demand. */
+  airBrake = 0;
+  /** True while the wheels spin because more force was asked for than the rail can take. */
+  slipping = false;
   ai = true;
   schedule: number[] = []; // Station ids; empty = every station
   schedIdx = 0;
@@ -76,18 +101,65 @@ export class Train {
 
   get length() {
     let l = 0;
-    for (const c of this.cars) l += CAR_LENGTH[c.type] + GAP;
+    for (const c of this.cars) l += VEHICLES[c.type].length + GAP;
     return l - GAP;
   }
 
   get mass() {
     let m = 0;
-    for (const c of this.cars) m += CAR_MASS[c.type];
+    for (const c of this.cars) m += carMass(c);
     return m;
   }
 
-  get locos() {
-    return Math.max(1, this.cars.filter((c) => c.type === 'loco_diesel').length);
+  /** The slowest vehicle sets the speed of the whole train. */
+  get topSpeed() {
+    let v = Infinity;
+    for (const c of this.cars) v = Math.min(v, VEHICLES[c.type].topSpeed);
+    return v;
+  }
+
+  /** Pulling force available at a speed, from every locomotive, in kN. */
+  tractiveForce(speed: number) {
+    let f = 0;
+    for (const c of this.cars) {
+      const tr = VEHICLES[c.type].traction;
+      if (tr) f += Math.min(tr.tractive, tr.power / Math.max(speed, 0.5));
+    }
+    return f;
+  }
+
+  /** The most pulling force the rail can take, in kN. */
+  get adhesionLimit() {
+    let driven = 0;
+    for (const c of this.cars) if (VEHICLES[c.type].traction) driven += carMass(c);
+    return driven * G * ADHESION;
+  }
+
+  /** Air brake force on the whole train at full service braking, in kN. */
+  get brakeForce() {
+    let f = 0;
+    for (const c of this.cars) f += carBrake(c);
+    return f;
+  }
+
+  /** Seconds for the air brake to reach every car. It takes longer to release. */
+  get brakeLag() {
+    return 1.2 + this.length / 80;
+  }
+
+  /** Friction brakes weaken as speed rises. */
+  airDecel(speed: number) {
+    return ((1.2 - 0.5 * Math.min(1, speed / 44)) * this.brakeForce) / this.mass;
+  }
+
+  /** Deceleration from full engine braking at a speed. */
+  dynamicDecel(speed: number) {
+    let f = 0;
+    for (const c of this.cars) {
+      const tr = VEHICLES[c.type].traction;
+      if (tr) f += Math.min(tr.dynamic, tr.power / Math.max(speed, 0.5));
+    }
+    return (f * Math.min(1, speed / DYNAMIC_FADE_SPEED)) / this.mass;
   }
 }
 
@@ -101,7 +173,10 @@ export class Sim {
   nodeClaims = new Map<number, number>();
   segClaims = new Map<number, number>();
   occ = new Map<number, Occupancy[]>();
+  /** Simulation steps run so far. */
+  steps = 0;
   private interlockTimer = 0;
+  private unspent = 0;
   private prints: Map<number, string>;
 
   constructor(net: Network) {
@@ -114,6 +189,7 @@ export class Sim {
   place(t: Train, seg: number, s: number, dir: Dir) {
     const net = this.net;
     t.speed = 0;
+    t.airBrake = 0;
     t.route = [];
     t.grants = [];
     t.dwell = 0;
@@ -204,6 +280,69 @@ export class Sim {
     return lost;
   }
 
+  captureState(t: Train): TrainState {
+    return {
+      trail: t.trail.map((p) => ({ ...p })),
+      headS: t.headS,
+      speed: t.speed,
+      throttle: t.throttle,
+      brake: t.brake,
+      dynamic: t.dynamic,
+      emergency: t.emergency,
+      airBrake: t.airBrake,
+      route: t.route.map((p) => ({ ...p })),
+      targetStation: t.targetStation,
+      dwell: t.dwell,
+      stopRemain: t.stopRemain,
+      stuck: t.stuck,
+      crashCooldown: t.crashCooldown,
+      grants: [...t.grants],
+      score: { ...t.score },
+    };
+  }
+
+  /** True when pieces exist and each one leads on to the next. */
+  private connected(pieces: Piece[]) {
+    const net = this.net;
+    return pieces.every((p, i) => {
+      if (!net.segs.has(p.seg)) return false;
+      const next = pieces[i + 1];
+      if (!next) return true;
+      if (!net.segs.has(next.seg)) return false;
+      const e = net.exit(p.seg, p.dir);
+      return e.options.includes(next.seg) && net.entryDir(next.seg, e.node, e.side) === next.dir;
+    });
+  }
+
+  /** Puts a train back exactly as saved. Returns false, changing nothing, if the track no longer matches. */
+  restoreState(t: Train, s: TrainState): boolean {
+    const last = s.trail.at(-1);
+    if (!last || !this.connected(s.trail)) return false;
+    const length = this.net.geom.get(last.seg)!.length;
+    if (s.headS < 0 || s.headS > length) return false;
+    t.trail = s.trail.map((p) => ({ ...p }));
+    t.headS = s.headS;
+    t.speed = s.speed;
+    t.throttle = s.throttle;
+    t.brake = s.brake;
+    t.dynamic = s.dynamic;
+    t.emergency = s.emergency;
+    t.airBrake = s.airBrake;
+    // The trail is what must fit the track. A route that doesn't is simply planned again.
+    const keepRoute = this.connected(s.route);
+    t.route = keepRoute ? s.route.map((p) => ({ ...p })) : [];
+    t.targetStation = keepRoute ? s.targetStation : null;
+    t.dwell = s.dwell;
+    t.stopRemain = s.stopRemain;
+    t.stuck = s.stuck;
+    t.crashCooldown = s.crashCooldown;
+    t.grants = [...s.grants];
+    t.score = { ...s.score };
+    t.next = null;
+    this.remember(t);
+    return true;
+  }
+
   /** Moves a train back onto the nearest track after edits; returns false when no track exists. */
   replace(t: Train, x: number, z: number, hdgX: number, hdgZ: number): boolean {
     const near = this.net.nearest(x, z, 1e9);
@@ -243,24 +382,51 @@ export class Sim {
     return this.behind(t, 0);
   }
 
+  /** Like behind, for drawing: frames fall between steps, so trains are shown part of a step back to stay smooth. */
+  drawn(t: Train, d = 0) {
+    return this.behind(t, d + t.speed * (STEP - this.unspent));
+  }
+
   /** Front and rear bogie positions of a car, ordered along the consist. */
   carPose(t: Train, index: number) {
     let d = 0;
-    for (let i = 0; i < index; i++) d += CAR_LENGTH[t.cars[i].type] + GAP;
-    const len = CAR_LENGTH[t.cars[index].type];
-    return { front: this.behind(t, d + len * 0.18), rear: this.behind(t, d + len * 0.82) };
+    for (let i = 0; i < index; i++) d += VEHICLES[t.cars[i].type].length + GAP;
+    const len = VEHICLES[t.cars[index].type].length;
+    return { front: this.drawn(t, d + len * 0.18), rear: this.drawn(t, d + len * 0.82) };
   }
 
-  /** Rise per metre in the direction of travel, so negative on a descent. */
+  /** Rise per metre in the direction of travel and curve resistance per unit weight, averaged by mass along the train. */
+  private track(t: Train) {
+    let d = 0;
+    let slope = 0;
+    let curve = 0;
+    let mass = 0;
+    for (const c of t.cars) {
+      const len = VEHICLES[c.type].length;
+      const at = this.behind(t, d + len / 2);
+      const m = carMass(c);
+      slope += at.ty * at.dir * m;
+      curve += (CURVE_RESISTANCE / this.net.geom.get(at.seg)!.minRadius) * m;
+      mass += m;
+      d += len + GAP;
+    }
+    return { slope: slope / mass, curve: curve / mass };
+  }
+
   private slope(t: Train) {
-    const h = this.head(t);
-    return h.ty * h.dir;
+    return this.track(t).slope;
+  }
+
+  /** Deceleration from engine and service brakes together at this train's speed. */
+  private brakeDecel(t: Train) {
+    return t.airDecel(t.speed) + t.dynamicDecel(t.speed);
   }
 
   /** Deceleration the AI can count on here: gravity eats into the brakes on a descent. */
   private planBrake(t: Train) {
-    const available = (FULL_BRAKE + G * this.slope(t)) * PLAN_MARGIN;
-    return Math.max(MIN_PLAN_BRAKE, Math.min(PLAN_BRAKE, available));
+    const air = t.airDecel(t.speed);
+    const available = (air * EMERGENCY + t.dynamicDecel(t.speed) + G * this.slope(t)) * PLAN_MARGIN;
+    return Math.max(MIN_PLAN_BRAKE, Math.min(air * PLAN_SHARE, available));
   }
 
   private prune(t: Train) {
@@ -371,7 +537,7 @@ export class Sim {
     }
     t.trail = (pieces.length ? pieces : t.trail).reverse().map((p) => ({ seg: p.seg, dir: -p.dir as Dir }));
     t.headS = tail.s;
-    t.cars = t.cars.reverse().map((c) => ({ type: c.type, flip: !c.flip }));
+    t.cars = t.cars.reverse().map((c) => ({ ...c, flip: !c.flip }));
     t.grants = [];
     t.route = [];
     t.next = null;
@@ -628,14 +794,14 @@ export class Sim {
     let dist = 0; // Distance from head to the start of this piece (0 for the current one)
     const planBrake = this.planBrake(t);
     const range = Math.max(400, (t.speed * t.speed) / (2 * planBrake) + 300);
-    let allowed = geo.vmax;
+    let allowed = Math.min(geo.vmax, t.topSpeed);
     let stopAt = Infinity;
     let stationAt = Infinity;
     let bufferAt = Infinity;
     if (t.stopRemain >= 0) stationAt = t.stopRemain;
     const seen = new Set<number>();
     let current = true;
-    const lineLimit = geo.vmax;
+    const lineLimit = Math.min(geo.vmax, t.topSpeed);
     while (dist < range && !seen.has(seg)) {
       seen.add(seg);
       if (!current) {
@@ -681,6 +847,8 @@ export class Sim {
       t.dwell -= dt;
       t.throttle = 0;
       t.brake = 1;
+      t.dynamic = 0;
+      t.emergency = false;
       t.statusText = 'At platform';
       if (t.dwell <= 0) {
         t.stopRemain = -1;
@@ -697,17 +865,19 @@ export class Sim {
     if (lim.stopAt <= 0.6) target = 0;
     const diff = target - t.speed;
     // Without this share the train settles at a creep on a descent, where gravity balances a light brake.
-    const hold = Math.max(0, -G * this.slope(t)) / FULL_BRAKE;
+    const hold = Math.max(0, -G * this.slope(t)) / this.brakeDecel(t);
+    let need = 0;
     if (diff > 0.3) {
       t.throttle = Math.min(1, diff * 0.45);
-      t.brake = 0;
-    } else if (diff < -0.1) {
-      t.throttle = 0;
-      t.brake = Math.min(1, hold - diff * 0.7 + 0.2);
     } else {
       t.throttle = 0;
-      t.brake = target < 0.2 ? 1 : hold;
+      if (diff < -0.1) need = hold - diff * 0.7 + 0.2;
+      else need = target < 0.2 ? Math.max(1, hold) : hold;
     }
+    t.brake = Math.min(1, need);
+    t.dynamic = t.brake;
+    // Only a heavy train on a steep descent gets here: the service brake alone can't hold it.
+    t.emergency = hold > 1 && need > 1;
     // Arrival.
     if (t.speed < 0.25 && lim.stationAt <= 2.5) {
       t.dwell = 22;
@@ -716,6 +886,8 @@ export class Sim {
       if (st) this.onEvent({ kind: 'arrive', train: t.id, text: `${t.name} arrived at ${st.name}` });
       t.stuck = 0;
       t.brake = 1;
+      t.dynamic = 0;
+      t.emergency = false;
       return;
     }
     // Waiting: try a different route, then back away so opposing trains can never lock each other out.
@@ -758,14 +930,34 @@ export class Sim {
     return false;
   }
 
+  /** Force at the rail after the adhesion limit, in kN. The autopilot eases off before the wheels slip. */
+  private traction(t: Train) {
+    const asked = t.speed < t.topSpeed && !t.emergency ? t.tractiveForce(t.speed) * t.throttle : 0;
+    const grip = t.adhesionLimit;
+    t.slipping = !t.ai && asked > grip;
+    if (t.slipping) return grip * SLIP_GRIP;
+    return Math.min(asked, grip);
+  }
+
+  private updateAirBrake(t: Train, dt: number) {
+    const demand = t.emergency ? EMERGENCY : t.brake;
+    if (demand > t.airBrake) {
+      // An emergency application vents the brake pipe from every car, so it reaches them far sooner.
+      const time = t.emergency ? t.brakeLag / 3 : t.brakeLag;
+      t.airBrake = Math.min(demand, t.airBrake + dt / time);
+    } else {
+      t.airBrake = Math.max(demand, t.airBrake - dt / (t.brakeLag * 1.5));
+    }
+  }
+
   private physics(t: Train, dt: number) {
-    const slope = this.slope(t);
+    const { slope, curve } = this.track(t);
     const m = t.mass; // tonnes -> force in kN gives m/s^2
-    const v = Math.max(t.speed, 0.5);
-    const force = Math.min(TRACTIVE * t.locos, (POWER * t.locos) / v) * t.throttle;
     const drag = 0.012 * G * m + 0.0035 * m * t.speed + 0.012 * t.speed * t.speed;
-    let a = force / m - G * slope;
-    const resist = drag / m + t.brake * FULL_BRAKE;
+    let a = this.traction(t) / m - G * slope;
+    this.updateAirBrake(t, dt);
+    const braking = t.airBrake * t.airDecel(t.speed) + t.dynamic * t.dynamicDecel(t.speed);
+    const resist = drag / m + G * curve + braking;
     if (t.speed > 0 || a > resist) {
       a -= resist;
     } else {
@@ -820,28 +1012,32 @@ export class Sim {
     }
   }
 
+  /** Runs as many whole steps as dt has paid for, keeping the remainder for next time. */
   update(dt: number) {
-    if (!this.trains.length) {
-      this.interlockTimer += dt;
-      if (this.interlockTimer > 0.25) {
-        this.interlockTimer = 0;
-        this.interlock();
-      }
-      return;
+    this.unspent += dt;
+    let n = 0;
+    while (this.unspent >= STEP && n < MAX_STEPS_PER_UPDATE) {
+      this.step();
+      this.unspent -= STEP;
+      n++;
     }
-    const h = Math.min(dt, 0.1);
-    this.interlockTimer += h;
+    if (this.unspent >= STEP) this.unspent = 0;
+  }
+
+  private step() {
+    this.steps++;
+    this.interlockTimer += STEP;
     if (this.interlockTimer > 0.15) {
       this.interlockTimer = 0;
       this.interlock();
     }
     for (const t of this.trains) {
-      if (t.ai) this.driveAI(t, h);
+      if (t.ai) this.driveAI(t, STEP);
       else this.updatePlayerLimit(t);
-      this.physics(t, h);
+      this.physics(t, STEP);
       this.remember(t);
     }
-    this.collisions(h);
+    this.collisions(STEP);
   }
 
   private updatePlayerLimit(t: Train) {

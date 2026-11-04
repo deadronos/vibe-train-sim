@@ -70,6 +70,20 @@ test('trains move', async ({ page }) => {
     .toBeGreaterThan(1);
 });
 
+test('pauses and fast-forwards the railway', async ({ page }) => {
+  await load(page);
+  const position = () => page.evaluate(() => window.__game.sim.steps);
+  await page.locator('[data-speed="0"]').click();
+  await frames(page);
+  const paused = await position();
+  await frames(page, 10);
+  expect(await position()).toBe(paused);
+  await page.locator('[data-speed="8"]').click();
+  await expect.poll(position).toBeGreaterThan(paused + 30);
+  await page.keyboard.press('Comma');
+  expect(await page.evaluate(() => window.__game.trainSpeed)).toBe(4);
+});
+
 test('lays a section of track in the editor, then undoes and redoes it', async ({ page }) => {
   await load(page);
   await page.evaluate(() => window.__game.newWorld('plains', 1, false));
@@ -105,6 +119,12 @@ test('driving keys take over from the autopilot and move the power lever', async
   await expect.poll(() => page.evaluate(() => window.__game.input.lever)).toBeGreaterThan(0.05);
   await expect.poll(() => page.locator('#power-lever').inputValue().then(Number)).toBeGreaterThan(0.05);
   await page.keyboard.up('KeyW');
+
+  await page.evaluate(() => window.__game.setLever(-0.6));
+  await expect(page.locator('#train-text')).toHaveText('Air brake on');
+  await page.keyboard.down('Space');
+  await expect(page.locator('#train-text')).toHaveText('Emergency brake on');
+  await page.keyboard.up('Space');
 });
 
 test('the map comes back after a reload', async ({ page }) => {
@@ -115,6 +135,7 @@ test('the map comes back after a reload', async ({ page }) => {
       return { preset: g.hf.preset, seed: g.hf.seed, segs: g.net.segs.size, trains: g.sim.trains.map((t) => t.name) };
     });
   await page.evaluate(() => window.__game.newWorld('desert', 4, true));
+  await expect.poll(() => page.evaluate(() => window.__game.sim.trains.some((t) => t.speed > 1))).toBe(true);
   const before = await summary();
   await page.reload();
   await expect(page.locator('#loading')).toHaveClass(/gone/);

@@ -2,7 +2,7 @@ import type { BrushMode, Tool } from '../editor/editor';
 // HTML interface: mode lever, clock, train register, driver's desk and the editor's lever frame.
 import type { Game } from '../game';
 import type { Side } from '../rail/network';
-import type { SimEvent } from '../rail/sim';
+import type { SimEvent, Train } from '../rail/sim';
 import { CAM_LABEL } from '../render/cameraRig';
 import type { SceneryType } from '../render/scatter';
 import type { Preset } from '../world/heightfield';
@@ -43,6 +43,14 @@ function polar(angleDeg: number, r: number) {
 }
 const kmhToAngle = (k: number) => DIAL_START + (Math.min(k, MAX_KMH) / MAX_KMH) * DIAL_SWEEP;
 
+function brakeText(t: Train) {
+  if (t.emergency) return 'Emergency brake on';
+  if (t.slipping) return 'Wheels slipping: ease off the power';
+  if (t.airBrake > 0.02 || t.brake > 0) return 'Air brake on';
+  if (t.dynamic > 0) return 'Engine brake on';
+  return '';
+}
+
 export class Hud {
   autopilot = true;
   private trainRows = new Map<number, { speed: HTMLElement; state: HTMLElement; li: HTMLElement }>();
@@ -58,12 +66,16 @@ export class Hud {
 
     const slider = $<HTMLInputElement>('time-slider');
     slider.oninput = () => (g.env.hours = Number(slider.value));
-    document.querySelectorAll<HTMLButtonElement>('.rate button').forEach((b) => {
+    document.querySelectorAll<HTMLButtonElement>('[data-rate]').forEach((b) => {
       b.onclick = () => {
         g.env.timeScale = Number(b.dataset.rate);
         this.syncRate();
       };
     });
+    document.querySelectorAll<HTMLButtonElement>('[data-speed]').forEach((b) => {
+      b.onclick = () => g.setTrainSpeed(Number(b.dataset.speed));
+    });
+    this.syncTrainSpeed();
     g.env.timeScale = 0.0167;
     this.syncRate();
     const cloud = $<HTMLInputElement>('cloud-slider');
@@ -162,8 +174,14 @@ export class Hud {
     }
   }
 
+  syncTrainSpeed() {
+    document.querySelectorAll<HTMLButtonElement>('[data-speed]').forEach((b) => {
+      b.setAttribute('aria-pressed', String(Number(b.dataset.speed) === this.game.trainSpeed));
+    });
+  }
+
   private syncRate() {
-    document.querySelectorAll<HTMLButtonElement>('.rate button').forEach((b) => {
+    document.querySelectorAll<HTMLButtonElement>('[data-rate]').forEach((b) => {
       b.setAttribute('aria-pressed', String(Math.abs(Number(b.dataset.rate) - this.game.env.timeScale) < 1e-6));
     });
   }
@@ -261,7 +279,7 @@ export class Hud {
         }
         break;
       case 'train':
-        p.innerHTML = `<h2>Add a train</h2><label>Type<select id="train-kind"><option value="passenger">Express: 3 coaches, 2 locomotives</option><option value="shuttle">Local: 2 coaches</option><option value="freight">Freight: 5 wagons</option></select></label><p>Click a track to place it. New trains call at every station.</p>
+        p.innerHTML = `<h2>Add a train</h2><label>Type<select id="train-kind"><option value="passenger">Express: 3 coaches, 2 locomotives</option><option value="shuttle">Local: 2 coaches</option><option value="freight">Freight: 5 loaded wagons</option><option value="emptyFreight">Empties: 5 empty wagons</option></select></label><p>Click a track to place it. New trains call at every station.</p>
           <label class="check"><input id="run-trains" type="checkbox" /> Keep trains moving while editing</label>`;
         {
           const k = $<HTMLSelectElement>('train-kind');
@@ -427,6 +445,7 @@ export class Hud {
 
     if (this.frameCounter % 8 !== 0) return;
     this.autopilot = t.ai;
+    $('train-text').textContent = t.ai ? '' : brakeText(t);
     $('btn-auto').setAttribute('aria-pressed', String(t.ai));
     const sig = g.sim.signalAhead(t);
     const lamps = document.querySelectorAll<HTMLElement>('.lamps i');
