@@ -40,11 +40,7 @@ Exact versions are in `package.json` and `package-lock.json`. Use `npm` and comm
 
 `.github/workflows/deploy-pages.yml` runs `npm run check` on every pull request and push to `main`, without deploying.
 
-Pushing a tag that starts with `v` runs the same check and, if it passes, deploys to [GitHub Pages](https://deadronos.github.io/vibe-train-sim/):
-
-```bash
-git tag v0.1.0 && git push origin v0.1.0
-```
+Pushing a tag that starts with `v` runs the same check and, if it passes, deploys to [GitHub Pages](https://deadronos.github.io/vibe-train-sim/). See [releasing.md](releasing.md) for the full process.
 
 To redeploy a release, run the workflow from the Actions tab and select its tag. The `github-pages` environment must allow `v*` tags, or the deploy is rejected.
 
