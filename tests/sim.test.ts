@@ -290,3 +290,86 @@ describe('demo map', () => {
     expect(worstRadius).toBeGreaterThan(100);
   });
 });
+
+describe('editing under running trains', () => {
+  function runningTrain() {
+    const { net, a, c, s1, s2 } = line();
+    net.stations.push({ id: net.id(), name: 'End', nodeId: c.id, platformSide: 1, length: 140 });
+    const sim = new Sim(net);
+    const t = new Train(1, 'T', SHUTTLE());
+    sim.trains.push(t);
+    sim.place(t, s1.id, 100, 1);
+    sim.plan(t, false);
+    for (let i = 0; i < 20 * 30; i++) sim.update(1 / 30);
+    expect(t.speed).toBeGreaterThan(5);
+    return { net, sim, t, a, s1, s2 };
+  }
+
+  it('leaves trains alone when no track changed', () => {
+    const { net, sim, t } = runningTrain();
+    const speed = t.speed;
+    const target = t.targetStation;
+    net.version++;
+    expect(sim.syncTrack()).toEqual([]);
+    expect(t.speed).toBe(speed);
+    expect(t.targetStation).toBe(target);
+    expect(t.route.length).toBeGreaterThan(0);
+  });
+
+  it('leaves trains alone when a signal is placed away from them', () => {
+    const { net, sim, t, s2 } = runningTrain();
+    const speed = t.speed;
+    const target = t.targetStation;
+    const far = net.split(s2.id, 250);
+    far.signals[1] = { hold: false };
+    // The split changes segment ids ahead, but not under the train.
+    expect(t.trail.every((p) => p.seg !== s2.id)).toBe(true);
+    expect(sim.syncTrack()).toEqual([]);
+    expect(t.speed).toBe(speed);
+    expect(t.targetStation).toBe(target);
+    expect(t.route.length).toBeGreaterThan(0);
+  });
+
+  it('keeps a train moving and on its way when its segment is split for a signal', () => {
+    const { net, sim, t, s1 } = runningTrain();
+    expect(t.trail.some((p) => p.seg === s1.id)).toBe(true);
+    const before = sim.head(t).x;
+    const speed = t.speed;
+    const target = t.targetStation;
+    net.split(s1.id, 300).signals[1] = { hold: false };
+    expect(sim.syncTrack()).toEqual([]);
+    expect(sim.head(t).x).toBeCloseTo(before, 0);
+    expect(t.speed).toBe(speed);
+    expect(t.targetStation).toBe(target);
+    expect(t.route.length).toBeGreaterThan(0);
+    for (let i = 0; i < 10 * 30; i++) sim.update(1 / 30);
+    expect(sim.head(t).x).toBeGreaterThan(before + 50);
+  });
+
+  it('keeps the platform wait of a train at a station when its track is split', () => {
+    const { net, sim, t, s2 } = runningTrain();
+    sim.place(t, s2.id, 400, 1);
+    t.dwell = 12;
+    t.speed = 0;
+    sim.update(1 / 30);
+    net.split(s2.id, 450);
+    sim.syncTrack();
+    expect(t.dwell).toBeGreaterThan(11);
+  });
+
+  it('re-seats a train whose track was deleted onto remaining track', () => {
+    const { net, sim, t, s2 } = runningTrain();
+    sim.place(t, s2.id, 300, 1);
+    sim.update(1 / 30);
+    net.removeSegment(s2.id);
+    expect(sim.syncTrack()).toEqual([]);
+    expect(net.segs.has(t.trail[t.trail.length - 1].seg)).toBe(true);
+  });
+
+  it('reports a train when all track is gone', () => {
+    const { net, sim, t, s1, s2 } = runningTrain();
+    net.removeSegment(s1.id);
+    net.removeSegment(s2.id);
+    expect(sim.syncTrack()).toEqual([t]);
+  });
+});

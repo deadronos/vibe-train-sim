@@ -26,7 +26,7 @@ npm run dev
 - Block signals showing red, yellow and green, with route locking so opposing trains can't enter the same section
 - Warnings for passing a signal at danger, buffer stop hits and collisions
 
-**Map editor** (press Tab)
+**Map editor** (press E)
 
 - Lay curved track, branch from existing track and join lines, with radius and gradient checks
 - Place signals, stations, scenery and trains

@@ -8,6 +8,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import './ui/style.css';
 import { SimAudio } from './audio';
 import { Editor } from './editor/editor';
+import { activatesFocused, gameKeyAllowed, keyContext } from './keyFilter';
 import { buildDemoNetwork, populateDemoTrains } from './rail/demoMap';
 import { Network } from './rail/network';
 import { Sim, Train } from './rail/sim';
@@ -385,37 +386,9 @@ export class Game {
   /** Call after any change to the map. Keeps terrain and trains consistent with the new track. */
   commitEdit(opts: { scenery?: boolean; light?: boolean }) {
     this.hf.grade(this.net);
-    this.reseatTrains();
+    for (const t of this.sim.syncTrack()) this.removeTrain(t);
     if (opts.scenery) this.scatterTimer = 0.25;
     this.hud.syncTrains();
-  }
-
-  /** Track was edited under the trains, so put each one back on the nearest track. */
-  private reseatTrains() {
-    for (const t of [...this.sim.trains]) {
-      const valid = t.trail.every((p) => this.net.segs.has(p.seg));
-      let x = 0;
-      let z = 0;
-      let hx = 1;
-      let hz = 0;
-      if (valid) {
-        const h = this.sim.head(t);
-        x = h.x;
-        z = h.z;
-        hx = h.tx * h.dir;
-        hz = h.tz * h.dir;
-      } else {
-        const last = t.lastPos;
-        if (last) {
-          x = last.x;
-          z = last.z;
-          hx = last.hx;
-          hz = last.hz;
-        }
-      }
-      if (!this.sim.replace(t, x, z, hx, hz)) this.removeTrain(t);
-      else if (t.ai) this.sim.plan(t, false);
-    }
   }
 
   removeTrain(t: Train) {
@@ -485,15 +458,19 @@ export class Game {
 
   private bindDriveKeys() {
     window.addEventListener('keydown', (e) => {
-      if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'SELECT') return;
+      const ctx = keyContext(e);
+      const undoKey = (e.ctrlKey || e.metaKey) && !e.altKey && e.code === 'KeyZ';
+      if (!gameKeyAllowed(undoKey ? { ...ctx, modifier: false } : ctx)) return;
       this.audio.unlock();
+      // Space is the brake; stop it also pressing a focused button.
+      if (activatesFocused(ctx)) e.preventDefault();
       if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ' && this.editing) {
         e.preventDefault();
         if (e.shiftKey) this.redo();
         else this.undo();
         return;
       }
-      if (e.code === 'Tab') {
+      if (e.code === 'KeyE' && !e.repeat) {
         e.preventDefault();
         this.setMode(!this.editing);
         return;
@@ -525,8 +502,20 @@ export class Game {
       }
     });
     window.addEventListener('keyup', (e) => {
+      // Browsers click a focused button on Space keyup, so stop that too.
+      if (gameKeyAllowed(keyContext(e)) && activatesFocused(keyContext(e))) e.preventDefault();
       this.keys.delete(e.code);
       if (e.code === 'KeyH') this.audio.horn(false);
+    });
+    // A key released while another window had focus never sends keyup.
+    const releaseAll = () => {
+      this.keys.clear();
+      this.audio.horn(false);
+      this.editor.releaseKeys();
+    };
+    window.addEventListener('blur', releaseAll);
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) releaseAll();
     });
     window.addEventListener('pointerdown', () => this.audio.unlock());
   }
@@ -592,10 +581,6 @@ export class Game {
     if (!this.editing) this.driveInput(dt);
     if (!this.editing || this.editor.runTrains) {
       this.sim.update(dt);
-      for (const t of this.sim.trains) {
-        const h = this.sim.head(t);
-        t.lastPos = { x: h.x, z: h.z, hx: h.tx * h.dir, hz: h.tz * h.dir };
-      }
     } else {
       this.interlockTimer += dt;
       if (this.interlockTimer > 0.3) {

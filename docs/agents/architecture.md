@@ -51,7 +51,7 @@ Each frame in `Game.frame()`: read input, update the simulation (paused while ed
 
 Renderers pull changes rather than being told. `net.dirty` flags segments to rebuild, `net.version` triggers a props rebuild, and `hf.dirty` flags terrain chunks.
 
-After an edit, call `Game.commitEdit()`, which regrades terrain and re-seats trains on the nearest track. Call `Game.pushUndo()` before making the edit. Undo stores whole JSON snapshots, limited to 40.
+After an edit, call `Game.commitEdit()`, which regrades terrain and calls `Sim.syncTrack()`. That compares segment fingerprints with the last call and re-seats only trains standing on a changed or removed segment, on the nearest track and keeping their speed, platform wait and timetable progress. Other trains are not touched, so an edit that changes no track (scenery, a signal away from them) never slows anyone. Splitting a segment for a signal counts as a change for the trains on it. Call `Game.pushUndo()` before making the edit. Undo stores whole JSON snapshots, limited to 40.
 
 ## Saves
 
