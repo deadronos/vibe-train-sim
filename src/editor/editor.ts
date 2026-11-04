@@ -2,8 +2,8 @@
 import * as THREE from 'three';
 import { MapControls } from 'three/addons/controls/MapControls.js';
 
+import type { Game } from '../game';
 import { gameKey } from '../keyFilter';
-import type { Game } from '../main';
 import { FREIGHT, PASSENGER, SHUTTLE } from '../rail/demoMap';
 import type { Dir, RailNode, Side } from '../rail/network';
 import { curveMinRadius, MAX_GRADE, MIN_RADIUS, planCurve } from '../rail/network';
