@@ -32,7 +32,7 @@ npm run dev
 - Place signals, stations, scenery and trains
 - Bridges appear where track runs high or crosses water; river crossings get a steel truss. You can force a bridge or an embankment per section
 - Terrain brushes: raise, lower, smooth and flatten. The ground forms embankments and cuttings around track automatically
-- Undo and redo, browser saves, and JSON import and export
+- Undo and redo, browser saves, and JSON import and export. A damaged save is kept as a backup and a new map starts; a bad import leaves your map as it was
 
 **World**
 

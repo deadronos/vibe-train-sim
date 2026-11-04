@@ -68,6 +68,7 @@ __game.sim.trains.map((t) => t.statusText);
 ## Gotchas
 
 - **Clearing the save doesn't reset the map.** A `beforeunload` handler saves on reload, so `localStorage.clear()` followed by a reload brings the old map back. Use `__game.newWorld(...)` instead, or **New map** in the app.
+- **Testing start-up failures.** To plant a corrupt save, write it from a `beforeunload` listener you add after the game's own, then reload. To see the download message, move `public/assets/assetpack.glb` aside, reload and put it back. `getContext('webgl2')` returning `null` before the page scripts run gives the no-WebGL message, and `renderer.getContext().getExtension('WEBGL_lose_context').loseContext()` triggers the context-lost one. A hidden browser pane pauses `requestAnimationFrame`, so no frames run.
 - **Old saves hide new starter maps.** A change to `src/rail/demoMap.ts` won't appear until you create a new map.
 - **Vite reloads restart the state you set by hand.** Editing a file during a browser check reloads the page, so scripted camera or time changes are lost.
 - **Bloom threshold is tied to sky brightness.** `src/render/environment.ts` caps the sky below the bloom threshold in `src/main.ts`. Change them together, or the whole sky blooms.

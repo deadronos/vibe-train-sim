@@ -10,7 +10,6 @@ import { SimAudio } from './audio';
 import { Editor } from './editor/editor';
 import { buildDemoNetwork, populateDemoTrains } from './rail/demoMap';
 import { Network } from './rail/network';
-import type { Car } from './rail/sim';
 import { Sim, Train } from './rail/sim';
 import { Assets } from './render/assets';
 import { CameraRig } from './render/cameraRig';
@@ -21,36 +20,24 @@ import { ScatterRenderer } from './render/scatter';
 import { TerrainRenderer } from './render/terrain';
 import { TrackRenderer } from './render/track';
 import { TrainRenderer } from './render/trains';
+import type { SaveData } from './saveData';
+import { parseSave } from './saveData';
+import {
+  AssetLoadError,
+  CONTEXT_LOST_TEXT,
+  describeStartupError,
+  NoWebGLError,
+  SAVE_RECOVERED_TEXT,
+} from './startupError';
 import { Hud } from './ui/hud';
 import type { Preset } from './world/heightfield';
 import { Heightfield } from './world/heightfield';
 
 export type Quality = 'high' | 'low';
 const SAVE_KEY = 'vibe-train-sim/map-v1';
+// A save that fails validation is moved here so nothing the player made is thrown away.
+const BACKUP_KEY = 'vibe-train-sim/map-v1-backup';
 const QUALITY_KEY = 'vibe-train-sim/quality';
-
-export interface SaveData {
-  v: 1;
-  preset: Preset;
-  seed: number;
-  edits: number[];
-  net: ReturnType<Network['toJSON']>;
-  placed: PlacedItem[];
-  hours: number;
-  drivenId: number | null;
-  trains: {
-    id: number;
-    name: string;
-    cars: Car[];
-    schedule: number[];
-    schedIdx: number;
-    ai: boolean;
-    x: number;
-    z: number;
-    hx: number;
-    hz: number;
-  }[];
-}
 
 function readQuality(): Quality {
   try {
@@ -103,6 +90,10 @@ export class Game {
       powerPreference: 'high-performance',
       logarithmicDepthBuffer: true,
     });
+    canvas.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault();
+      this.onContextLost();
+    });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, this.quality === 'high' ? 1.75 : 1));
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.shadowMap.enabled = true;
@@ -126,10 +117,14 @@ export class Game {
   async start() {
     const loading = document.getElementById('loading')!;
     const bar = document.getElementById('loadbar') as HTMLElement;
-    await this.assets.load(
-      `${import.meta.env.BASE_URL}assets/assetpack.glb`,
-      (f) => (bar.style.width = `${Math.round(f * 100)}%`),
-    );
+    try {
+      await this.assets.load(
+        `${import.meta.env.BASE_URL}assets/assetpack.glb`,
+        (f) => (bar.style.width = `${Math.round(f * 100)}%`),
+      );
+    } catch (err) {
+      throw new AssetLoadError(err);
+    }
 
     this.env = new Environment(this.scene, this.renderer, this.quality === 'high' ? 4096 : 2048);
     this.hud = new Hud(this);
@@ -139,14 +134,23 @@ export class Game {
     this.scatter.setDensity(this.quality === 'high' ? 1 : 0.4);
     this.trainsR = new TrainRenderer(this.scene, this.assets);
 
-    const saved = this.readSave();
-    if (saved) this.applySave(saved, true);
-    else this.newWorld('alpine', 1, true);
+    const { saved, recovered } = this.readSave();
+    try {
+      if (saved) this.applySave(saved, true);
+      else this.newWorld('alpine', 1, true);
+    } catch (err) {
+      // Validation passed but the map still can't be built, so treat it like a corrupt save.
+      console.error(err);
+      this.keepBackup(localStorage.getItem(SAVE_KEY));
+      this.newWorld('alpine', 1, true);
+      this.hud.toast(SAVE_RECOVERED_TEXT, true);
+    }
 
     this.editor = new Editor(this);
     this.hud.bind();
     this.bindDriveKeys();
     loading.classList.add('gone');
+    if (recovered) this.hud.toast(SAVE_RECOVERED_TEXT, true);
     window.addEventListener('beforeunload', () => this.save(true));
     requestAnimationFrame(() => this.frame());
   }
@@ -243,10 +247,12 @@ export class Game {
   }
 
   applySave(data: SaveData, restoreTime: boolean) {
+    // Build everything that can throw before the current world is replaced.
     const hf = new Heightfield(data.preset, data.seed);
     hf.importEdits(data.edits);
     hf.h.set(hf.base);
-    this.installWorld(hf, Network.fromJSON(data.net), [...data.placed]);
+    const net = Network.fromJSON(data.net);
+    this.installWorld(hf, net, [...data.placed]);
     this.restoreTrains(data);
     if (restoreTime) this.env.hours = data.hours;
     if (!this.driven && this.sim.trains.length) this.setDriven(this.sim.trains[0]);
@@ -262,15 +268,28 @@ export class Game {
     }
   }
 
-  private readSave(): SaveData | null {
+  private keepBackup(raw: string | null) {
     try {
-      const raw = localStorage.getItem(SAVE_KEY);
-      if (!raw) return null;
-      const d = JSON.parse(raw) as SaveData;
-      return d.v === 1 ? d : null;
+      if (raw) localStorage.setItem(BACKUP_KEY, raw);
+      localStorage.removeItem(SAVE_KEY);
     } catch {
-      return null;
+      /* Storage is blocked or full, so there is nowhere to keep it. */
     }
+  }
+
+  private readSave(): { saved: SaveData | null; recovered: boolean } {
+    let raw: string | null;
+    try {
+      raw = localStorage.getItem(SAVE_KEY);
+    } catch {
+      return { saved: null, recovered: false };
+    }
+    if (!raw) return { saved: null, recovered: false };
+    const r = parseSave(raw);
+    if (r.ok) return { saved: r.data, recovered: false };
+    console.warn(`Ignoring the saved map: ${r.reason}`);
+    this.keepBackup(raw);
+    return { saved: null, recovered: true };
   }
 
   exportMap() {
@@ -283,14 +302,30 @@ export class Game {
   }
 
   importMap(text: string) {
-    try {
-      const d = JSON.parse(text) as SaveData;
-      if (d.v !== 1 || !d.net) throw new Error('format');
-      this.applySave(d, true);
-      this.hud.toast('Map imported');
-    } catch {
-      this.hud.toast('Import failed: this file is not a Vibe Train map');
+    const r = parseSave(text);
+    if (!r.ok) {
+      this.hud.toast(`Import failed: ${r.reason}. The current map is unchanged`, true);
+      return;
     }
+    const before = JSON.stringify(this.snapshot());
+    try {
+      this.applySave(r.data, true);
+      this.hud.toast('Map imported');
+    } catch (err) {
+      // Put the previous map back so a failed import never leaves a half-loaded one.
+      console.error(err);
+      const old = parseSave(before);
+      if (old.ok) this.applySave(old.data, true);
+      this.hud.toast('Import failed: the map could not be built. The current map is unchanged', true);
+    }
+  }
+
+  private lost = false;
+  private onContextLost() {
+    if (this.lost) return;
+    this.lost = true;
+    if (this.sim) this.save(true);
+    showFatal(CONTEXT_LOST_TEXT, true);
   }
 
   setQuality(q: Quality) {
@@ -540,6 +575,7 @@ export class Game {
 
   // ------------------------------------------------------------ frame
   private frame() {
+    if (this.lost) return;
     requestAnimationFrame(() => this.frame());
     const now = performance.now();
     const dt = Math.min(0.1, (now - this.last) / 1000);
@@ -602,10 +638,44 @@ export class Game {
   }
 }
 
-const game = new Game();
-(window as unknown as { __game: Game }).__game = game;
-game.start().catch((err) => {
-  console.error(err);
+function webglAvailable(): boolean {
+  try {
+    return !!document.createElement('canvas').getContext('webgl2');
+  } catch {
+    return false;
+  }
+}
+
+/** Replaces the loading screen with a message, so a failure never looks like endless loading. */
+function showFatal(text: string, reload: boolean) {
   const el = document.getElementById('loading');
-  if (el) el.textContent = `Could not start the simulator: ${err.message}. Run npm run assets, then reload the page.`;
+  if (!el) return;
+  el.classList.remove('gone');
+  el.classList.add('failed');
+  el.setAttribute('role', 'alert');
+  const p = document.createElement('p');
+  p.className = 'fatal';
+  p.textContent = text;
+  const nodes: HTMLElement[] = [p];
+  if (reload) {
+    const b = document.createElement('button');
+    b.className = 'fatal-btn';
+    b.textContent = 'Reload page';
+    b.addEventListener('click', () => location.reload());
+    nodes.push(b);
+  }
+  el.replaceChildren(...nodes);
+}
+
+async function boot() {
+  if (!webglAvailable()) throw new NoWebGLError();
+  const game = new Game();
+  (window as unknown as { __game: Game }).__game = game;
+  await game.start();
+}
+
+boot().catch((err) => {
+  console.error(err);
+  const { failure, text } = describeStartupError(err, import.meta.env.DEV);
+  showFatal(text, failure !== 'no-webgl');
 });
