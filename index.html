@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Vibe Train Sim</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600&family=Overpass:wght@400;600;700&display=swap" rel="stylesheet" />
+  </head>
+  <body data-mode="drive">
+    <canvas id="view"></canvas>
+
+    <div id="loading">
+      <p>Vibe Train Sim</p>
+      <div class="track"><div id="loadbar"></div></div>
+    </div>
+
+    <!-- Top row: mode lever, clock, map menu -->
+    <header id="topbar">
+      <div class="plate" id="mode-plate" role="group" aria-label="Mode">
+        <button id="mode-drive" class="mode-btn">Drive</button>
+        <button id="mode-edit" class="mode-btn">Edit map</button>
+      </div>
+
+      <div class="plate" id="clock-plate">
+        <output id="clock">12:00</output>
+        <input id="time-slider" type="range" min="0" max="24" step="0.05" aria-label="Time of day" />
+        <div class="rate" role="group" aria-label="Time speed">
+          <button data-rate="0" title="Stop the clock">Stop</button>
+          <button data-rate="0.0003" title="Real time">Real</button>
+          <button data-rate="0.0167" title="One minute per second">1 min/s</button>
+          <button data-rate="0.1667" title="Ten minutes per second">10 min/s</button>
+        </div>
+        <label class="inline">Cloud <input id="cloud-slider" type="range" min="0" max="1" step="0.01" /></label>
+      </div>
+
+      <div class="plate" id="menu-plate">
+        <button id="btn-save">Save</button>
+        <button id="btn-export">Export</button>
+        <button id="btn-import">Import</button>
+        <button id="btn-new">New map</button>
+        <button id="btn-help" aria-label="Keyboard help">Help</button>
+        <select id="quality" aria-label="Graphics quality">
+          <option value="high">High graphics</option>
+          <option value="low">Low graphics</option>
+        </select>
+        <output id="fps"></output>
+      </div>
+      <input id="import-file" type="file" accept="application/json,.json" hidden />
+    </header>
+
+    <!-- Train register -->
+    <aside id="trains" class="plate" aria-label="Trains">
+      <h2>Trains</h2>
+      <ul id="train-list"></ul>
+    </aside>
+
+    <!-- Driver's desk -->
+    <section id="desk" aria-label="Driver's desk">
+      <div class="desk-group" id="repeater" title="Next signal">
+        <div class="lamps">
+          <i data-lamp="red"></i>
+          <i data-lamp="yellow"></i>
+          <i data-lamp="green"></i>
+        </div>
+        <div class="readout">
+          <span id="signal-text">No signal ahead</span>
+          <span id="station-text"></span>
+          <span id="junction-text"></span>
+        </div>
+      </div>
+
+      <div id="dial" aria-label="Speed">
+        <svg viewBox="0 0 200 200">
+          <defs>
+            <radialGradient id="bezel" cx="42%" cy="35%" r="75%">
+              <stop offset="0" stop-color="#ecd38f" />
+              <stop offset="0.55" stop-color="#b08d42" />
+              <stop offset="1" stop-color="#6b5423" />
+            </radialGradient>
+          </defs>
+          <circle cx="100" cy="100" r="98" fill="url(#bezel)" />
+          <circle cx="100" cy="100" r="88" fill="#ebe7d6" />
+          <g id="dial-ticks"></g>
+          <path id="dial-limit" fill="none" stroke="#c9302a" stroke-width="7" />
+          <line id="dial-needle" x1="100" y1="112" x2="100" y2="28" stroke="#15282a" stroke-width="3.5" stroke-linecap="round" />
+          <circle cx="100" cy="100" r="7" fill="#15282a" />
+          <text id="dial-speed" x="100" y="150" text-anchor="middle">0</text>
+          <text x="100" y="165" text-anchor="middle" class="unit">km/h</text>
+        </svg>
+      </div>
+
+      <div class="desk-group" id="controls">
+        <div id="lever-wrap">
+          <label for="power-lever">Power</label>
+          <input id="power-lever" type="range" min="-1" max="1" step="0.01" value="0" orient="vertical" aria-label="Power and brake lever" />
+          <label for="power-lever">Brake</label>
+        </div>
+        <div class="desk-buttons">
+          <button id="btn-auto" aria-pressed="true">Autopilot</button>
+          <button id="btn-switch">Throw points</button>
+          <button id="btn-reverse">Change ends</button>
+          <button id="btn-camera">Chase view</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Editor: the lever frame -->
+    <section id="frame" aria-label="Map editor tools" role="toolbar"></section>
+
+    <aside id="tool-panel" class="plate" aria-label="Tool options"></aside>
+    <output id="status"></output>
+
+    <div id="toasts" aria-live="polite"></div>
+
+    <dialog id="dlg-new" class="plate">
+      <form method="dialog">
+        <h2>New map</h2>
+        <label>Landscape
+          <select id="new-preset">
+            <option value="alpine">Alpine valley</option>
+            <option value="plains">Rolling plains</option>
+            <option value="desert">Desert mesas</option>
+            <option value="islands">Island chain</option>
+          </select>
+        </label>
+        <label>Seed <input id="new-seed" type="number" value="1" min="1" max="9999" /></label>
+        <label class="check"><input id="new-starter" type="checkbox" checked /> Start with a working railway</label>
+        <menu>
+          <button value="cancel">Cancel</button>
+          <button id="new-go" value="go">Create map</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <dialog id="dlg-help" class="plate">
+      <form method="dialog">
+        <h2>Controls</h2>
+        <div class="help-cols">
+          <dl>
+            <h3>Driving</h3>
+            <dt>W, S</dt><dd>More power, less power then brake</dd>
+            <dt>Space</dt><dd>Full brake while held</dd>
+            <dt>P</dt><dd>Autopilot on or off</dd>
+            <dt>J</dt><dd>Throw the next points ahead</dd>
+            <dt>R</dt><dd>Change ends when stopped</dd>
+            <dt>H</dt><dd>Horn</dd>
+            <dt>C</dt><dd>Change camera; drag to look around</dd>
+            <dt>N</dt><dd>Drive the next train</dd>
+            <dt>M</dt><dd>Sound on or off</dd>
+            <dt>Tab</dt><dd>Switch between driving and editing</dd>
+          </dl>
+          <dl>
+            <h3>Editing</h3>
+            <dt>Right drag</dt><dd>Rotate the view</dd>
+            <dt>Middle drag, WASD</dt><dd>Move the view</dd>
+            <dt>Wheel</dt><dd>Zoom</dd>
+            <dt>[ and ]</dt><dd>Lower or raise the track being laid</dd>
+            <dt>Shift</dt><dd>Snap a new line to 15° steps</dd>
+            <dt>Esc</dt><dd>Stop laying track</dd>
+            <dt>Delete</dt><dd>Remove the selected point</dd>
+            <dt>Ctrl+Z</dt><dd>Undo; add Shift to redo</dd>
+          </dl>
+        </div>
+        <menu><button value="ok">Close</button></menu>
+      </form>
+    </dialog>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
