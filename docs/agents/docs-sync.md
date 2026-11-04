@@ -10,6 +10,7 @@ Docs are part of the change. A pull request that alters behaviour, structure or 
 | Coding, asset, interface or test rules                       | [conventions.md](conventions.md)                                 |
 | Dependencies, scripts, verification steps, or a new gotcha   | [tooling.md](tooling.md)                                         |
 | Player-facing features, controls or known limits             | [README.md](../../README.md) and the help dialog in `index.html` |
+| The release process or deploy workflow                       | [releasing.md](releasing.md)                                     |
 | A command or a guide's purpose                               | [AGENTS.md](../../AGENTS.md)                                     |
 | The project's goal or scope                                  | [IDEA.md](../../IDEA.md)                                         |
 

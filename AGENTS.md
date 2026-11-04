@@ -22,6 +22,7 @@ Before finishing a code change, run `npm run check`. For anything visual, also l
 | [architecture.md](docs/agents/architecture.md) | Change how modules fit together, or touch the rail model, saves or rendering flow |
 | [conventions.md](docs/agents/conventions.md)   | Write code, interface text, assets or tests                                       |
 | [tooling.md](docs/agents/tooling.md)           | Run, debug or verify anything, or change dependencies                             |
+| [releasing.md](docs/agents/releasing.md)       | Cut a release or change how deploys work                                          |
 | [docs-sync.md](docs/agents/docs-sync.md)       | Open a pull request, or find code and docs that disagree                          |
 
 ## Keep docs and code in lockstep
