@@ -59,6 +59,13 @@ export class PropsRenderer {
   private glowTex = glowTexture();
   private levers = new Map<string, { arm: THREE.Object3D }>();
   private stationPadMat = new THREE.SpriteMaterial();
+  // Shared by every rebuild, so never disposed when props are cleared.
+  private armGeo = new THREE.BoxGeometry(0.46, 0.46, 0.04);
+  private boardGeo = new THREE.PlaneGeometry(6.4, 1.2);
+  private postGeo = new THREE.CylinderGeometry(0.05, 0.05, 2.5, 6);
+  private postMat = new THREE.MeshStandardMaterial({ color: 0x25292c, roughness: 0.6 });
+  /** Per-instance materials and textures made by the current build, freed on the next. */
+  private owned: { dispose(): void }[] = [];
   private night = 0;
 
   constructor(
@@ -95,6 +102,8 @@ export class PropsRenderer {
         if (im.isInstancedMesh) im.dispose();
       });
     }
+    for (const r of this.owned) r.dispose();
+    this.owned = [];
     this.signals.clear();
     this.levers.clear();
     this.lamps = [];
@@ -132,6 +141,7 @@ export class PropsRenderer {
       mat.roughness = 0.25;
       mat.emissiveIntensity = 0;
     };
+    this.owned.push(lamps.red, lamps.yellow, lamps.green);
     setup(lamps.red, 0x2a0606, 0xff1a10);
     setup(lamps.yellow, 0x2a1d06, 0xffa010);
     setup(lamps.green, 0x062a14, 0x18ff78);
@@ -170,10 +180,9 @@ export class PropsRenderer {
     obj.position.copy(pos);
     obj.rotation.y = Math.atan2(tx, tz);
     // Painted target that turns with the switch position.
-    const arm = new THREE.Mesh(
-      new THREE.BoxGeometry(0.46, 0.46, 0.04),
-      new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5 }),
-    );
+    const armMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5 });
+    this.owned.push(armMat);
+    const arm = new THREE.Mesh(this.armGeo, armMat);
     arm.position.y = 1.35;
     obj.add(arm);
     this.group.add(obj);
@@ -264,16 +273,15 @@ export class PropsRenderer {
       );
     }
     // Name board.
-    const board = new THREE.Mesh(
-      new THREE.PlaneGeometry(6.4, 1.2),
-      new THREE.MeshStandardMaterial({
-        map: signTexture(st.name),
-        roughness: 0.5,
-        emissive: 0xffffff,
-        emissiveIntensity: 0,
-        side: THREE.DoubleSide,
-      }),
-    );
+    const boardMat = new THREE.MeshStandardMaterial({
+      map: signTexture(st.name),
+      roughness: 0.5,
+      emissive: 0xffffff,
+      emissiveIntensity: 0,
+      side: THREE.DoubleSide,
+    });
+    this.owned.push(boardMat, boardMat.map!);
+    const board = new THREE.Mesh(this.boardGeo, boardMat);
     board.position.set(
       node.x + node.dx * 16 + rx * (offset + 0.2),
       y + 2.5,
@@ -282,10 +290,7 @@ export class PropsRenderer {
     board.rotation.y = Math.atan2(-rx, -rz);
     this.group.add(board);
     for (const leg of [-2.8, 2.8]) {
-      const post = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.05, 0.05, 2.5, 6),
-        new THREE.MeshStandardMaterial({ color: 0x25292c, roughness: 0.6 }),
-      );
+      const post = new THREE.Mesh(this.postGeo, this.postMat);
       post.position.set(board.position.x + node.dx * leg, y + 1.25, board.position.z + node.dz * leg);
       this.group.add(post);
     }
