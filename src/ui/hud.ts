@@ -2,7 +2,7 @@ import type { BrushMode, Tool } from '../editor/editor';
 // HTML interface: mode lever, clock, train register, driver's desk and the editor's lever frame.
 import type { Game } from '../game';
 import type { Side } from '../rail/network';
-import type { SimEvent } from '../rail/sim';
+import type { SimEvent, Train } from '../rail/sim';
 import { CAM_LABEL } from '../render/cameraRig';
 import type { SceneryType } from '../render/scatter';
 import type { Preset } from '../world/heightfield';
@@ -42,6 +42,14 @@ function polar(angleDeg: number, r: number) {
   return { x: 100 + Math.cos(a) * r, y: 100 + Math.sin(a) * r };
 }
 const kmhToAngle = (k: number) => DIAL_START + (Math.min(k, MAX_KMH) / MAX_KMH) * DIAL_SWEEP;
+
+function brakeText(t: Train) {
+  if (t.emergency) return 'Emergency brake on';
+  if (t.slipping) return 'Wheels slipping: ease off the power';
+  if (t.airBrake > 0.02 || t.brake > 0) return 'Air brake on';
+  if (t.dynamic > 0) return 'Engine brake on';
+  return '';
+}
 
 export class Hud {
   autopilot = true;
@@ -427,6 +435,7 @@ export class Hud {
 
     if (this.frameCounter % 8 !== 0) return;
     this.autopilot = t.ai;
+    $('train-text').textContent = t.ai ? '' : brakeText(t);
     $('btn-auto').setAttribute('aria-pressed', String(t.ai));
     const sig = g.sim.signalAhead(t);
     const lamps = document.querySelectorAll<HTMLElement>('.lamps i');

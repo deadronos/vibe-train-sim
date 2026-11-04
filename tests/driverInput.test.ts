@@ -27,21 +27,38 @@ describe('driver input', () => {
     expect(input.lever).toBe(-1);
     expect(t.throttle).toBe(0);
     expect(t.brake).toBe(1);
+    expect(t.dynamic).toBe(1);
     input.releaseAll();
     input.press('ArrowUp');
     input.drive(t, 10);
     expect(input.lever).toBe(1);
   });
 
-  it('brakes fully on Space without moving the lever', () => {
+  it('applies the emergency brake on Space without moving the lever', () => {
     const input = new DriverInput();
     const t = train();
     input.lever = 0.5;
     input.press('Space');
     input.drive(t, 1);
-    expect(t.brake).toBe(1);
+    expect(t.emergency).toBe(true);
     expect(input.lever).toBe(0.5);
     expect(input.movingLever).toBe(false);
+    input.release('Space');
+    input.drive(t, 1);
+    expect(t.emergency).toBe(false);
+  });
+
+  it('uses the engine brake alone for the first part of the brake side', () => {
+    const input = new DriverInput();
+    const t = train();
+    input.lever = -0.125;
+    input.drive(t, 0);
+    expect(t.dynamic).toBeCloseTo(0.5);
+    expect(t.brake).toBe(0);
+    input.lever = -0.625;
+    input.drive(t, 0);
+    expect(t.dynamic).toBe(1);
+    expect(t.brake).toBeCloseTo(0.5);
   });
 
   it('forgets held keys on release all, as when the window loses focus', () => {

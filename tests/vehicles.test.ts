@@ -78,12 +78,13 @@ describe('vehicle table', () => {
 });
 
 describe('how vehicles feel on a straight', () => {
-  it('gives each locomotive its own acceleration, alone and with the same load', () => {
-    const load = ['wagon_box', 'wagon_tank', 'wagon_box', 'wagon_tank'] as const;
-    const times = (['loco_diesel', 'loco_freight', 'loco_light'] as const).map((l) =>
-      secondsToReach(consist(l, ...load), 15),
+  it('gives each locomotive its own acceleration under a heavy load', () => {
+    const load = Array<CarType>(8).fill('wagon_tank');
+    const [diesel, freight, light] = (['loco_diesel', 'loco_freight', 'loco_light'] as const).map((l) =>
+      secondsToReach(consist(l, ...load), 12),
     );
-    expect(new Set(times.map((x) => Math.round(x))).size).toBe(3);
+    expect(freight).toBeLessThan(diesel - 2);
+    expect(diesel).toBeLessThan(light - 2);
   });
 
   it('lets the light locomotive reach a higher speed than the freight one when running alone', () => {

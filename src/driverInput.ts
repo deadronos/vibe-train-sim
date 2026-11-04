@@ -3,6 +3,9 @@ import type { Game } from './game';
 import { activatesFocused, gameKeyAllowed, keyContext } from './keyFilter';
 import type { Train } from './rail/sim';
 
+// The first part of the lever's brake side is engine brake alone, and the rest adds the air brake.
+const ENGINE_BRAKE_RANGE = 0.25;
+
 export class DriverInput {
   /** Power lever: positive is throttle, negative is brake. */
   lever = 0;
@@ -30,7 +33,9 @@ export class DriverInput {
     if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) this.lever = Math.min(1, this.lever + dt * 0.55);
     if (this.keys.has('KeyS') || this.keys.has('ArrowDown')) this.lever = Math.max(-1, this.lever - dt * 0.75);
     t.throttle = Math.max(0, this.lever);
-    t.brake = this.keys.has('Space') ? 1 : Math.max(0, -this.lever);
+    t.dynamic = Math.min(1, Math.max(0, -this.lever) / ENGINE_BRAKE_RANGE);
+    t.brake = Math.max(0, (-this.lever - ENGINE_BRAKE_RANGE) / (1 - ENGINE_BRAKE_RANGE));
+    t.emergency = this.keys.has('Space');
   }
 
   bind(g: Game) {

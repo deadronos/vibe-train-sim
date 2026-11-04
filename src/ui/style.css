@@ -323,7 +323,8 @@ input[type='range'] {
   color: var(--text);
 }
 #station-text,
-#junction-text {
+#junction-text,
+#train-text {
   color: var(--text-dim);
   font-size: 13px;
 }

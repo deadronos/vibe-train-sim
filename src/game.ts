@@ -341,7 +341,7 @@ export class Game {
     if (on) this.sim.plan(t, false);
     else {
       t.throttle = 0;
-      this.input.lever = t.speed > 0.2 ? 0 : -0.3;
+      this.input.lever = t.speed > 0.2 ? 0 : -0.5;
       t.dwell = 0;
       t.stopRemain = -1;
     }
