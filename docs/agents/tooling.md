@@ -72,5 +72,6 @@ __game.sim.trains.map((t) => t.statusText);
 - **Old saves hide new starter maps.** A change to `src/rail/demoMap.ts` won't appear until you create a new map.
 - **Vite reloads restart the state you set by hand.** Editing a file during a browser check reloads the page, so scripted camera or time changes are lost.
 - **Bloom threshold is tied to sky brightness.** `src/render/environment.ts` caps the sky below the bloom threshold in `src/main.ts`. Change them together, or the whole sky blooms.
+- **Dusk must not be darker than night.** The key light hands over from sun to moon between about 18:45 and 19:30, and exposure and sky fill are raised through it. Check every half hour from 17:30 to 21:00 after touching `src/render/environment.ts`. With the pane hidden, set `__game.env.timeScale = 0` and `__game.env.hours`, then call `__game.env.update(0.5, __game.camera.position)` and `__game.composer.render()` yourself before a screenshot.
 - **The sky patch depends on three.js internals.** It replaces `#include <tonemapping_fragment>` in the Sky shader, so check it after upgrading three.js.
 - **`console.log` from passing tests may not appear in non-interactive runs.** Write to a file if you need output from a throwaway test.

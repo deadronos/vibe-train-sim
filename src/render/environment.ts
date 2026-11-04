@@ -43,6 +43,7 @@ export class Environment {
   private time = 0;
   shadowTexelSnap = 0;
   private tmp = new THREE.Vector3();
+  private keyDir = new THREE.Vector3();
 
   constructor(
     private scene: THREE.Scene,
@@ -157,12 +158,16 @@ export class Environment {
       if (u.time) u.time.value = this.time;
     }
 
-    // Key light switches between sun and moon around twilight, fading through dark to hide the swap.
-    const useMoon = el < -0.02;
-    const moonAmt = smoothstep(-0.02, -0.16, el);
-    const dir = useMoon ? this.moonDir : this.sunDir;
-    this.sun.color.copy(useMoon ? COLORS.moon : COLORS.sunLow.clone().lerp(COLORS.sunHigh, smoothstep(0.0, 0.42, el)));
-    this.sun.intensity = useMoon ? 1.15 * moonAmt : 4.0 * smoothstep(-0.02, 0.14, el) * (1 - this.cloudCover * 0.3);
+    // One key light hands over from sun to moon. The sun keeps a faint tail below the
+    // horizon (twilight scatter) and the moon is already rising while it fades, so
+    // total light never drops below night level in between.
+    const toMoon = smoothstep(0.0, -0.1, el);
+    const sunI = 4.0 * smoothstep(-0.1, 0.14, el) * (1 - this.cloudCover * 0.3);
+    const dir = this.keyDir.copy(this.sunDir).lerp(this.moonDir, toMoon).normalize();
+    this.sun.color
+      .copy(COLORS.sunLow.clone().lerp(COLORS.sunHigh, smoothstep(0.0, 0.42, el)))
+      .lerp(COLORS.moon, toMoon);
+    this.sun.intensity = sunI * (1 - toMoon) + 1.15 * toMoon;
 
     // Shadow camera tracks the focus point, snapped to shadow texels to stop shimmer.
     const snap = this.shadowTexelSnap * 4;
@@ -174,7 +179,9 @@ export class Environment {
 
     this.hemi.color.copy(COLORS.hemiSkyNight).lerp(COLORS.hemiSkyDay, day);
     this.hemi.groundColor.copy(COLORS.hemiGround).multiplyScalar(0.4 + day * 0.6);
-    this.hemi.intensity = 0.42 + golden * day * 0.35;
+    // Sky-lit fill through civil twilight, peaking as the sun goes under the horizon.
+    const twilight = Math.min(smoothstep(0.1, -0.02, el), smoothstep(-0.26, -0.06, el));
+    this.hemi.intensity = 0.42 + golden * day * 0.35 + twilight * 0.5;
 
     const fog = this.scene.fog as THREE.FogExp2;
     fog.color
@@ -188,7 +195,9 @@ export class Environment {
     this.moon.visible = this.night > 0.02;
     this.sky.position.set(focus.x, 0, focus.z);
 
-    this.renderer.toneMappingExposure = 0.42 + this.night * 0.38;
+    // Exposure rises through dusk too, otherwise the dim sky-lit scene reads darker than the moonlit night.
+    const dusk = smoothstep(0.06, -0.1, el);
+    this.renderer.toneMappingExposure = 0.42 + Math.max(this.night, dusk) * 0.38;
 
     // Image-based lighting comes from the sky itself; regenerated only as the sky changes.
     this.envCooldown -= dt;
