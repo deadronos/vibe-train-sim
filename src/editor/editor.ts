@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { MapControls } from 'three/addons/controls/MapControls.js';
 
+import { gameKey } from '../keyFilter';
 import type { Game } from '../main';
 import { FREIGHT, PASSENGER, SHUTTLE } from '../rail/demoMap';
 import type { RailNode, Side } from '../rail/network';
@@ -147,7 +148,7 @@ export class Editor {
     dom.addEventListener('contextmenu', (e) => e.preventDefault());
     window.addEventListener('keydown', (e) => {
       this.shift = e.shiftKey;
-      if ((e.target as HTMLElement).tagName === 'INPUT') return;
+      if (!gameKey(e)) return;
       this.keys.add(e.code);
       if (!this.game.editing) return;
       if (e.code === 'Escape') this.cancel();
@@ -159,6 +160,11 @@ export class Editor {
       this.shift = e.shiftKey;
       this.keys.delete(e.code);
     });
+  }
+
+  releaseKeys() {
+    this.keys.clear();
+    this.shift = false;
   }
 
   enter() {
