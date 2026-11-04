@@ -1,0 +1,52 @@
+# Tooling
+
+## Stack
+
+| Tool | Used for |
+| --- | --- |
+| Three.js | Rendering, loaded from npm with addons from `three/addons/` |
+| TypeScript | Language, type-checked by `tsc --noEmit` |
+| Vite | Dev server and build, with `base: './'` so `dist/` can be hosted from any path |
+| Vitest | Simulation tests |
+| Blender 5.x | Asset pack generation, optional unless models change |
+
+Exact versions are in `package.json` and `package-lock.json`. Use `npm` and commit the lockfile.
+
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `npm run dev` | Starts the dev server |
+| `npm test` | Runs the tests once |
+| `npm run build` | Type-checks, then builds to `dist/` |
+| `npm run preview` | Serves the built site |
+| `npm run assets` | Rebuilds `assetpack.glb` and `tools/blender/preview.png` |
+
+`npm run assets` expects Blender at `/Applications/Blender.app`. Check the preview render after changing models. It is ignored by git.
+
+## Verifying a change
+
+1. Run `npm test` and `npm run build`.
+2. For visual or editor changes, run the app and try the change, watching the browser console for errors.
+3. For lighting changes, check noon, dusk and night, since a fix for one often breaks another.
+4. For terrain or bridge changes, check more than one landscape through **New map**.
+
+## Debugging
+
+`window.__game` exposes the running `Game` in dev and production builds. For example:
+
+```js
+__game.env.timeScale = 0;              // Stop the clock
+__game.env.hours = 21.5;               // Jump to night
+__game.newWorld('desert', 3, true);    // Load a landscape with the starter railway
+__game.sim.trains.map((t) => t.statusText);
+```
+
+## Gotchas
+
+- **Clearing the save doesn't reset the map.** A `beforeunload` handler saves on reload, so `localStorage.clear()` followed by a reload brings the old map back. Use `__game.newWorld(...)` instead, or **New map** in the app.
+- **Old saves hide new starter maps.** A change to `src/rail/demoMap.ts` won't appear until you create a new map.
+- **Vite reloads restart the state you set by hand.** Editing a file during a browser check reloads the page, so scripted camera or time changes are lost.
+- **Bloom threshold is tied to sky brightness.** `src/render/environment.ts` caps the sky below the bloom threshold in `src/main.ts`. Change them together, or the whole sky blooms.
+- **The sky patch depends on three.js internals.** It replaces `#include <tonemapping_fragment>` in the Sky shader, so check it after upgrading three.js.
+- **`console.log` from passing tests may not appear in non-interactive runs.** Write to a file if you need output from a throwaway test.
