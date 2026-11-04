@@ -3,6 +3,7 @@ name: Deploy to Pages
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -25,14 +26,15 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
-      - uses: actions/upload-pages-artifact@v5
+      - if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-pages-artifact@v5
         with:
           path: dist
 
   deploy:
     name: Deploy
-    # Pull requests stop after the build, so only main reaches the live site.
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    # Only version tags reach the live site. Pull requests and main stop after the build.
+    if: startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-latest
     permissions:
