@@ -36,6 +36,12 @@ Exact versions are in `package.json` and `package-lock.json`. Use `npm` and comm
 3. For lighting changes, check noon, dusk and night, since a fix for one often breaks another.
 4. For terrain or bridge changes, check more than one landscape through **New map**.
 
+## CI and deployment
+
+`.github/workflows/deploy-pages.yml` runs `npm run check` on every pull request and push to `main`. Pushes to `main` that pass are then deployed to [GitHub Pages](https://deadronos.github.io/vibe-train-sim/). You can also start it by hand from the Actions tab.
+
+The site is served from a subpath, so keep `base: './'` in `vite.config.ts` and build asset URLs from `import.meta.env.BASE_URL`.
+
 ## Lint and format settings
 
 Rules are in `.oxlintrc.json` and formatter settings in `.oxfmtrc.json`. Each rule switched off has its reason beside it there.

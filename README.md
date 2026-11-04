@@ -2,6 +2,10 @@
 
 A train simulator and map editor that runs in the browser, built with Three.js and TypeScript. All 3D models come from a Blender script in this repo.
 
+**[Play it in your browser](https://deadronos.github.io/vibe-train-sim/)**
+
+To run it locally:
+
 ```bash
 npm install
 npm run dev
