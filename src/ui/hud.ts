@@ -2,14 +2,18 @@ import type { BrushMode, Tool } from '../editor/editor';
 // HTML interface: mode lever, clock, train register, driver's desk and the editor's lever frame.
 import type { Game } from '../game';
 import type { Side } from '../rail/network';
-import type { SimEvent, Train } from '../rail/sim';
+import { LINE_VMAX } from '../rail/network';
+import type { DeskInfo, SimEvent, Train } from '../rail/sim';
 import { CAM_LABEL } from '../render/cameraRig';
 import type { SceneryType } from '../render/scatter';
 import type { Preset } from '../world/heightfield';
 
 // oxlint-disable-next-line typescript/no-unnecessary-type-parameters -- Callers name the element type they expect.
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
-const MAX_KMH = 160;
+// Room past the fastest line speed so overspeed shows on the dial.
+const MAX_KMH = Math.ceil((LINE_VMAX * 3.6) / 20) * 20 + 20;
+const OVERSPEED_KMH = 2;
+const BRAKE_MARKER_RANGE = 2000; // m; how near a stop signal must be before the braking marker shows
 const DIAL_START = -135;
 const DIAL_SWEEP = 270;
 
@@ -56,6 +60,7 @@ export class Hud {
   private trainRows = new Map<number, { speed: HTMLElement; state: HTMLElement; li: HTMLElement }>();
   private frameCounter = 0;
   private lastLimit = -1;
+  private empty: boolean | null = null;
 
   constructor(private game: Game) {}
 
@@ -134,10 +139,10 @@ export class Hud {
     const group = $('dial-ticks') as unknown as SVGGElement;
     const NS = 'http://www.w3.org/2000/svg';
     for (let k = 0; k <= MAX_KMH; k += 10) {
-      const major = k % 40 === 0;
+      const major = k % 20 === 0;
       const a = kmhToAngle(k);
       const p0 = polar(a, 83);
-      const p1 = polar(a, major ? 69 : 76);
+      const p1 = polar(a, major ? 71 : 77);
       const line = document.createElementNS(NS, 'line');
       line.setAttribute('x1', String(p0.x));
       line.setAttribute('y1', String(p0.y));
@@ -435,23 +440,28 @@ export class Hud {
     }
     if (this.frameCounter % 15 === 0) $('fps').textContent = `${Math.round(g.fps)} fps`;
     const t = g.driven;
+    this.setEmpty(!t);
     if (!t) return;
     const kmh = t.speed * 3.6;
     $('dial-needle').setAttribute('transform', `rotate(${kmhToAngle(kmh)} 100 100)`);
     $('dial-speed').textContent = String(Math.round(kmh));
     this.setDialLimit(t.limit * 3.6);
-    const leverEl = $<HTMLInputElement>('power-lever');
-    leverEl.value = String(t.ai ? t.throttle - t.brake : g.input.lever);
+    const lever = t.ai ? t.throttle - t.brake : g.input.lever;
+    $<HTMLInputElement>('power-lever').value = String(lever);
 
     if (this.frameCounter % 8 !== 0) return;
     this.autopilot = t.ai;
     $('train-text').textContent = t.ai ? '' : brakeText(t);
     $('btn-auto').setAttribute('aria-pressed', String(t.ai));
+    $('lever-text').textContent = leverText(t, lever);
+    const info = g.sim.deskInfo(t);
+    this.showLine(info, kmh);
     const sig = g.sim.signalAhead(t);
     const lamps = document.querySelectorAll<HTMLElement>('.lamps i');
     lamps.forEach((l) => l.classList.toggle('on', !!sig && l.dataset.lamp === sig.aspect));
     const word = sig ? { red: 'Stop', yellow: 'Caution', green: 'Clear' }[sig.aspect] : '';
     $('signal-text').textContent = sig ? `${word} in ${formatDist(sig.dist)}` : 'No signal ahead';
+    this.showBraking(sig?.aspect === 'red' && sig.dist < BRAKE_MARKER_RANGE ? sig.dist : null, t, info);
     const stn = g.sim.stationAhead(t);
     $('station-text').textContent = stn ? `${stn.name} in ${formatDist(stn.dist)}` : '';
     const j = g.sim.nextJunction(t);
@@ -469,6 +479,67 @@ export class Hud {
       if (row.state.textContent !== text) row.state.textContent = text;
     }
   }
+
+  /** Clears the desk when there is no train to drive, so it never shows the last train's values. */
+  private setEmpty(empty: boolean) {
+    if (empty === this.empty) return;
+    this.empty = empty;
+    $('desk').classList.toggle('empty', empty);
+    for (const id of ['power-lever', 'btn-auto', 'btn-switch', 'btn-reverse']) {
+      $<HTMLInputElement | HTMLButtonElement>(id).disabled = empty;
+    }
+    if (!empty) return;
+    $('dial-needle').setAttribute('transform', `rotate(${kmhToAngle(0)} 100 100)`);
+    $('dial-speed').textContent = '–';
+    this.setDialLimit(MAX_KMH);
+    $<HTMLInputElement>('power-lever').value = '0';
+    document.querySelectorAll('.lamps i').forEach((l) => l.classList.remove('on'));
+    $('signal-text').textContent = 'No train to drive';
+    for (const id of ['station-text', 'junction-text', 'train-text', 'lever-text', 'next-limit-text', 'grade-text']) {
+      $(id).textContent = '';
+    }
+    $('limit-text').textContent = 'Add one with the Train lever in Edit map';
+    $('limit-text').classList.remove('alert');
+    $('brake-row').hidden = true;
+  }
+
+  private showLine(info: DeskInfo, kmh: number) {
+    const limit = Math.round(info.limit * 3.6);
+    const over = kmh > info.limit * 3.6 + OVERSPEED_KMH;
+    const limitEl = $('limit-text');
+    limitEl.textContent = over ? `Over the limit of ${limit} km/h` : `Limit ${limit} km/h`;
+    limitEl.classList.toggle('alert', over);
+    const next = info.nextLimit;
+    $('next-limit-text').textContent = next
+      ? `${Math.round(next.speed * 3.6)} km/h in ${formatDist(next.dist)}`
+      : 'No lower limit ahead';
+    const pct = info.gradient * 100;
+    $('grade-text').textContent =
+      Math.abs(pct) < 0.1 ? 'Level' : `${pct > 0 ? 'Uphill' : 'Downhill'} ${Math.abs(pct).toFixed(1)}%`;
+  }
+
+  /** Compares the room left before a red signal with the distance the train needs to stop. */
+  private showBraking(signalDist: number | null, t: Train, info: DeskInfo) {
+    const row = $('brake-row');
+    row.hidden = signalDist === null || t.speed < 0.5;
+    if (row.hidden || signalDist === null) return;
+    const room = Math.max(1, signalDist - 8);
+    const need = info.brakingDistance;
+    const share = Math.min(1, need / room);
+    const late = share > 0.85;
+    $('brake-bar').style.setProperty('--fill', String(share));
+    row.classList.toggle('alert', late);
+    const text =
+      need === Infinity ? 'Can’t stop on this descent' : late ? 'Brake now' : `Full brake: ${formatDist(need)}`;
+    $('brake-text').textContent = text;
+  }
+}
+
+function leverText(t: Train, lever: number) {
+  if (t.emergency) return 'Emergency brake';
+  const pct = Math.round(Math.abs(lever) * 100);
+  if (pct === 0) return 'Coasting';
+  return `${lever > 0 ? 'Power' : 'Brake'} ${pct}%`;
 }
 
 function formatDist(m: number) {

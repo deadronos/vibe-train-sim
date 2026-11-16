@@ -324,9 +324,76 @@ input[type='range'] {
 }
 #station-text,
 #junction-text,
-#train-text {
+#train-text,
+#next-limit-text,
+#grade-text {
   color: var(--text-dim);
   font-size: 13px;
+}
+/* Warnings invert to an enamel plate: red stays reserved for signal aspects. */
+.readout .alert,
+#brake-row.alert #brake-text {
+  background: var(--plate);
+  color: var(--ink);
+  border-radius: 2px;
+  padding: 0 4px;
+  margin: 0 -4px;
+  font-weight: 600;
+}
+#brake-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+#brake-row[hidden] {
+  display: none;
+}
+#brake-row.alert {
+  background: none;
+  padding: 0;
+  margin: 0;
+}
+/* The bar is the room left before the red signal; the brass fill is what stopping takes. */
+#brake-bar {
+  flex: none;
+  width: 70px;
+  height: 8px;
+  background: var(--enamel-deep);
+  border: 1px solid #0c1b1d;
+  border-radius: 1px;
+  overflow: hidden;
+}
+#brake-bar i {
+  display: block;
+  height: 100%;
+  width: calc(var(--fill, 0) * 100%);
+  background: var(--brass);
+}
+#brake-row.alert #brake-bar i {
+  background: var(--plate);
+}
+#line-info {
+  width: 190px;
+}
+#lever-text {
+  grid-column: 1 / -1;
+  font: 600 15px var(--num);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  text-align: center;
+}
+#desk.empty #dial,
+#desk.empty #controls {
+  opacity: 0.55;
+}
+#power-lever:disabled,
+.desk-buttons button:disabled {
+  cursor: not-allowed;
+}
+.desk-buttons button:disabled:hover {
+  background: var(--enamel-deep);
 }
 #dial {
   width: 184px;
@@ -661,6 +728,7 @@ dialog menu {
     display: none;
   }
   #repeater,
+  #line-info,
   #controls {
     width: auto;
   }

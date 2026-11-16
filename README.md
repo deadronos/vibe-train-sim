@@ -18,6 +18,7 @@ npm run dev
 - Train physics: power and adhesion limits, gravity and curve resistance along the whole train, and curve speed limits
 - Air, engine and emergency brakes that depend on the train, so a loaded freight takes far longer to stop than an express
 - Three locomotive types, and wagons that can be empty or loaded
+- A driver's desk with the limit here and the next lower one ahead, the gradient, power and brake levels, an overspeed warning, and a marker comparing braking distance with the room left before a red signal
 - Pause and fast-forward
 - Saves keep trains moving: they come back where they were, at the same speed and on the same route
 - Autopilot that follows a timetable, stops at stations and turns around at termini

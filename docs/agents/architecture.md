@@ -46,6 +46,7 @@ Defined in `src/rail/network.ts`.
 - **Forces** come from the whole train. Gravity and curve resistance are averaged by mass over each car. Pulling force is limited by adhesion on the locomotives' weight: above it a manual train slips and loses grip, while the AI stops at the limit. Trains stop at speed 0, so they can't roll back until #64 settles reversing.
 - **Brakes:** `t.brake` is the demand and `t.airBrake` is what is applied. It chases the demand over `brakeLag`, which grows with train length, and releases more slowly. Friction fades with speed. `t.dynamic` is the engine brake, which acts at once but fades at walking pace. `t.emergency` is stronger and faster, and cuts power.
 - **AI braking** plans from its own train's brakes, with less on a descent, and adds a holding brake to cancel gravity, or it would creep past red signals. Only a heavy train on a steep descent uses the emergency brake.
+- **Looking ahead:** `walkAhead()` follows the track ahead of a train along the route it would take, through the points as set. The desk's signal, station, junction and limit readouts all use it. `deskInfo()` predicts braking distance by stepping the train's own brake model forward at full brake, so the desk and the physics can't disagree.
 - **AI** plans a route to the next timetabled station, reversing only when no forward route exists. A waiting train backs away only for a true deadlock, where the train holding its block is also stuck. The train with the higher id gives way, and a player-held signal never triggers this.
 
 ## Terrain
