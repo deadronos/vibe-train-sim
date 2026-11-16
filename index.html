@@ -4,12 +4,6 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Vibe Train Sim</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600&family=Overpass:wght@400;600;700&display=swap"
-      rel="stylesheet"
-    />
   </head>
   <body data-mode="drive">
     <canvas id="view"></canvas>
@@ -47,6 +41,7 @@
         <button id="btn-export">Export</button>
         <button id="btn-import">Import</button>
         <button id="btn-new">New map</button>
+        <button id="btn-sound" aria-pressed="true">Sound</button>
         <button id="btn-help" aria-label="Keyboard help">Help</button>
         <select id="quality" aria-label="Graphics quality">
           <option value="high">High graphics</option>
@@ -181,6 +176,19 @@
       </form>
     </dialog>
 
+    <dialog id="dlg-sound" class="plate">
+      <form method="dialog">
+        <h2>Sound</h2>
+        <label class="check"><input id="sound-on" type="checkbox" /> Sound on</label>
+        <label>Volume <input id="sound-volume" type="range" min="0" max="1" step="0.05" /></label>
+        <label>Engine <input id="sound-engine" type="range" min="0" max="1" step="0.05" /></label>
+        <label>Wheels and rails <input id="sound-rail" type="range" min="0" max="1" step="0.05" /></label>
+        <label>Horn <input id="sound-horn" type="range" min="0" max="1" step="0.05" /></label>
+        <p id="sound-wait">Sound starts after your first click or key press.</p>
+        <menu><button value="ok">Close</button></menu>
+      </form>
+    </dialog>
+
     <dialog id="dlg-help" class="plate">
       <form method="dialog">
         <h2>Controls</h2>
@@ -206,7 +214,7 @@
             <dt>, and .</dt>
             <dd>Slow down or speed up the railway; the slowest is pause</dd>
             <dt>M</dt>
-            <dd>Sound on or off</dd>
+            <dd>Sound on or off; Sound in the menu sets levels</dd>
             <dt>E</dt>
             <dd>Switch between driving and editing</dd>
           </dl>

@@ -1,4 +1,6 @@
 // Moves a world to and from save data, browser storage and files. Needs no WebGL, so tests can run it directly.
+import type { SoundSettings } from './audio';
+import { DEFAULT_SOUND } from './audio';
 import { Network } from './rail/network';
 import { Sim, Train } from './rail/sim';
 import type { PlacedItem } from './render/scatter';
@@ -12,6 +14,7 @@ const SAVE_KEY = 'vibe-train-sim/map-v1';
 // A save that fails validation is moved here so nothing the player made is thrown away.
 const BACKUP_KEY = 'vibe-train-sim/map-v1-backup';
 const QUALITY_KEY = 'vibe-train-sim/quality';
+const SOUND_KEY = 'vibe-train-sim/sound';
 
 export interface WorldState {
   hf: Heightfield;
@@ -144,6 +147,37 @@ export function readQuality(): Quality {
 export function writeQuality(q: Quality) {
   try {
     localStorage.setItem(QUALITY_KEY, q);
+  } catch {
+    /* The choice simply lasts for this page only. */
+  }
+}
+
+/** Reads sound settings, falling back to the default for anything missing or out of range. */
+export function readSound(): SoundSettings {
+  let raw: unknown = null;
+  try {
+    raw = JSON.parse(localStorage.getItem(SOUND_KEY) ?? 'null');
+  } catch {
+    /* Blocked storage or a bad value: use the defaults. */
+  }
+  return parseSound(raw);
+}
+
+export function parseSound(raw: unknown): SoundSettings {
+  const out = { ...DEFAULT_SOUND };
+  if (!raw || typeof raw !== 'object') return out;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.muted === 'boolean') out.muted = r.muted;
+  for (const k of ['volume', 'engine', 'rail', 'horn'] as const) {
+    const v = r[k];
+    if (typeof v === 'number' && v >= 0 && v <= 1) out[k] = v;
+  }
+  return out;
+}
+
+export function writeSound(s: SoundSettings) {
+  try {
+    localStorage.setItem(SOUND_KEY, JSON.stringify(s));
   } catch {
     /* The choice simply lasts for this page only. */
   }

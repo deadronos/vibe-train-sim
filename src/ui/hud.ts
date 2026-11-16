@@ -114,6 +114,7 @@ export class Hud {
       if (help.open) help.close();
       else help.showModal();
     });
+    this.bindSound();
     const q = $<HTMLSelectElement>('quality');
     q.value = g.quality;
     q.onchange = () => g.setQuality(q.value as 'high' | 'low');
@@ -177,6 +178,33 @@ export class Hud {
       b.onclick = () => this.game.editor.setTool(l.tool);
       frame.appendChild(b);
     }
+  }
+
+  private bindSound() {
+    const g = this.game;
+    const dlg = $<HTMLDialogElement>('dlg-sound');
+    $('btn-sound').onclick = () => {
+      this.syncSound();
+      dlg.showModal();
+    };
+    $<HTMLInputElement>('sound-on').onchange = (e) => g.setSound({ muted: !(e.target as HTMLInputElement).checked });
+    for (const k of ['volume', 'engine', 'rail', 'horn'] as const) {
+      const input = $<HTMLInputElement>(`sound-${k}`);
+      input.oninput = () => g.setSound({ [k]: Number(input.value) });
+    }
+    this.syncSound();
+  }
+
+  syncSound() {
+    const a = this.game.audio;
+    const s = a.settings;
+    $('btn-sound').setAttribute('aria-pressed', String(!s.muted));
+    $('btn-sound').textContent = s.muted ? 'Sound off' : 'Sound';
+    $<HTMLInputElement>('sound-on').checked = !s.muted;
+    for (const k of ['volume', 'engine', 'rail', 'horn'] as const) {
+      $<HTMLInputElement>(`sound-${k}`).value = String(s[k]);
+    }
+    $('sound-wait').hidden = a.started;
   }
 
   syncTrainSpeed() {

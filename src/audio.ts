@@ -1,7 +1,24 @@
 // All sound is synthesised, so the project ships no audio files.
+
+/** The player's sound choices. Levels run from 0 to 1. */
+export interface SoundSettings {
+  muted: boolean;
+  volume: number;
+  engine: number;
+  rail: number;
+  horn: number;
+}
+
+export const DEFAULT_SOUND: SoundSettings = { muted: false, volume: 0.8, engine: 1, rail: 1, horn: 1 };
+const MASTER = 0.56; // Full volume; the default setting gives the 0.45 the mix was tuned at
+const BUS_FADE = 0.05; // Seconds; settings changes glide rather than click
+
 export class SimAudio {
   private ctx: AudioContext | null = null;
   private master!: GainNode;
+  private engineBus!: GainNode;
+  private railBus!: GainNode;
+  private hornBus!: GainNode;
   private engine!: OscillatorNode;
   private engine2!: OscillatorNode;
   private engineGain!: GainNode;
@@ -9,7 +26,16 @@ export class SimAudio {
   private hornGain!: GainNode;
   private clackTimer = 0;
   private noise!: AudioBuffer;
-  muted = false;
+  settings: SoundSettings = { ...DEFAULT_SOUND };
+
+  get muted() {
+    return this.settings.muted;
+  }
+
+  /** True once a click or key press has let the browser start sound. */
+  get started() {
+    return this.ctx !== null;
+  }
 
   /** Browsers only allow audio after a user gesture. */
   unlock() {
@@ -20,8 +46,21 @@ export class SimAudio {
     const ctx = new AudioContext();
     this.ctx = ctx;
     this.master = ctx.createGain();
-    this.master.gain.value = this.muted ? 0 : 0.45;
     this.master.connect(ctx.destination);
+    const bus = () => {
+      const g = ctx.createGain();
+      g.connect(this.master);
+      return g;
+    };
+    this.engineBus = bus();
+    this.railBus = bus();
+    this.hornBus = bus();
+    this.apply(true);
+    // Frames stop in a hidden tab, so the last levels would otherwise drone on.
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) void ctx.suspend();
+      else void ctx.resume();
+    });
 
     const filter = ctx.createBiquadFilter();
     filter.type = 'lowpass';
@@ -35,7 +74,7 @@ export class SimAudio {
     this.engine.connect(filter);
     this.engine2.connect(filter);
     filter.connect(this.engineGain);
-    this.engineGain.connect(this.master);
+    this.engineGain.connect(this.engineBus);
     this.engine.start();
     this.engine2.start();
 
@@ -53,12 +92,12 @@ export class SimAudio {
     this.rollGain.gain.value = 0;
     roll.connect(rollFilter);
     rollFilter.connect(this.rollGain);
-    this.rollGain.connect(this.master);
+    this.rollGain.connect(this.railBus);
     roll.start();
 
     this.hornGain = ctx.createGain();
     this.hornGain.gain.value = 0;
-    this.hornGain.connect(this.master);
+    this.hornGain.connect(this.hornBus);
     for (const f of [311, 370, 466]) {
       const o = ctx.createOscillator();
       o.type = 'sawtooth';
@@ -72,8 +111,26 @@ export class SimAudio {
   }
 
   setMuted(m: boolean) {
-    this.muted = m;
-    if (this.ctx) this.master.gain.value = m ? 0 : 0.45;
+    this.set({ muted: m });
+  }
+
+  set(change: Partial<SoundSettings>) {
+    this.settings = { ...this.settings, ...change };
+    this.apply(false);
+  }
+
+  private apply(now: boolean) {
+    if (!this.ctx) return;
+    const s = this.settings;
+    const t = this.ctx.currentTime;
+    const level = (g: GainNode, v: number) => {
+      if (now) g.gain.value = v;
+      else g.gain.setTargetAtTime(v, t, BUS_FADE);
+    };
+    level(this.master, s.muted ? 0 : s.volume * MASTER);
+    level(this.engineBus, s.engine);
+    level(this.railBus, s.rail);
+    level(this.hornBus, s.horn);
   }
 
   horn(on: boolean) {
@@ -81,12 +138,12 @@ export class SimAudio {
     this.hornGain.gain.setTargetAtTime(on ? 0.55 : 0, this.ctx.currentTime, 0.04);
   }
 
-  private clack(strength: number) {
+  private clack(strength: number, delay: number) {
     const ctx = this.ctx!;
     const src = ctx.createBufferSource();
     src.buffer = this.noise;
     const g = ctx.createGain();
-    const t = ctx.currentTime;
+    const t = ctx.currentTime + delay;
     g.gain.setValueAtTime(strength, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.07);
     const f = ctx.createBiquadFilter();
@@ -94,12 +151,12 @@ export class SimAudio {
     f.frequency.value = 1300;
     src.connect(f);
     f.connect(g);
-    g.connect(this.master);
+    g.connect(this.railBus);
     src.start(t, Math.random());
     src.stop(t + 0.08);
   }
 
-  /** Follows the driven train; volume drops with camera distance from it. */
+  /** Follows the driven train; volume drops with camera distance from it. Call with nearby 0 to fade out. */
   update(dt: number, speed: number, throttle: number, nearby: number) {
     if (!this.ctx || this.ctx.state !== 'running') return;
     const t = this.ctx.currentTime;
@@ -113,8 +170,9 @@ export class SimAudio {
       this.clackTimer -= dt * speed;
       if (this.clackTimer <= 0) {
         this.clackTimer = 18;
-        this.clack(0.16 * nearby);
-        setTimeout(() => this.ctx && this.clack(0.11 * nearby), Math.min(160, 2600 / speed));
+        // Both wheelsets of a bogie cross the joint, so the second clack follows the first.
+        this.clack(0.16 * nearby, 0);
+        this.clack(0.11 * nearby, Math.min(0.16, 2.6 / speed));
       }
     }
   }
