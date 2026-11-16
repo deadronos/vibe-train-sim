@@ -61,6 +61,8 @@ Rules are in `.oxlintrc.json` and formatter settings in `.oxfmtrc.json`. Each ru
 
 ## Debugging
 
+Add `?debug` to the URL, or press the `key, for an overlay with frame time, draw calls, triangles, GPU memory counts, pixel ratio and what auto quality has settled on.`renderer.info.autoReset`is off so the counts cover every composer pass;`Game.frame()` resets them before rendering.
+
 `window.__game` exposes the running `Game` in dev and production builds. For example:
 
 ```js

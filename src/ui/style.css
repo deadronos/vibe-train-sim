@@ -946,3 +946,23 @@ dialog menu {
   padding: 0;
   text-decoration: underline;
 }
+
+/* Developer overlay: plain and out of the way. */
+#perf {
+  position: fixed;
+  left: 10px;
+  bottom: 150px;
+  z-index: 7;
+  margin: 0;
+  padding: 6px 8px;
+  background: rgba(8, 16, 17, 0.82);
+  color: var(--text-dim);
+  font:
+    500 12px/1.35 ui-monospace,
+    Menlo,
+    monospace;
+  pointer-events: none;
+}
+#perf[hidden] {
+  display: none;
+}

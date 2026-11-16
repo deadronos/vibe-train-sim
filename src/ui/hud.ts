@@ -2,7 +2,7 @@ import type { BrushMode, Tool } from '../editor/editor';
 // HTML interface: mode lever, clock, train register, driver's desk and the editor's lever frame.
 import type { Game } from '../game';
 import type { MapEntry } from '../mapLibrary';
-import type { Rules } from '../persistence';
+import type { Quality, Rules } from '../persistence';
 import type { Duty } from '../rail/duty';
 import { clock } from '../rail/duty';
 import type { Side } from '../rail/network';
@@ -13,6 +13,7 @@ import type { SceneryType } from '../render/scatter';
 import type { Preset } from '../world/heightfield';
 import { Guide } from './guide';
 import { OverviewMap } from './overviewMap';
+import { PerfOverlay } from './perfOverlay';
 
 // oxlint-disable-next-line typescript/no-unnecessary-type-parameters -- Callers name the element type they expect.
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -68,6 +69,7 @@ export class Hud {
   private lastLimit = -1;
   private empty: boolean | null = null;
   map!: OverviewMap;
+  perf!: PerfOverlay;
   private lamps: HTMLElement[] | null = null;
   guide!: Guide;
 
@@ -125,6 +127,7 @@ export class Hud {
     });
     this.bindSound();
     this.map = new OverviewMap(g, $('overview'));
+    this.perf = new PerfOverlay(g, $('perf'));
     $('btn-overview').onclick = () => this.map.toggle();
     $('overview-close').onclick = () => this.map.toggle(false);
     this.guide = new Guide(g, $('guide'));
@@ -135,7 +138,7 @@ export class Hud {
     this.bindMaps();
     const q = $<HTMLSelectElement>('quality');
     q.value = g.quality;
-    q.onchange = () => g.setQuality(q.value as 'high' | 'low');
+    q.onchange = () => g.setQuality(q.value as Quality);
     const rules = $<HTMLSelectElement>('rules');
     rules.value = g.rules;
     rules.onchange = () => {

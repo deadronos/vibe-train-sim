@@ -55,6 +55,10 @@ import { Heightfield } from './world/heightfield';
 
 const TRAIN_SPEEDS = [0, 1, 2, 4, 8];
 const AUTOSAVE_MS = 60_000;
+const ADAPT_EVERY = 2; // s between auto quality checks
+const AUTO_SLOW_FPS = 45;
+const AUTO_FAST_FPS = 57;
+const AUTO_MIN_SCALE = 0.55;
 const BACKUP_KEPT_TEXT = 'Your previous map is kept in Maps, under Backups';
 const BACKUP_FAILED_TEXT =
   'Your previous map could not be backed up because browser storage is full. Delete saved copies in Maps, or export maps you want to keep';
@@ -81,6 +85,11 @@ export class Game {
   driven: Train | null = null;
   editing = false;
   quality: Quality = readQuality();
+  private bloom: UnrealBloomPass;
+  /** Resolution share auto quality has settled on, from AUTO_MIN_SCALE to 1. */
+  autoScale = 1;
+  private autoLow = false;
+  private adaptTimer = 0;
   rules: Rules = readRules();
   /** How fast the railway runs: 0 is paused. */
   trainSpeed = 1;
@@ -108,19 +117,17 @@ export class Game {
       e.preventDefault();
       this.onContextLost();
     });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, this.quality === 'high' ? 1.75 : 1));
+    this.renderer.info.autoReset = false; // The composer renders several passes; count them all
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 
-    const target = new THREE.WebGLRenderTarget(1, 1, {
-      type: THREE.HalfFloatType,
-      samples: this.quality === 'high' ? 4 : 0,
-    });
+    const target = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType });
     this.composer = new EffectComposer(this.renderer, target);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
-    if (this.quality === 'high') this.composer.addPass(new UnrealBloomPass(new THREE.Vector2(1, 1), 0.28, 0.4, 3.2));
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.28, 0.4, 3.2);
+    this.composer.addPass(this.bloom);
     this.composer.addPass(new OutputPass());
 
     this.rig = new CameraRig(this.camera, canvas, () => !this.editing);
@@ -140,12 +147,12 @@ export class Game {
       throw new AssetLoadError(err);
     }
 
-    this.env = new Environment(this.scene, this.renderer, this.quality === 'high' ? 4096 : 2048);
+    this.env = new Environment(this.scene, this.renderer, 4096);
     this.hud = new Hud(this);
     this.track = new TrackRenderer(this.scene, this.assets);
     this.props = new PropsRenderer(this.scene, this.assets);
     this.scatter = new ScatterRenderer(this.scene, this.assets);
-    this.scatter.setDensity(this.quality === 'high' ? 1 : 0.4);
+    this.applyQuality(false);
     this.trainsR = new TrainRenderer(this.scene, this.assets);
 
     const { saved, recovered } = readSave();
@@ -349,8 +356,58 @@ export class Game {
 
   setQuality(q: Quality) {
     writeQuality(q);
-    this.save(true);
-    location.reload();
+    this.quality = q;
+    this.autoScale = 1;
+    this.autoLow = false;
+    this.applyQuality(true);
+  }
+
+  /** The effects in use: low under the low setting, or once auto has run out of resolution to give up. */
+  private get lowEffects() {
+    return this.quality === 'low' || (this.quality === 'auto' && this.autoLow);
+  }
+
+  /** Applies the quality setting to the running renderer, so nothing needs a reload. */
+  private applyQuality(rebuildScenery: boolean) {
+    const low = this.lowEffects;
+    const cap = low ? 1 : 1.75;
+    const scale = this.quality === 'auto' ? this.autoScale : 1;
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, cap) * scale);
+    this.bloom.enabled = !low;
+    const samples = low ? 0 : 4;
+    for (const t of [this.composer.renderTarget1, this.composer.renderTarget2]) {
+      if (t.samples === samples) continue;
+      t.samples = samples;
+      t.dispose(); // Reallocated with the new sample count on the next render
+    }
+    this.env?.setShadowSize(low ? 2048 : 4096);
+    this.scatter?.setDensity(low ? 0.4 : 1);
+    if (rebuildScenery && this.hf) this.scatter.rebuild(this.hf, this.net);
+    this.resize();
+  }
+
+  /**
+   * Auto quality: every couple of seconds, lower the resolution while frames run slow, and raise it again when
+   * there's room. At the lowest resolution it drops to low effects once.
+   */
+  private adaptQuality(dt: number) {
+    if (this.quality !== 'auto' || document.hidden) return;
+    this.adaptTimer += dt;
+    if (this.adaptTimer < ADAPT_EVERY) return;
+    this.adaptTimer = 0;
+    const before = this.autoScale;
+    if (this.fps < AUTO_SLOW_FPS) {
+      if (this.autoScale > AUTO_MIN_SCALE) this.autoScale = Math.max(AUTO_MIN_SCALE, this.autoScale * 0.85);
+      else if (!this.autoLow) {
+        this.autoLow = true;
+        this.autoScale = 1;
+        this.applyQuality(true);
+        return;
+      }
+    } else if (this.fps > AUTO_FAST_FPS && this.autoScale < 1) {
+      this.autoScale = Math.min(1, this.autoScale * 1.1);
+    }
+    if (this.autoScale !== before) this.applyQuality(false);
   }
 
   // ------------------------------------------------------------ editing
@@ -612,6 +669,9 @@ export class Game {
       this.audio.update(dt, 0, 0, 0);
     }
     this.hud.update();
+    this.renderer.info.reset();
     this.composer.render();
+    this.hud.perf.update(this.renderer.info, dt);
+    this.adaptQuality(dt);
   }
 }

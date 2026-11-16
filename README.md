@@ -28,6 +28,7 @@ npm run dev
 - An overview map (press O) of the whole railway, showing trains, stations, signal aspects and occupied sections. Click a train to drive it, or a place to go there in the editor
 - A short getting-started guide on first visit, which Help can show again
 - Synthesised engine, rail joint and horn sounds, with saved volume levels for each, that go quiet in a hidden tab
+- Auto graphics lowers the resolution, then the effects, while frames run slow. High and low apply at once, without a reload
 
 **Railway**
 
