@@ -37,6 +37,10 @@ const STATION_NAMES = [
 const ANCHOR_NODE = 14;
 const ANCHOR_SEG = 9;
 const HANDLE_CAPACITY = 2048;
+/** Tools that place or change something on a click, so a touch previews first. Select and terrain act on drags. */
+const TAP_TO_CONFIRM = new Set<Tool>(['track', 'signal', 'station', 'bridge', 'scenery', 'train', 'delete']);
+/** How far apart, in CSS pixels, two taps still count as the same place. */
+const TAP_SLOP = 28;
 
 export class Editor {
   tool: Tool = 'select';
@@ -50,6 +54,8 @@ export class Editor {
   selected: number | null = null;
   status = '';
   runTrains = false;
+  /** Snaps new lines to 15° steps, as holding Shift does. For touch screens, which have no Shift. */
+  snap = false;
 
   private start: Anchor | null = null;
   private cursor: { x: number; y: number; z: number } | null = null;
@@ -68,6 +74,8 @@ export class Editor {
   private brushing = false;
   private flattenTo = 0;
   private shift = false;
+  /** Where a touch tapped first: touch has no hover, so the first tap previews and a second tap there confirms. */
+  private tapAt: { x: number; y: number } | null = null;
   private keys = new Set<string>();
   private nameCounter = 0;
   private lastPreview: { ok: boolean; reason: string } = { ok: false, reason: '' };
@@ -200,6 +208,7 @@ export class Editor {
 
   setTool(tool: Tool) {
     this.tool = tool;
+    this.tapAt = null;
     this.start = null;
     this.selected = null;
     this.ribbon.visible = false;
@@ -243,6 +252,7 @@ export class Editor {
     if (!p) return;
     this.cursor = p;
     const g = this.game;
+    if (e.pointerType === 'touch' && TAP_TO_CONFIRM.has(this.tool) && !this.confirmTap(e, p)) return;
     switch (this.tool) {
       case 'select': {
         const n = g.net.nearestNode(p.x, p.z, ANCHOR_NODE);
@@ -292,6 +302,19 @@ export class Editor {
         this.clickDelete(p);
         break;
     }
+  }
+
+  /** True when this touch confirms the last one. Otherwise previews the tap and waits for a second one. */
+  private confirmTap(e: PointerEvent, p: { x: number; y: number; z: number }) {
+    const prev = this.tapAt;
+    if (prev && Math.hypot(e.clientX - prev.x, e.clientY - prev.y) < TAP_SLOP) {
+      this.tapAt = null;
+      return true;
+    }
+    this.tapAt = { x: e.clientX, y: e.clientY };
+    this.updateHover(p);
+    this.status = `${this.status ? `${this.status}. ` : ''}Tap the same place again to confirm`;
+    return false;
   }
 
   private onMove(e: PointerEvent) {
@@ -396,7 +419,7 @@ export class Editor {
       const side = s.tx * cx + s.tz * cz >= 0 ? 1 : -1;
       d0x = (s.tx / l) * side;
       d0z = (s.tz / l) * side;
-    } else if (this.shift) {
+    } else if (this.shift || this.snap) {
       const a = Math.round(Math.atan2(cz, cx) / (Math.PI / 12)) * (Math.PI / 12);
       d0x = Math.cos(a);
       d0z = Math.sin(a);

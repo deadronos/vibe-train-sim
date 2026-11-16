@@ -37,6 +37,7 @@ The look is a signal box: painted steel, enamel plates and brass. The lever fram
 - Use sentence case and plain words a player would use. Say what happens, with the same name for an action throughout.
 - Error messages say what went wrong and how to fix it, without apologising.
 - Keep keyboard focus visible and respect reduced motion.
+- Every action has an on-screen control as well as any key, so it works on a touch screen. Check new interface at 375×812, 812×375, 768×1024 and 1024×768: nothing clipped, nothing out of reach. The breakpoints are at the end of `style.css`: the menu folds below 1200 px wide, the train list and clock controls below 900 px, and phones get the compact desk and lever frame.
 - Name every control and dialog, and label each dialog by its heading with `aria-labelledby`. Driving changes a screen reader should hear go to the `#drive-status` live region, and only when they change.
 
 ## Tests

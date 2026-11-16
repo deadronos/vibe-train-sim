@@ -44,6 +44,9 @@
         /></label>
       </div>
 
+      <!-- Small screens fold the train list and the menu behind these. -->
+      <button id="btn-trains" class="toggle" aria-expanded="false" aria-controls="trains">Trains</button>
+      <button id="btn-menu" class="toggle" aria-expanded="false" aria-controls="menu-plate">Menu</button>
       <div class="plate" id="menu-plate">
         <button id="btn-save">Save</button>
         <button id="btn-maps">Maps</button>
@@ -160,6 +163,8 @@
           <button id="btn-switch">Throw points</button>
           <button id="btn-reverse">Change ends</button>
           <button id="btn-camera">Chase view</button>
+          <button id="btn-horn">Horn</button>
+          <button id="btn-next">Next train</button>
           <output id="lever-text"></output>
           <button id="btn-recover" hidden>Recover train</button>
         </div>
@@ -361,6 +366,21 @@
               <dd>Remove the selected point</dd>
               <dt>Ctrl+Z</dt>
               <dd>Undo; Ctrl+Y or Ctrl+Shift+Z to redo</dd>
+            </dl>
+          </section>
+          <section>
+            <h3>Touch</h3>
+            <dl>
+              <dt>Desk</dt>
+              <dd>Slide the lever for power and brake. Horn and Next train are on the desk</dd>
+              <dt>One finger</dt>
+              <dd>In the editor, rotate the view; with Select, drag the ground to move it</dd>
+              <dt>Two fingers</dt>
+              <dd>Move and zoom the editor view</dd>
+              <dt>Tap twice</dt>
+              <dd>Editor tools show what a tap will do first; tap the same place again to do it</dd>
+              <dt>Menu, Trains</dt>
+              <dd>On small screens the menu, clock controls and train list fold away behind these</dd>
             </dl>
           </section>
         </div>
