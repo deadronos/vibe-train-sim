@@ -73,6 +73,10 @@ After an edit, call `Game.commitEdit()`, which regrades terrain and calls `Sim.s
 
 A browser save that fails validation is copied to the `vibe-train-sim/map-v1-backup` key, a fresh starter map starts, and the player gets a toast. A bad import leaves the current map unchanged.
 
+The working map saves every minute, on `pagehide`, when the tab is hidden and on `beforeunload`. A failed autosave warns once per page. A `storage` event on the save key means another tab has the map open, and the player is warned once.
+
+`src/mapLibrary.ts` holds named copies and automatic backups beside the working map, each under its own key with a small index at `vibe-train-sim/library`. Any action that replaces the map (**New map**, import, loading a copy or backup) goes through `Game.replaceMap()`, which backs up the current map first. That is the rule that stops a map being lost: a new way to replace the map must go through it too. Only the newest `BACKUP_COUNT` backups are kept, and older ones are dropped to make room if storage is full.
+
 Each train's full state is saved: trail, speed, route, brakes, dwell and grants, from `Sim.captureState()`. `Sim.restoreState()` puts it back exactly, and if the trail no longer fits the track the train goes on the nearest track, stopped. Version 1 saves have no state, so they load that way too. Undo uses the same path, so undoing an edit doesn't disturb running trains. A new `Train` field that changes how a train runs must be added to `TrainState`.
 
 If you change the format incompatibly, bump `v` and handle or reject older saves, since `parseSave()` checks it.

@@ -1,6 +1,7 @@
 import type { BrushMode, Tool } from '../editor/editor';
 // HTML interface: mode lever, clock, train register, driver's desk and the editor's lever frame.
 import type { Game } from '../game';
+import type { MapEntry } from '../mapLibrary';
 import type { Side } from '../rail/network';
 import { LINE_VMAX } from '../rail/network';
 import type { DeskInfo, SimEvent, Train } from '../rail/sim';
@@ -103,9 +104,9 @@ export class Hud {
       const preset = $<HTMLSelectElement>('new-preset').value as Preset;
       const seed = Number($<HTMLInputElement>('new-seed').value) || 1;
       const starter = $<HTMLInputElement>('new-starter').checked;
-      g.newWorld(preset, seed, starter);
+      g.startNewMap(preset, seed, starter);
       if (!starter) g.setMode(true);
-      this.toast(starter ? 'New map created' : 'Empty map created. Pull the Track lever to lay your first line');
+      if (!starter) this.toast('Empty map created. Pull the Track lever to lay your first line');
     });
     const help = $<HTMLDialogElement>('dlg-help');
     $('btn-help').onclick = () => help.showModal();
@@ -115,6 +116,7 @@ export class Hud {
       else help.showModal();
     });
     this.bindSound();
+    this.bindMaps();
     const q = $<HTMLSelectElement>('quality');
     q.value = g.quality;
     q.onchange = () => g.setQuality(q.value as 'high' | 'low');
@@ -178,6 +180,62 @@ export class Hud {
       b.onclick = () => this.game.editor.setTool(l.tool);
       frame.appendChild(b);
     }
+  }
+
+  private bindMaps() {
+    const g = this.game;
+    const dlg = $<HTMLDialogElement>('dlg-maps');
+    $('btn-maps').onclick = () => {
+      this.syncMaps();
+      dlg.showModal();
+    };
+    $('btn-copy').onclick = () => {
+      const name = $<HTMLInputElement>('copy-name');
+      if (g.saveCopy(name.value)) name.value = '';
+      this.syncMaps();
+    };
+  }
+
+  /** Lists saved copies and backups. Loading needs no prompt, because the map it replaces becomes a backup. */
+  private syncMaps() {
+    const g = this.game;
+    const dateText = (ms: number) =>
+      new Date(ms).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+    const fill = (ul: HTMLElement, entries: MapEntry[], empty: string) => {
+      ul.innerHTML = '';
+      if (!entries.length) {
+        const li = document.createElement('li');
+        li.className = 'state';
+        li.textContent = empty;
+        ul.appendChild(li);
+      }
+      for (const e of entries) {
+        const li = document.createElement('li');
+        li.innerHTML = `<span class="name"></span><span class="when"></span><button data-act="load">Load</button>`;
+        li.querySelector('.name')!.textContent = e.name;
+        li.querySelector('.when')!.textContent = dateText(e.savedAt);
+        li.querySelector<HTMLButtonElement>('[data-act=load]')!.onclick = () => {
+          $<HTMLDialogElement>('dlg-maps').close();
+          g.loadMap(e);
+        };
+        const del = document.createElement('button');
+        del.textContent = 'Delete';
+        // Deleting can't be undone, so it takes a second click.
+        del.onclick = () => {
+          if (del.dataset.armed) {
+            g.library.remove(e);
+            this.syncMaps();
+            return;
+          }
+          del.dataset.armed = '1';
+          del.textContent = 'Delete for good';
+        };
+        li.appendChild(del);
+        ul.appendChild(li);
+      }
+    };
+    fill($('copy-list'), g.library.copies(), 'No saved copies yet.');
+    fill($('backup-list'), g.library.backups(), 'No backups yet. One is kept each time a map is replaced.');
   }
 
   private bindSound() {

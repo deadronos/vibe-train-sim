@@ -10,7 +10,7 @@ import { Heightfield } from './world/heightfield';
 
 export type Quality = 'high' | 'low';
 
-const SAVE_KEY = 'vibe-train-sim/map-v1';
+export const SAVE_KEY = 'vibe-train-sim/map-v1';
 // A save that fails validation is moved here so nothing the player made is thrown away.
 const BACKUP_KEY = 'vibe-train-sim/map-v1-backup';
 const QUALITY_KEY = 'vibe-train-sim/quality';

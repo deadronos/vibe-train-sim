@@ -38,6 +38,7 @@
 
       <div class="plate" id="menu-plate">
         <button id="btn-save">Save</button>
+        <button id="btn-maps">Maps</button>
         <button id="btn-export">Export</button>
         <button id="btn-import">Import</button>
         <button id="btn-new">New map</button>
@@ -173,6 +174,23 @@
           <button value="cancel">Cancel</button>
           <button id="new-go" value="go">Create map</button>
         </menu>
+      </form>
+    </dialog>
+
+    <dialog id="dlg-maps" class="plate">
+      <form method="dialog">
+        <h2>Maps</h2>
+        <p>The map you're working on saves itself in this browser. Keep a copy to come back to later.</p>
+        <div class="row">
+          <input id="copy-name" type="text" maxlength="40" aria-label="Name for the copy" placeholder="Name" />
+          <button id="btn-copy" type="button">Save a copy</button>
+        </div>
+        <h3>Saved copies</h3>
+        <ul id="copy-list" class="map-list"></ul>
+        <h3>Backups</h3>
+        <p>Kept automatically before a map is replaced by a new map, an import or a load.</p>
+        <ul id="backup-list" class="map-list"></ul>
+        <menu><button value="ok">Close</button></menu>
       </form>
     </dialog>
 

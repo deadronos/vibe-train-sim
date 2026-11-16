@@ -10,6 +10,8 @@ import { SimAudio } from './audio';
 import { DriverInput } from './driverInput';
 import { Editor } from './editor/editor';
 import { History } from './history';
+import type { MapEntry } from './mapLibrary';
+import { browserStorage, MapLibrary } from './mapLibrary';
 import type { Quality } from './persistence';
 import {
   backupStoredSave,
@@ -21,6 +23,7 @@ import {
   readSave,
   restoreEdit,
   restoreTrains,
+  SAVE_KEY,
   writeQuality,
   writeSound,
   writeSave,
@@ -47,6 +50,10 @@ import type { Preset } from './world/heightfield';
 import { Heightfield } from './world/heightfield';
 
 const TRAIN_SPEEDS = [0, 1, 2, 4, 8];
+const AUTOSAVE_MS = 60_000;
+const BACKUP_KEPT_TEXT = 'Your previous map is kept in Maps, under Backups';
+const BACKUP_FAILED_TEXT =
+  'Your previous map could not be backed up because browser storage is full. Delete saved copies in Maps, or export maps you want to keep';
 
 export class Game {
   renderer: THREE.WebGLRenderer;
@@ -154,6 +161,22 @@ export class Game {
     loading.classList.add('gone');
     if (recovered) this.hud.toast(SAVE_RECOVERED_TEXT, true);
     window.addEventListener('beforeunload', () => this.save(true));
+    // beforeunload doesn't fire reliably on phones or when the browser crashes, so save at these moments too.
+    window.addEventListener('pagehide', () => this.save(true));
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) this.save(true);
+    });
+    setInterval(() => {
+      if (!this.lost) this.save(true);
+    }, AUTOSAVE_MS);
+    window.addEventListener('storage', (e) => {
+      if (e.key !== SAVE_KEY || this.warnedOtherTab) return;
+      this.warnedOtherTab = true;
+      this.hud.toast(
+        'This map is also open in another tab. Whichever tab saves last keeps its changes, so close one of them',
+        true,
+      );
+    });
     requestAnimationFrame(() => this.frame());
   }
 
@@ -229,8 +252,51 @@ export class Game {
       writeSave(this.snapshot());
       if (!silent) this.hud.toast('Map saved in this browser');
     } catch {
-      if (!silent)
-        this.hud.toast('Saving failed: browser storage is full or blocked. Export the map to a file instead');
+      // Autosaves warn once, so a full storage doesn't fill the screen with toasts.
+      if (silent && this.warnedSaveFailed) return;
+      if (silent) this.warnedSaveFailed = true;
+      this.hud.toast('Saving failed: browser storage is full or blocked. Export the map to a file instead', true);
+    }
+  }
+
+  /** Replaces the map, first keeping the current one as a backup so nothing is lost without a way back. */
+  private replaceMap(before: string, apply: () => void) {
+    const backedUp = this.sim ? this.library.backup(`${this.mapLabel()}, before ${before}`, this.snapshot()) : true;
+    apply();
+    this.hud.toast(backedUp ? BACKUP_KEPT_TEXT : BACKUP_FAILED_TEXT, !backedUp);
+    this.save(true);
+  }
+
+  /** Names a map by what's in it, since maps themselves have no names. */
+  private mapLabel() {
+    const land = { alpine: 'Alpine', plains: 'Plains', desert: 'Desert', islands: 'Islands' }[this.hf.preset];
+    const n = this.sim.trains.length;
+    return `${land} map with ${n === 0 ? 'no' : n} train${n === 1 ? '' : 's'}`;
+  }
+
+  startNewMap(preset: Preset, seed: number, starter: boolean) {
+    this.replaceMap('a new map', () => this.newWorld(preset, seed, starter));
+  }
+
+  saveCopy(name: string) {
+    const r = this.library.saveCopy(name, this.snapshot());
+    this.hud.toast(r.ok ? `Saved a copy called ${name.trim() || 'Untitled map'}` : `Saving failed: ${r.reason}`, !r.ok);
+    return r.ok;
+  }
+
+  loadMap(entry: MapEntry) {
+    const r = this.library.load(entry);
+    if (!r.ok) {
+      this.hud.toast(`Can't load ${entry.name}: ${r.reason}`, true);
+      return;
+    }
+    try {
+      this.replaceMap(entry.kind === 'copy' ? `loading ${entry.name}` : 'loading a backup', () =>
+        this.applySave(r.data, true),
+      );
+    } catch (err) {
+      console.error(err);
+      this.hud.toast(`Can't load ${entry.name}: the map could not be built`, true);
     }
   }
 
@@ -246,8 +312,7 @@ export class Game {
     }
     const before = JSON.stringify(this.snapshot());
     try {
-      this.applySave(r.data, true);
-      this.hud.toast('Map imported');
+      this.replaceMap('an import', () => this.applySave(r.data, true));
     } catch (err) {
       // Put the previous map back so a failed import never leaves a half-loaded one.
       console.error(err);
@@ -258,6 +323,9 @@ export class Game {
   }
 
   private lost = false;
+  private warnedSaveFailed = false;
+  private warnedOtherTab = false;
+  library = new MapLibrary(browserStorage());
   private onContextLost() {
     if (this.lost) return;
     this.lost = true;
