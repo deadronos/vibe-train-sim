@@ -5,8 +5,8 @@ import type { MapEntry } from '../mapLibrary';
 import type { Quality, Rules } from '../persistence';
 import type { Duty } from '../rail/duty';
 import { clock } from '../rail/duty';
-import type { Side } from '../rail/network';
-import { LINE_VMAX } from '../rail/network';
+import type { Side, SignalType } from '../rail/network';
+import { LINE_VMAX, signalType } from '../rail/network';
 import type { DeskInfo, SimEvent, Train } from '../rail/sim';
 import { CAM_LABEL } from '../render/cameraRig';
 import type { SceneryType } from '../render/scatter';
@@ -157,6 +157,7 @@ export class Hud {
       );
     };
     $('btn-recover').onclick = () => g.recoverDriven();
+    $('btn-ack').onclick = () => g.acknowledgeWarning();
     this.bindFolds();
     const horn = $('btn-horn');
     horn.onpointerdown = () => g.audio.horn(true);
@@ -453,9 +454,25 @@ export class Hud {
           };
         }
         break;
-      case 'signal':
-        p.innerHTML = `<h2>Signals</h2><p>Click beside a track. The arrow shows which direction of travel the signal controls. Click the same spot again to remove it.</p><p>Red means the section ahead is occupied, yellow means the next signal is red.</p>`;
+      case 'signal': {
+        const sigTypes: { type: SignalType; label: string }[] = [
+          { type: 'main', label: 'Main' },
+          { type: 'distant', label: 'Distant' },
+          { type: 'shunt', label: 'Calling-on' },
+        ];
+        p.innerHTML = `<h2>Signals</h2><div class="row" id="signal-types">${sigTypes
+          .map((s) => `<button data-sig="${s.type}" aria-pressed="${s.type === ed.signalType}">${s.label}</button>`)
+          .join('')}</div>
+          <p>Click beside a track to place or switch type; click again with the same type to remove.</p>
+          <p>Main stops at red and shows junction routes; distant repeats the next main signal; calling-on admits trains into occupied track at 25 km/h.</p>`;
+        p.querySelectorAll<HTMLButtonElement>('#signal-types button').forEach((b) => {
+          b.onclick = () => {
+            ed.signalType = b.dataset.sig as SignalType;
+            this.syncEditor();
+          };
+        });
         break;
+      }
       case 'station':
         p.innerHTML = `<h2>Stations</h2><p>Click beside a track to build a platform on that side. Trains stop here on their timetable.</p>`;
         break;
@@ -555,14 +572,37 @@ export class Hud {
       );
     }
     for (const side of [1, -1] as Side[]) {
-      const count = g.net.attached(n.id, side).length;
+      const attached = g.net.attached(n.id, side);
+      const count = attached.length;
       const label = side === 1 ? 'Forward' : 'Backward';
       if (count > 1)
         rows.push(`<div class="row"><button data-throw="${side}">Throw ${label.toLowerCase()} points</button></div>`);
-      if (n.signals[side])
+      if (count === 1) {
+        const seg = g.net.segs.get(attached[0]);
+        if (seg) {
+          const cur = seg.speedLimit !== undefined ? Math.round(seg.speedLimit * 3.6) : 0;
+          const opts = [0, 30, 50, 70, 90, 120]
+            .map(
+              (v) => `<option value="${v}"${cur === v ? ' selected' : ''}>${v ? `${v} km/h` : 'Auto (curve)'}</option>`,
+            )
+            .join('');
+          rows.push(`<label>${label} speed limit<select data-seg-limit="${seg.id}">${opts}</select></label>`);
+        }
+      }
+      const sig = n.signals[side];
+      if (sig) {
+        const st = signalType(sig);
         rows.push(
-          `<label class="check"><input type="checkbox" data-hold="${side}" ${n.signals[side].hold ? 'checked' : ''}/> Hold the ${label.toLowerCase()} signal at red</label>`,
+          `<label>${label} signal type<select data-sig-type="${side}"><option value="main"${st === 'main' ? ' selected' : ''}>Main (3-aspect)</option><option value="distant"${st === 'distant' ? ' selected' : ''}>Distant repeater</option><option value="shunt"${st === 'shunt' ? ' selected' : ''}>Calling-on / shunt</option></select></label>`,
         );
+        const holdLabel =
+          st === 'distant'
+            ? `Hold the ${label.toLowerCase()} distant at caution`
+            : `Hold the ${label.toLowerCase()} signal at red`;
+        rows.push(
+          `<label class="check"><input type="checkbox" data-hold="${side}" ${sig.hold ? 'checked' : ''}/> ${holdLabel}</label>`,
+        );
+      }
     }
     rows.push(`<div class="row"><button id="sel-del">Remove point</button></div>`);
     p.innerHTML = rows.join('');
@@ -619,6 +659,31 @@ export class Hud {
         g.net.throwSwitch(n.id, Number(b.dataset.throw) as Side);
         g.sim.interlock();
         this.toast('Points thrown');
+      };
+    });
+    p.querySelectorAll<HTMLSelectElement>('[data-seg-limit]').forEach((sel) => {
+      sel.onchange = () => {
+        const seg = g.net.segs.get(Number(sel.dataset.segLimit));
+        if (!seg) return;
+        g.pushUndo();
+        const kmh = Number(sel.value);
+        seg.speedLimit = kmh > 0 ? kmh / 3.6 : undefined;
+        g.net.rebuild(seg.id);
+        g.net.version++;
+        g.commitEdit();
+        this.toast(kmh > 0 ? `Speed limit set to ${kmh} km/h` : 'Speed limit set to automatic');
+      };
+    });
+    p.querySelectorAll<HTMLSelectElement>('[data-sig-type]').forEach((sel) => {
+      sel.onchange = () => {
+        const side = Number(sel.dataset.sigType) as Side;
+        const sig = n.signals[side];
+        if (!sig) return;
+        g.pushUndo();
+        sig.type = sel.value as SignalType;
+        g.net.version++;
+        g.commitEdit();
+        this.syncEditor();
       };
     });
     p.querySelectorAll<HTMLInputElement>('[data-hold]').forEach((c) => {
@@ -715,9 +780,39 @@ export class Hud {
 
     if (this.frameCounter % 8 !== 0) return;
     this.autopilot = t.ai;
-    $('train-text').textContent = t.ai
+    const warn = !t.ai ? t.warning : null;
+    const warnActive = !!warn && !warn.acknowledged;
+    const trainTextEl = $('train-text');
+    const tripText = t.spadTripped
+      ? t.speed < 0.2
+        ? 'SPAD stop: press Acknowledge (Q) to reset'
+        : 'Passed red signal — emergency brake'
+      : t.tripped
+        ? 'Train protection braking'
+        : '';
+    trainTextEl.textContent = t.ai
       ? 'Autopilot is driving. Press W or move the lever to take over'
-      : t.statusText || brakeText(t);
+      : warnActive
+        ? warn.text
+        : tripText || t.statusText || brakeText(t);
+    trainTextEl.classList.toggle('alert', !t.ai && (warnActive || t.tripped || t.spadTripped));
+
+    const ackBtn = $<HTMLButtonElement>('btn-ack');
+    const showAck = !t.ai && !t.damaged && (warnActive || t.tripped || t.spadTripped);
+    ackBtn.hidden = !showAck;
+    if (showAck) {
+      if (t.spadTripped) {
+        ackBtn.disabled = t.speed >= 0.2;
+        ackBtn.textContent = t.speed < 0.2 ? 'Reset protection (Q)' : 'Emergency stop';
+      } else if (t.tripped) {
+        ackBtn.disabled = t.speed > t.limit;
+        ackBtn.textContent = t.speed <= t.limit ? 'Reset protection (Q)' : 'Protection braking';
+      } else if (warnActive) {
+        ackBtn.disabled = false;
+        ackBtn.textContent = g.sim.strict ? `Acknowledge (Q) · ${Math.ceil(warn.timer)}s` : 'Acknowledge (Q)';
+      }
+    }
+
     const recover = $('btn-recover');
     recover.hidden = !t.damaged;
     $('lever-text').hidden = t.damaged;
@@ -728,7 +823,13 @@ export class Hud {
     const sig = g.sim.signalAhead(t);
     this.lamps ??= [...document.querySelectorAll<HTMLElement>('.lamps i')];
     this.lamps.forEach((l) => l.classList.toggle('on', !!sig && l.dataset.lamp === sig.aspect));
-    const word = sig ? { red: 'Stop', yellow: 'Caution', green: 'Clear' }[sig.aspect] : '';
+    let word = '';
+    if (sig) {
+      if (sig.callingOn) word = 'Calling-on';
+      else if (sig.type === 'distant') word = sig.aspect === 'yellow' ? 'Distant caution' : 'Distant clear';
+      else word = { red: 'Stop', yellow: 'Caution', green: 'Clear' }[sig.aspect];
+      if (sig.aspect !== 'red' && sig.route?.diverging) word += ` (route ${sig.route.dir})`;
+    }
     $('signal-text').textContent = sig ? `${word} in ${formatDist(sig.dist)}` : 'No signal ahead';
     $('dial').setAttribute('aria-label', `Speed ${Math.round(kmh)} km/h, limit ${Math.round(info.limit * 3.6)}`);
     this.announce(t, sig ? `Signal ahead: ${word.toLowerCase()} in ${formatDist(sig.dist)}` : null, kmh, info);
@@ -751,23 +852,26 @@ export class Hud {
     }
   }
 
-  private spoken = { train: -1, signal: '', over: false };
+  private spoken = { train: -1, signal: '', over: false, warn: '' };
 
   /**
-   * Tells screen readers about changes that matter while driving: a new signal aspect ahead, or going over
-   * the limit. Speed itself is on the dial's label, to read on demand rather than announced constantly.
+   * Tells screen readers about changes that matter while driving: a new signal aspect ahead, safety warnings,
+   * or going over the limit. Speed itself is on the dial's label, to read on demand rather than announced constantly.
    */
   private announce(t: Train, signal: string | null, kmh: number, info: DeskInfo) {
     const s = this.spoken;
     const aspect = signal?.split(' in ')[0] ?? '';
     const over = !t.ai && kmh > info.limit * 3.6 + OVERSPEED_KMH;
+    const warnKey = !t.ai && t.warning && !t.warning.acknowledged ? t.warning.key : '';
     let text = '';
     if (t.id !== s.train) text = `Driving ${t.name}. ${signal ?? 'No signal ahead'}`;
     else if (aspect !== s.signal && signal) text = signal;
+    if (warnKey && warnKey !== s.warn) text = `${text} Warning: ${t.warning!.text}. Press Q to acknowledge`.trim();
     if (over && !s.over) text = `${text} Over the ${Math.round(info.limit * 3.6)} km/h limit`.trim();
     s.train = t.id;
     s.signal = aspect;
     s.over = over;
+    s.warn = warnKey;
     if (text) $('drive-status').textContent = text;
   }
 
@@ -798,6 +902,8 @@ export class Hud {
     for (const id of ['station-text', 'junction-text', 'train-text', 'lever-text', 'next-limit-text', 'grade-text']) {
       $(id).textContent = '';
     }
+    $('train-text').classList.remove('alert');
+    $('btn-ack').hidden = true;
     $('limit-text').textContent = 'Add one with the Train lever in Edit map';
     $('limit-text').classList.remove('alert');
     $('brake-row').hidden = true;

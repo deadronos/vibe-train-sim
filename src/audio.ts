@@ -25,6 +25,7 @@ export class SimAudio {
   private rollGain!: GainNode;
   private hornGain!: GainNode;
   private clackTimer = 0;
+  private warnTimer = 0;
   private noise!: AudioBuffer;
   settings: SoundSettings = { ...DEFAULT_SOUND };
 
@@ -136,6 +137,44 @@ export class SimAudio {
   horn(on: boolean) {
     if (!this.ctx) return;
     this.hornGain.gain.setTargetAtTime(on ? 0.55 : 0, this.ctx.currentTime, 0.04);
+  }
+
+  private beep(freq: number, delay: number, duration: number, peak: number) {
+    const ctx = this.ctx;
+    if (!ctx || ctx.state !== 'running') return;
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    const t = ctx.currentTime + delay;
+    osc.type = 'triangle';
+    osc.frequency.value = freq;
+    g.gain.setValueAtTime(0.001, t);
+    g.gain.exponentialRampToValueAtTime(peak, t + 0.015);
+    g.gain.exponentialRampToValueAtTime(0.001, t + duration);
+    osc.connect(g);
+    g.connect(this.master);
+    osc.start(t);
+    osc.stop(t + duration + 0.02);
+  }
+
+  /** Repeats a two-tone cab warning chime while a safety alert awaits acknowledgement. */
+  updateWarning(dt: number, active: boolean) {
+    if (!active) {
+      this.warnTimer = 0;
+      return;
+    }
+    if (!this.ctx || this.ctx.state !== 'running') return;
+    this.warnTimer -= dt;
+    if (this.warnTimer <= 0) {
+      this.warnTimer = 1.15;
+      this.beep(780, 0, 0.16, 0.24);
+      this.beep(585, 0.14, 0.22, 0.24);
+    }
+  }
+
+  playTrip() {
+    this.beep(980, 0, 0.12, 0.28);
+    this.beep(740, 0.13, 0.12, 0.28);
+    this.beep(520, 0.26, 0.24, 0.28);
   }
 
   private clack(strength: number, delay: number) {

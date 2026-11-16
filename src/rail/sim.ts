@@ -1,12 +1,16 @@
 // Train physics, block signalling with route locking, and timetable AI. Contains no rendering code.
 import type { Duty } from './duty';
 import { PENALTY } from './duty';
-import type { Dir, Exit, Network, Piece, Side } from './network';
-import { LINE_VMAX } from './network';
+import type { Dir, Exit, Network, Piece, Side, SignalType } from './network';
+import { LINE_VMAX, signalType } from './network';
 import type { Car } from './vehicles';
 import { carBrake, carMass, VEHICLES } from './vehicles';
 
 export type Aspect = 'red' | 'yellow' | 'green';
+/** Speed cap (25 km/h) when proceeding past a calling-on / shunt signal. */
+export const SHUNT_VMAX = 25 / 3.6;
+/** Seconds the driver has to acknowledge a cab warning before protection brakes under strict rules. */
+export const WARN_ACK_SECONDS = 4.0;
 /** Seconds per simulation step. Results don't depend on how often frames arrive. */
 export const STEP = 1 / 30;
 const MAX_STEPS_PER_UPDATE = 32; // Beyond this a slow machine falls behind rather than stalling further
@@ -95,6 +99,29 @@ export interface NextSignal {
   dist: number;
 }
 
+export interface SignalRoute {
+  diverging: boolean;
+  dir: 'straight' | 'left' | 'right';
+  index: number;
+  count: number;
+  speed: number;
+}
+
+export interface SignalIndication {
+  type: SignalType;
+  aspect: Aspect;
+  callingOn: boolean;
+  route: SignalRoute | null;
+}
+
+export interface GuardWarning {
+  kind: 'signal' | 'speed' | 'spad';
+  text: string;
+  timer: number;
+  acknowledged: boolean;
+  key: string;
+}
+
 /** Everything a save needs to put a moving train back exactly as it was. */
 export interface TrainState {
   trail: Piece[];
@@ -115,6 +142,8 @@ export interface TrainState {
   score: { spads: number; stops: number };
   /** Missing from saves made before damage existed. */
   damaged?: boolean;
+  /** Missing from saves made before calling-on/shunt signals existed. */
+  restricted?: boolean;
 }
 
 export class Train {
@@ -158,6 +187,16 @@ export class Train {
   statusText = '';
   /** Set by train protection under strict rules: emergency braking until back under the limit. */
   tripped = false;
+  /** True after an unacknowledged-warning trip under strict rules; holds until stopped or reset. */
+  warnTripped = false;
+  /** True after a SPAD under strict rules: holds emergency brake until stopped and reset. */
+  spadTripped = false;
+  /** True while proceeding under a calling-on / shunt move (25 km/h speed cap). */
+  restricted = false;
+  /** Active cab safety warning awaiting driver acknowledgement. */
+  warning: GuardWarning | null = null;
+  /** Source key of the last acknowledged warning so the same beacon does not re-trigger. */
+  lastWarnKey = '';
   /** Crashed or derailed under strict rules. It can't move until recovered. */
   damaged = false;
   /** Where the train last stood at a platform, so recovery has somewhere to put it. */
@@ -245,10 +284,16 @@ export class Sim {
   onEvent: (e: SimEvent) => void = () => {};
   /** Signal key -> aspect, refreshed by the interlocking tick. */
   aspects = new Map<string, Aspect>();
+  /** Signal key -> full indication (type, aspect, calling-on, route feather), refreshed by interlocking. */
+  indications = new Map<string, SignalIndication>();
   /** Node ids locked by an active route, keyed to the train holding them. */
   nodeClaims = new Map<number, number>();
   segClaims = new Map<number, number>();
+  /** Level crossing ids locked by an active route or occupied crossing segment, keyed to the train holding them. */
+  crossingClaims = new Map<string, number>();
   occ = new Map<number, Occupancy[]>();
+  private segDirs = new Map<number, Set<Dir>>();
+  private shuntSegs = new Map<number, number>();
   /** Simulation steps run so far. */
   steps = 0;
   /** Strict rules: train protection brakes a player train well over the limit, and hard hits damage it. */
@@ -379,6 +424,7 @@ export class Sim {
       grants: [...t.grants],
       score: { ...t.score },
       damaged: t.damaged,
+      restricted: t.restricted,
     };
   }
 
@@ -420,6 +466,11 @@ export class Sim {
     t.grants = [...s.grants];
     t.score = { ...s.score };
     t.damaged = s.damaged ?? false;
+    t.restricted = s.restricted ?? false;
+    t.spadTripped = false;
+    t.warnTripped = false;
+    t.warning = null;
+    t.lastWarnKey = '';
     t.next = null;
     this.remember(t);
     return true;
@@ -567,7 +618,14 @@ export class Sim {
       for (const opt of e.options) {
         const nxt: Piece = { seg: opt, dir: net.entryDir(opt, e.node, e.side) };
         const claimed = this.segClaims.get(opt);
-        const penalty = claimed !== undefined && claimed !== t.id ? 4000 : 0;
+        let penalty = claimed !== undefined && claimed !== t.id ? 4000 : 0;
+        for (const c of net.crossingsOn(opt)) {
+          const cc = this.crossingClaims.get(c.id);
+          if (cc !== undefined && cc !== t.id) {
+            penalty += 2000;
+            break;
+          }
+        }
         const cost = base + net.geom.get(opt)!.length + penalty;
         const k = key(nxt);
         if (!dist.has(k) || cost < dist.get(k)!) {
@@ -666,27 +724,37 @@ export class Sim {
     t.next = null;
     t.stopRemain = -1;
     t.speed = 0;
+    t.restricted = false;
+    t.warning = null;
+    t.lastWarnKey = '';
+    t.spadTripped = false;
+    t.warnTripped = false;
     return true;
   }
 
   // ------------------------------------------------------------ interlocking
-  /** Walks a block from a signal to the next signal or dead end, following the given train's route. */
+  /** Walks a block from a signal to the next stopping signal or dead end, skipping distant repeaters. */
   private walkBlock(startNode: number, startSide: Side, t: Train | null) {
     const net = this.net;
     const segs: number[] = [];
+    const dirs: Dir[] = [];
     const nodes: number[] = [startNode];
+    const crossingSet = new Set<string>();
     let end: { node: number; side: Side } | null = null;
     let deadEnd = false;
     const firstSeg = this.pick(t, -1, startNode, startSide);
-    if (firstSeg === undefined) return { segs, nodes, end, deadEnd: true };
+    if (firstSeg === undefined) return { segs, dirs, nodes, crossings: [] as string[], end, deadEnd: true };
     let seg = firstSeg;
     let dir = net.entryDir(seg, startNode, startSide);
     const seen = new Set<number>();
     while (!seen.has(seg) && seen.size < 200) {
       seen.add(seg);
       segs.push(seg);
+      dirs.push(dir);
+      for (const c of net.crossingsOn(seg)) crossingSet.add(c.id);
       const e = net.exit(seg, dir);
-      if (net.nodes.get(e.node)!.signals[e.side]) {
+      const exitDef = net.nodes.get(e.node)!.signals[e.side];
+      if (exitDef && signalType(exitDef) !== 'distant') {
         end = { node: e.node, side: e.side };
         break;
       }
@@ -699,20 +767,155 @@ export class Sim {
       dir = net.entryDir(nx, e.node, e.side);
       seg = nx;
     }
-    return { segs, nodes, end, deadEnd };
+    return { segs, dirs, nodes, crossings: [...crossingSet], end, deadEnd };
   }
 
-  private blockFree(b: { segs: number[]; nodes: number[] }, trainId: number | null) {
+  private blockFree(b: { segs: number[]; nodes: number[]; crossings: string[] }, trainId: number | null) {
     for (const s of b.segs) {
       const c = this.segClaims.get(s);
       if (c !== undefined && c !== trainId) return false;
+      const sh = this.shuntSegs.get(s);
+      if (sh !== undefined && sh !== trainId) return false;
       for (const o of this.occ.get(s) ?? []) if (o.train !== trainId) return false;
     }
     for (const n of b.nodes) {
       const c = this.nodeClaims.get(n);
       if (c !== undefined && c !== trainId) return false;
     }
+    for (const cid of b.crossings) {
+      const c = this.crossingClaims.get(cid);
+      if (c !== undefined && c !== trainId) return false;
+    }
     return true;
+  }
+
+  /**
+   * Calling-on / shunt move: allows entering a block occupied by a standing or same-direction train,
+   * while rejecting opposing moves, active opposing claims, and conflicting level crossings.
+   */
+  private callingOnAllowed(
+    b: { segs: number[]; dirs: Dir[]; nodes: number[]; crossings: string[] },
+    trainId: number | null,
+  ): boolean {
+    if (!b.segs.length) return false;
+    if (this.blockFree(b, trainId)) return true;
+    const blockSegSet = new Set(b.segs);
+    for (const n of b.nodes) {
+      const c = this.nodeClaims.get(n);
+      if (c !== undefined && c !== trainId) {
+        // Allow a claim on a terminal/forward node held solely by a train already occupying this block.
+        const inBlock = b.segs.some((s) => (this.occ.get(s) ?? []).some((o) => o.train === c));
+        if (!inBlock) return false;
+      }
+    }
+    for (const cid of b.crossings) {
+      const c = this.crossingClaims.get(cid);
+      if (c === undefined || c === trainId) continue;
+      const crossing = this.net.crossings.find((x) => x.id === cid);
+      if (!crossing) return false;
+      const otherSeg = blockSegSet.has(crossing.seg1) ? crossing.seg2 : crossing.seg1;
+      if (!blockSegSet.has(otherSeg) || (this.occ.get(otherSeg)?.some((o) => o.train === c) ?? false)) return false;
+    }
+    for (let i = 0; i < b.segs.length; i++) {
+      const s = b.segs[i];
+      const dir = b.dirs[i];
+      const shuntHolder = this.shuntSegs.get(s);
+      if (shuntHolder !== undefined && shuntHolder !== trainId) return false;
+      const occs = this.occ.get(s) ?? [];
+      const claimedBy = this.segClaims.get(s);
+      if (claimedBy !== undefined && claimedBy !== trainId && !occs.some((o) => o.train === claimedBy)) return false;
+      const dirs = this.segDirs.get(s);
+      if (dirs && dirs.has(-dir as Dir)) {
+        if (!occs.length) return false;
+        for (const o of occs) {
+          if (o.train === trainId) continue;
+          const other = this.trains.find((tr) => tr.id === o.train);
+          if (!other) return false;
+          const piece = other.trail.find((p) => p.seg === s);
+          if (piece && piece.dir !== dir) {
+            if (other.speed >= 0.25 || other.throttle > 0 || other.grants.length > 0) return false;
+          }
+        }
+      }
+    }
+    return true;
+  }
+
+  /** Describes the first facing junction protected by a block, if any. */
+  private routeInfo(startNode: number, startSide: Side, block: { segs: number[]; dirs: Dir[] }): SignalRoute | null {
+    const net = this.net;
+    if (!block.segs.length) return null;
+    let jNode = -1;
+    let jSide: Side = 1;
+    let selected = -1;
+    if (net.attached(startNode, startSide).length > 1) {
+      jNode = startNode;
+      jSide = startSide;
+      selected = block.segs[0];
+    } else {
+      for (let i = 0; i < block.segs.length - 1; i++) {
+        const e = net.exit(block.segs[i], block.dirs[i]);
+        if (e.options.length > 1) {
+          jNode = e.node;
+          jSide = e.side;
+          selected = block.segs[i + 1];
+          break;
+        }
+      }
+    }
+    if (jNode < 0) return null;
+    const options = net.attached(jNode, jSide);
+    const n = net.nodes.get(jNode)!;
+    const hx = n.dx * jSide;
+    const hz = n.dz * jSide;
+    let primary = options[0];
+    let bestStraight = -Infinity;
+    let bestVmax = -1;
+    const dirVec = (segId: number) => {
+      const geo = net.geom.get(segId)!;
+      const d = net.entryDir(segId, jNode, jSide);
+      const dist = Math.min(30, geo.length * 0.5);
+      const p = net.sample(segId, d > 0 ? dist : geo.length - dist);
+      const vx = p.x - n.x;
+      const vz = p.z - n.z;
+      const l = Math.hypot(vx, vz) || 1;
+      return { cx: vx / l, cz: vz / l, vmax: geo.vmax };
+    };
+    for (const opt of options) {
+      const v = dirVec(opt);
+      const straight = hx * v.cx + hz * v.cz;
+      if (straight > bestStraight + 0.015 || (Math.abs(straight - bestStraight) <= 0.015 && v.vmax > bestVmax)) {
+        bestStraight = straight;
+        bestVmax = v.vmax;
+        primary = opt;
+      }
+    }
+    const sel = dirVec(selected);
+    const diverging = selected !== primary || bestStraight < 0.96;
+    const rightDot = hx * sel.cz - hz * sel.cx;
+    const dir: SignalRoute['dir'] = diverging ? (rightDot >= 0 ? 'right' : 'left') : 'straight';
+    let speed = LINE_VMAX;
+    for (const sid of block.segs) speed = Math.min(speed, net.geom.get(sid)!.vmax);
+    return {
+      diverging,
+      dir,
+      index: Math.max(0, options.indexOf(selected)),
+      count: options.length,
+      speed,
+    };
+  }
+
+  private claimSeg(seg: number, dir: Dir, trainId: number) {
+    if (!this.segClaims.has(seg)) this.segClaims.set(seg, trainId);
+    let dirs = this.segDirs.get(seg);
+    if (!dirs) {
+      dirs = new Set();
+      this.segDirs.set(seg, dirs);
+    }
+    dirs.add(dir);
+    for (const c of this.net.crossingsOn(seg)) {
+      if (!this.crossingClaims.has(c.id)) this.crossingClaims.set(c.id, trainId);
+    }
   }
 
   private rebuildOccupancy() {
@@ -741,8 +944,13 @@ export class Sim {
     this.rebuildOccupancy();
     this.segClaims.clear();
     this.nodeClaims.clear();
+    this.crossingClaims.clear();
+    this.segDirs.clear();
+    this.shuntSegs.clear();
     for (const t of this.trains) {
-      for (const [seg, list] of this.occ) if (list.some((o) => o.train === t.id)) this.segClaims.set(seg, t.id);
+      const occupiedSegs = new Set<number>();
+      for (const [seg, list] of this.occ) if (list.some((o) => o.train === t.id)) occupiedSegs.add(seg);
+      for (const p of t.trail) if (occupiedSegs.has(p.seg)) this.claimSeg(p.seg, p.dir, t.id);
     }
     // Existing grants keep priority over new requests.
     for (const t of this.trains) this.walkClaims(t);
@@ -753,41 +961,94 @@ export class Sim {
       const node = net.nodes.get(t.next.node)!;
       const def = node.signals[t.next.side];
       if (!def || def.hold) continue;
+      const type = signalType(def);
       const block = this.walkBlock(t.next.node, t.next.side, t);
-      if (this.blockFree(block, t.id)) {
+      const ok = type === 'shunt' ? this.callingOnAllowed(block, t.id) : this.blockFree(block, t.id);
+      if (ok) {
         t.grants.push(t.next.key);
         this.setRouteSwitches(t, block);
+        if (type === 'shunt') {
+          for (const s of block.segs) {
+            if ((this.occ.get(s)?.length ?? 0) > 0 && !this.shuntSegs.has(s)) this.shuntSegs.set(s, t.id);
+          }
+        }
         this.walkClaims(t);
       }
     }
-    // Aspects.
+    // Aspects and full indications. Two passes so distant signals reflect the main/shunt signals ahead.
     this.aspects.clear();
+    this.indications.clear();
     const grantedKeys = new Map<string, Train>();
     for (const t of this.trains) for (const k of t.grants) grantedKeys.set(k, t);
+    const distantQueue: { nodeId: number; side: Side; hold: boolean }[] = [];
     for (const node of net.nodes.values()) {
       for (const sideStr of Object.keys(node.signals)) {
         const side = Number(sideStr) as Side;
         const def = node.signals[side];
         if (!def) continue;
-        const key = keyOf(node.id, side);
-        if (def.hold) {
-          this.aspects.set(key, 'red');
+        const type = signalType(def);
+        if (type === 'distant') {
+          distantQueue.push({ nodeId: node.id, side, hold: def.hold });
           continue;
         }
+        const key = keyOf(node.id, side);
         const holder = grantedKeys.get(key) ?? null;
         const block = this.walkBlock(node.id, side, holder);
+        const route = this.routeInfo(node.id, side, block);
+        if (def.hold) {
+          this.aspects.set(key, 'red');
+          this.indications.set(key, { type, aspect: 'red', callingOn: false, route });
+          continue;
+        }
+        if (type === 'shunt') {
+          const ok = holder !== null || this.callingOnAllowed(block, null);
+          const aspect: Aspect = ok ? 'yellow' : 'red';
+          this.aspects.set(key, aspect);
+          this.indications.set(key, { type, aspect, callingOn: ok, route });
+          continue;
+        }
         if (!holder && !this.blockFree(block, null)) {
           this.aspects.set(key, 'red');
+          this.indications.set(key, { type, aspect: 'red', callingOn: false, route });
           continue;
         }
         let onward = !block.deadEnd;
         if (block.end) {
           const nextDef = net.nodes.get(block.end.node)!.signals[block.end.side]!;
+          const nextType = signalType(nextDef);
           const nextBlock = this.walkBlock(block.end.node, block.end.side, holder);
-          if (nextDef.hold || !this.blockFree(nextBlock, holder?.id ?? null)) onward = false;
+          const nextFree = this.blockFree(nextBlock, holder?.id ?? null);
+          if (
+            nextDef.hold ||
+            (nextType === 'shunt' ? !this.callingOnAllowed(nextBlock, holder?.id ?? null) : !nextFree)
+          )
+            onward = false;
+          // Warn approaching drivers with yellow before a calling-on move into an occupied section.
+          if (nextType === 'shunt' && !nextFree) onward = false;
         }
-        this.aspects.set(key, onward ? 'green' : 'yellow');
+        if (onward && route?.diverging) {
+          const incoming = net.attached(node.id, -side as Side);
+          const approachVmax = incoming.length
+            ? Math.max(...incoming.map((id) => net.geom.get(id)?.vmax ?? LINE_VMAX))
+            : LINE_VMAX;
+          if (route.speed < approachVmax - 2.5) onward = false;
+        }
+        const aspect: Aspect = onward ? 'green' : 'yellow';
+        this.aspects.set(key, aspect);
+        this.indications.set(key, { type, aspect, callingOn: false, route });
       }
+    }
+    for (const d of distantQueue) {
+      const key = keyOf(d.nodeId, d.side);
+      const block = this.walkBlock(d.nodeId, d.side, null);
+      const route = this.routeInfo(d.nodeId, d.side, block);
+      let aspect: Aspect = 'yellow';
+      if (!d.hold && block.end) {
+        const nextInd = this.indications.get(keyOf(block.end.node, block.end.side));
+        if (nextInd && nextInd.aspect !== 'red' && !nextInd.callingOn) aspect = 'green';
+      }
+      this.aspects.set(key, aspect);
+      this.indications.set(key, { type: 'distant', aspect, callingOn: false, route });
     }
   }
 
@@ -807,7 +1068,7 @@ export class Sim {
     }
   }
 
-  /** Claims track from the head through every granted signal and records the next ungranted signal. */
+  /** Claims track from the head through every granted signal and records the next ungranted stopping signal. */
   private walkClaims(t: Train) {
     const net = this.net;
     const h = t.trail[t.trail.length - 1];
@@ -820,10 +1081,10 @@ export class Sim {
     t.next = null;
     while (d < 6000 && !seen.has(seg)) {
       seen.add(seg);
-      if (!this.segClaims.has(seg)) this.segClaims.set(seg, t.id);
+      this.claimSeg(seg, dir, t.id);
       const e = net.exit(seg, dir);
       const def = net.nodes.get(e.node)!.signals[e.side];
-      if (def) {
+      if (def && signalType(def) !== 'distant') {
         const key = keyOf(e.node, e.side);
         if (t.grants[grantIdx] === key && !def.hold) {
           grantIdx++;
@@ -888,13 +1149,40 @@ export class Sim {
     const net = this.net;
     const n = net.nodes.get(node)!;
     const key = keyOf(node, side);
-    if (n.signals[side]) {
-      if (t.grants[0] === key) {
-        t.grants.shift();
-      } else if (this.aspects.get(key) === 'red') {
-        t.score.spads++;
-        t.duty?.add('Passed a signal at danger', -PENALTY.spad);
-        this.onEvent({ kind: 'spad', train: t.id, text: `${t.name} passed a signal at danger` });
+    const def = n.signals[side];
+    if (def) {
+      const type = signalType(def);
+      if (type !== 'distant') {
+        if (t.grants[0] === key) {
+          t.grants.shift();
+          t.restricted = type === 'shunt';
+        } else if (this.aspects.get(key) === 'red') {
+          t.score.spads++;
+          t.duty?.add('Passed a signal at danger', -PENALTY.spad);
+          if (this.strict && !t.ai) {
+            t.tripped = true;
+            t.spadTripped = true;
+            t.emergency = true;
+            t.throttle = 0;
+            t.warning = {
+              kind: 'spad',
+              text: 'Passed signal at danger — emergency brake',
+              timer: 0,
+              acknowledged: true,
+              key: `spad:${key}`,
+            };
+          }
+          this.onEvent({
+            kind: 'spad',
+            train: t.id,
+            text:
+              this.strict && !t.ai
+                ? `${t.name} passed a signal at danger — emergency brake applied`
+                : `${t.name} passed a signal at danger`,
+          });
+        } else {
+          t.restricted = type === 'shunt';
+        }
       }
     }
     // Trailing moves pull the points over behind the train.
@@ -918,30 +1206,32 @@ export class Sim {
     let dist = 0; // Distance from head to the start of this piece (0 for the current one)
     const planBrake = this.planBrake(t);
     const range = Math.max(400, (t.speed * t.speed) / (2 * planBrake) + 300);
-    let allowed = Math.min(geo.vmax, t.topSpeed);
+    const speedCap = t.restricted ? Math.min(SHUNT_VMAX, t.topSpeed) : t.topSpeed;
+    let allowed = Math.min(geo.vmax, speedCap);
     let stopAt = Infinity;
     let stationAt = Infinity;
     let bufferAt = Infinity;
     if (t.stopRemain >= 0) stationAt = t.stopRemain;
     const seen = new Set<number>();
     let current = true;
-    const lineLimit = Math.min(geo.vmax, t.topSpeed);
+    const lineLimit = Math.min(geo.vmax, speedCap);
+    const occBuffer = t.restricted ? 10 : 25;
     while (dist < range && !seen.has(seg)) {
       seen.add(seg);
       if (!current) {
-        allowed = Math.min(allowed, Math.sqrt(geo.vmax ** 2 + 2 * planBrake * dist));
+        allowed = Math.min(allowed, Math.sqrt(Math.min(geo.vmax, speedCap) ** 2 + 2 * planBrake * dist));
       }
       for (const o of this.occ.get(seg) ?? []) {
         if (o.train === t.id) continue;
         const gap = dir > 0 ? (current ? o.sMin - t.headS : o.sMin) : current ? t.headS - o.sMax : geo.length - o.sMax;
-        if (gap >= -2 || !current) stopAt = Math.min(stopAt, dist + Math.max(gap, 0) - 25);
+        if (gap >= -2 || !current) stopAt = Math.min(stopAt, dist + Math.max(gap, 0) - occBuffer);
       }
       const e = net.exit(seg, dir);
       const end = dist + toEnd;
       const nodeDef = net.nodes.get(e.node)!;
       const def = nodeDef.signals[e.side];
       const key = keyOf(e.node, e.side);
-      if (def && !t.grants.includes(key)) {
+      if (def && signalType(def) !== 'distant' && !t.grants.includes(key)) {
         stopAt = Math.min(stopAt, end - 8);
         break;
       }
@@ -1005,6 +1295,7 @@ export class Sim {
     // Arrival.
     if (t.speed < 0.25 && lim.stationAt <= 2.5) {
       t.dwell = DWELL;
+      t.restricted = false;
       t.score.stops++;
       this.logArrival(t);
       const st = this.net.stations.find((s) => s.id === t.targetStation);
@@ -1049,6 +1340,11 @@ export class Sim {
     const block = this.walkBlock(t.next.node, t.next.side, t);
     for (const seg of block.segs) {
       const holder = this.segClaims.get(seg);
+      const other = this.trains.find((o) => o.id === holder);
+      if (other && other !== t && other.stuck > 15 && other.dwell <= 0 && t.id > other.id) return true;
+    }
+    for (const cid of block.crossings) {
+      const holder = this.crossingClaims.get(cid);
       const other = this.trains.find((o) => o.id === holder);
       if (other && other !== t && other.stuck > 15 && other.dwell <= 0 && t.id > other.id) return true;
     }
@@ -1186,6 +1482,7 @@ export class Sim {
     const lim = this.collectLimits(t);
     t.limit = lim.lineLimit;
     t.statusText = '';
+    this.updateWarning(t, dt);
     if (this.strict) this.protect(t);
     t.duty?.overspeed(dt, t.speed, t.limit);
     if (t.dwell > 0) {
@@ -1195,6 +1492,87 @@ export class Sim {
       return;
     }
     this.checkStop(t);
+  }
+
+  /** Checks for restrictive signals or lower speed limits ahead and triggers cab warnings. */
+  private updateWarning(t: Train, dt: number) {
+    if (t.spadTripped) return;
+    let hazard: { kind: 'signal' | 'speed'; text: string; key: string } | null = null;
+    if (t.speed > 3) {
+      const sig = this.walkAhead(t, 220, ({ end, exit }) => {
+        if (end >= 220) return null;
+        const def = this.net.nodes.get(exit.node)!.signals[exit.side];
+        if (!def) return undefined;
+        const key = keyOf(exit.node, exit.side);
+        const ind = this.indications.get(key);
+        const aspect = ind?.aspect ?? this.aspects.get(key) ?? 'green';
+        if (aspect === 'green') return undefined;
+        const label = ind?.callingOn
+          ? 'Calling-on (25 km/h)'
+          : ind?.route?.diverging
+            ? `Diverging ${ind.route.dir}`
+            : aspect === 'red'
+              ? 'Stop signal ahead'
+              : 'Caution signal ahead';
+        return { kind: 'signal' as const, text: label, key: `sig:${key}:${aspect}` };
+      });
+      if (sig) hazard = sig;
+    }
+    if (!hazard) {
+      const nextLim = this.walkAhead(t, 250, ({ seg, start }) => {
+        if (start <= 0 || start >= 250) return undefined;
+        const speed = Math.min(this.net.geom.get(seg)!.vmax, t.topSpeed);
+        return speed < t.limit - 2.5 && t.speed > speed + 2
+          ? {
+              kind: 'speed' as const,
+              text: `Speed drop to ${Math.round(speed * 3.6)} km/h ahead`,
+              key: `spd:${seg}:${Math.round(speed * 3.6)}`,
+            }
+          : undefined;
+      });
+      if (nextLim) hazard = nextLim;
+    }
+
+    if (hazard) {
+      if (hazard.key !== t.lastWarnKey && (!t.warning || t.warning.key !== hazard.key)) {
+        t.warning = { ...hazard, timer: WARN_ACK_SECONDS, acknowledged: false };
+      }
+    } else if (t.warning?.acknowledged) {
+      t.warning = null;
+    }
+
+    if (t.warning && !t.warning.acknowledged) {
+      t.warning.timer = Math.max(0, t.warning.timer - dt);
+      if (t.warning.timer <= 0 && this.strict) {
+        t.tripped = true;
+        t.warnTripped = true;
+        t.warning.acknowledged = true;
+        t.lastWarnKey = t.warning.key;
+        t.duty?.add('Unacknowledged warning: train protection braked the train', -PENALTY.protection);
+        this.onEvent({
+          kind: 'protection',
+          train: t.id,
+          text: `Train protection braked ${t.name}: warning not acknowledged`,
+        });
+      }
+    }
+  }
+
+  /** Acknowledges an active cab warning or resets a stopped protection trip. */
+  acknowledge(t: Train) {
+    if (t.warning && !t.warning.acknowledged) {
+      t.warning.acknowledged = true;
+      t.lastWarnKey = t.warning.key;
+    }
+    if (t.spadTripped && t.speed < 0.2) {
+      t.spadTripped = false;
+      t.tripped = false;
+      t.emergency = false;
+      t.warning = null;
+    } else if (t.tripped && !t.spadTripped && t.speed <= t.limit) {
+      t.warnTripped = false;
+      t.tripped = false;
+    }
   }
 
   /** Train protection: emergency braking well over the limit, and derailment far over a curve's limit. */
@@ -1209,7 +1587,10 @@ export class Sim {
         text: `Train protection braked ${t.name}: ${Math.round(t.speed * 3.6)} km/h in a ${Math.round(t.limit * 3.6)} km/h limit`,
       });
     }
-    if (t.tripped && t.speed <= t.limit) t.tripped = false;
+    if (t.warnTripped && t.speed < 0.2) t.warnTripped = false;
+    if (t.tripped && !t.spadTripped && !t.warnTripped && t.speed <= t.limit) {
+      t.tripped = false;
+    }
     // Protection normally stops this happening; it matters when a curve comes up faster than the brakes can act.
     if (t.limit < LINE_VMAX - 0.5 && t.speed > t.limit * 1.5 && t.speed - t.limit > 30 / 3.6) {
       this.damage(t, `${t.name} derailed on a curve at ${Math.round(t.speed * 3.6)} km/h`);
@@ -1258,6 +1639,11 @@ export class Sim {
       this.place(t, at.seg, Math.min(at.s, this.net.geom.get(at.seg)!.length), at.dir);
     t.damaged = false;
     t.tripped = false;
+    t.spadTripped = false;
+    t.warnTripped = false;
+    t.restricted = false;
+    t.warning = null;
+    t.lastWarnKey = '';
     t.speed = 0;
     t.airBrake = 1;
     t.passedStop = false;
@@ -1323,6 +1709,7 @@ export class Sim {
     }
     if (t.speed >= 0.15) return;
     t.dwell = DWELL;
+    t.restricted = false;
     t.score.stops++;
     this.logArrival(t);
     const h = t.trail[t.trail.length - 1];
@@ -1399,14 +1786,42 @@ export class Sim {
     });
   }
 
-  /** Next signal for the HUD, walking past granted ones so the repeater shows what matters. */
+  /** Next signal for the HUD: prefers the next stopping signal (main/shunt), falling back to a distant signal. */
   signalAhead(t: Train) {
-    return this.walkAhead(t, 4000, ({ end, exit }) => {
+    type Found = {
+      dist: number;
+      aspect: Aspect;
+      node: number;
+      side: Side;
+      type: SignalType;
+      callingOn: boolean;
+      route: SignalRoute | null;
+    };
+    let distant: Found | null = null;
+    const main = this.walkAhead(t, 4000, ({ end, exit }) => {
       if (end >= 4000) return null;
-      if (!this.net.nodes.get(exit.node)!.signals[exit.side]) return undefined;
-      const aspect: Aspect = this.aspects.get(keyOf(exit.node, exit.side)) ?? 'green';
-      return { dist: end, aspect, node: exit.node, side: exit.side };
+      const def = this.net.nodes.get(exit.node)!.signals[exit.side];
+      if (!def) return undefined;
+      const key = keyOf(exit.node, exit.side);
+      const ind = this.indications.get(key);
+      const type = ind?.type ?? signalType(def);
+      const aspect: Aspect = ind?.aspect ?? this.aspects.get(key) ?? 'green';
+      const hit: Found = {
+        dist: end,
+        aspect,
+        node: exit.node,
+        side: exit.side,
+        type,
+        callingOn: ind?.callingOn ?? false,
+        route: ind?.route ?? null,
+      };
+      if (type === 'distant') {
+        if (!distant) distant = hit;
+        return undefined;
+      }
+      return hit;
     });
+    return main ?? distant;
   }
 
   stationAhead(t: Train) {
@@ -1421,10 +1836,11 @@ export class Sim {
   deskInfo(t: Train): DeskInfo {
     const net = this.net;
     const head = this.head(t);
-    const limit = Math.min(net.geom.get(head.seg)!.vmax, t.topSpeed);
+    const speedCap = t.restricted ? Math.min(SHUNT_VMAX, t.topSpeed) : t.topSpeed;
+    const limit = Math.min(net.geom.get(head.seg)!.vmax, speedCap);
     const nextLimit = this.walkAhead(t, LIMIT_LOOKAHEAD, ({ seg, start }) => {
       if (start <= 0) return undefined;
-      const speed = Math.min(net.geom.get(seg)!.vmax, t.topSpeed);
+      const speed = Math.min(net.geom.get(seg)!.vmax, speedCap);
       return speed < limit - 0.3 ? { speed, dist: start } : undefined;
     });
     // Height at the end of the stretch, or where the line ends if that comes first.

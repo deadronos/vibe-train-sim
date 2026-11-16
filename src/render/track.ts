@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 import type { Network, SegGeom } from '../rail/network';
+import { DIAMOND_MAX_DY } from '../rail/network';
 import type { Heightfield } from '../world/heightfield';
 import { WATER_LEVEL } from '../world/heightfield';
 import type { Assets } from './assets';
@@ -159,9 +160,15 @@ interface SegMesh {
 
 export class TrackRenderer {
   group = new THREE.Group();
+  private crossingGroup = new THREE.Group();
+  private lastCrossingVersion = -1;
   private meshes = new Map<number, SegMesh>();
   private mats = MATS();
+  private frogMat = new THREE.MeshStandardMaterial({ color: 0x2c3033, metalness: 0.85, roughness: 0.4 });
   private sleeperGeo = new THREE.BoxGeometry(2.5, 0.14, 0.26);
+  private crossTimberGeo = new THREE.BoxGeometry(3.2, 0.14, 0.28);
+  private checkRailGeo = new THREE.BoxGeometry(0.055, 0.14, 4.4);
+  private frogGeo = new THREE.BoxGeometry(0.26, 0.15, 0.52);
   private strutGeo = new THREE.BoxGeometry(0.16, 0.16, 1);
   private tmp = new THREE.Object3D();
 
@@ -169,11 +176,21 @@ export class TrackRenderer {
     scene: THREE.Scene,
     private assets: Assets,
   ) {
+    this.group.add(this.crossingGroup);
     scene.add(this.group);
   }
 
   clear() {
     for (const id of [...this.meshes.keys()]) this.remove(id);
+    this.clearCrossings();
+    this.lastCrossingVersion = -1;
+  }
+
+  private clearCrossings() {
+    for (const child of [...this.crossingGroup.children]) {
+      this.crossingGroup.remove(child);
+      if ((child as THREE.InstancedMesh).isInstancedMesh) (child as THREE.InstancedMesh).dispose();
+    }
   }
 
   private remove(id: number) {
@@ -187,13 +204,89 @@ export class TrackRenderer {
     this.meshes.delete(id);
   }
 
-  /** Rebuilds every segment flagged dirty on the network. */
+  /** Rebuilds every segment flagged dirty on the network, plus shared diamond crossings. */
   sync(net: Network, hf: Heightfield) {
+    const hadDirty = net.dirty.size > 0;
     for (const id of net.dirty) {
       this.remove(id);
       if (net.segs.has(id)) this.build(net, hf, id);
     }
     net.dirty.clear();
+    if (hadDirty || this.lastCrossingVersion !== net.version) {
+      this.lastCrossingVersion = net.version;
+      this.rebuildCrossings(net);
+    }
+  }
+
+  private rebuildCrossings(net: Network) {
+    this.clearCrossings();
+    const diamonds = net.crossings.filter((c) => Math.abs(c.y1 - c.y2) <= DIAMOND_MAX_DY);
+    if (!diamonds.length) return;
+    const frogs: THREE.Matrix4[] = [];
+    const checks: THREE.Matrix4[] = [];
+    const timbers: THREE.Matrix4[] = [];
+    const t = this.tmp;
+    for (const c of diamonds) {
+      const y = c.y;
+      const n1x = -c.t1z;
+      const n1z = c.t1x;
+      const n2x = -c.t2z;
+      const n2z = c.t2x;
+      const denom = c.t1x * n2x + c.t1z * n2z;
+      const nDot = n1x * n2x + n1z * n2z;
+      // Bisector angle for the frog castings and shared diamond crossing timbers.
+      const sign = c.t1x * c.t2x + c.t1z * c.t2z >= 0 ? 1 : -1;
+      let bx = c.t1x + sign * c.t2x;
+      let bz = c.t1z + sign * c.t2z;
+      const bl = Math.hypot(bx, bz) || 1;
+      bx /= bl;
+      bz /= bl;
+      const bYaw = Math.atan2(bx, bz);
+
+      if (Math.abs(denom) > 0.05) {
+        for (const lat1 of [-0.7175, 0.7175]) {
+          for (const lat2 of [-0.7175, 0.7175]) {
+            const u = (lat2 - lat1 * nDot) / denom;
+            t.position.set(c.x + lat1 * n1x + u * c.t1x, y - 0.08, c.z + lat1 * n1z + u * c.t1z);
+            t.rotation.set(0, bYaw, 0);
+            t.scale.set(1, 1, 1);
+            t.updateMatrix();
+            frogs.push(t.matrix.clone());
+          }
+        }
+      }
+      for (const [tx, tz, nx, nz] of [
+        [c.t1x, c.t1z, n1x, n1z],
+        [c.t2x, c.t2z, n2x, n2z],
+      ] as const) {
+        const yaw = Math.atan2(tx, tz);
+        for (const lat of [-0.625, 0.625]) {
+          t.position.set(c.x + nx * lat, y - 0.072, c.z + nz * lat);
+          t.rotation.set(0, yaw, 0);
+          t.scale.set(1, 1, 1);
+          t.updateMatrix();
+          checks.push(t.matrix.clone());
+        }
+      }
+      for (let off = -1.95; off <= 1.96; off += 0.65) {
+        t.position.set(c.x + bx * off, y - 0.232, c.z + bz * off);
+        t.rotation.set(0, bYaw, 0);
+        t.scale.set(1, 1, 1);
+        t.updateMatrix();
+        timbers.push(t.matrix.clone());
+      }
+    }
+    const emit = (geo: THREE.BufferGeometry, mat: THREE.Material, list: THREE.Matrix4[]) => {
+      if (!list.length) return;
+      const inst = new THREE.InstancedMesh(geo, mat, list.length);
+      list.forEach((m, i) => inst.setMatrixAt(i, m));
+      inst.receiveShadow = true;
+      inst.frustumCulled = false;
+      this.crossingGroup.add(inst);
+    };
+    emit(this.frogGeo, this.frogMat, frogs);
+    emit(this.checkRailGeo, this.mats.rail, checks);
+    emit(this.crossTimberGeo, this.mats.sleeper, timbers);
   }
 
   private build(net: Network, hf: Heightfield, id: number) {
@@ -283,17 +376,20 @@ export class TrackRenderer {
       i = j + 1;
     }
 
-    const addMerged = (geos: THREE.BufferGeometry[], mat: THREE.Material, castShadow: boolean) => {
+    const addMerged = (geos: THREE.BufferGeometry[], mat: THREE.Material, castShadow: boolean, yOff = 0) => {
       if (!geos.length) return;
       const merged = geos.length === 1 ? geos[0] : mergeGeometries(geos, false);
       if (geos.length > 1) for (const x of geos) x.dispose();
       const mesh = new THREE.Mesh(merged, mat);
+      if (yOff) mesh.position.y = yOff;
       mesh.castShadow = castShadow;
       mesh.receiveShadow = true;
       group.add(mesh);
       disposables.push(merged);
     };
-    addMerged(ballastGeos, this.mats.ballast, false);
+    const crossings = net.crossingsOn(id).filter((c) => Math.abs(c.y1 - c.y2) <= DIAMOND_MAX_DY);
+    const sinkBallast = crossings.some((c) => c.seg2 === id) ? -0.006 : 0;
+    addMerged(ballastGeos, this.mats.ballast, false, sinkBallast);
     addMerged(deckGeos, this.mats.deck, true);
     addMerged(girderGeos, this.mats.girder, true);
     addMerged(steelGeos, this.mats.girder, true);
@@ -309,23 +405,29 @@ export class TrackRenderer {
     ];
     addMerged(rails, this.mats.rail, false);
 
-    // Sleepers.
+    // Sleepers, skipping the shared diamond crossing core where crossing timbers sit.
     const spacing = 0.72;
     const count = Math.max(1, Math.floor(g.length / spacing));
-    const sleepers = new THREE.InstancedMesh(this.sleeperGeo, this.mats.sleeper, count);
+    const sleeperMats: THREE.Matrix4[] = [];
     const t = this.tmp;
     for (let k = 0; k < count; k++) {
-      const p = net.sample(id, (k + 0.5) * spacing);
+      const sAlong = (k + 0.5) * spacing;
+      if (crossings.some((c) => Math.abs(sAlong - (c.seg1 === id ? c.s1 : c.s2)) < 2.2)) continue;
+      const p = net.sample(id, sAlong);
       t.position.set(p.x, p.y - 0.23, p.z);
       t.rotation.set(0, Math.atan2(p.tx, p.tz), 0);
       t.scale.set(1, 1, 1);
       t.updateMatrix();
-      sleepers.setMatrixAt(k, t.matrix);
+      sleeperMats.push(t.matrix.clone());
     }
-    sleepers.receiveShadow = true;
-    sleepers.frustumCulled = true;
-    sleepers.computeBoundingSphere();
-    group.add(sleepers);
+    if (sleeperMats.length) {
+      const sleepers = new THREE.InstancedMesh(this.sleeperGeo, this.mats.sleeper, sleeperMats.length);
+      sleeperMats.forEach((m, k) => sleepers.setMatrixAt(k, m));
+      sleepers.receiveShadow = true;
+      sleepers.frustumCulled = true;
+      sleepers.computeBoundingSphere();
+      group.add(sleepers);
+    }
 
     if (hasBridge) this.addBridgeInstances(group, piers, abutments, struts);
     this.group.add(group);

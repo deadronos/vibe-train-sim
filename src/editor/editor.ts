@@ -5,8 +5,17 @@ import { MapControls } from 'three/addons/controls/MapControls.js';
 import type { Game } from '../game';
 import { gameKey } from '../keyFilter';
 import { EMPTY_FREIGHT, FREIGHT, PASSENGER, SHUTTLE } from '../rail/demoMap';
-import type { Dir, RailNode, Side } from '../rail/network';
-import { curveMinRadius, MAX_GRADE, MIN_RADIUS, planCurve } from '../rail/network';
+import type { Dir, RailNode, Side, SignalType } from '../rail/network';
+import {
+  CROSSING_CLEARANCE,
+  curveMinRadius,
+  DIAMOND_MAX_DY,
+  findCurveCrossings,
+  MAX_GRADE,
+  MIN_RADIUS,
+  planCurve,
+  signalType,
+} from '../rail/network';
 import { Train } from '../rail/sim';
 import type { Car } from '../rail/vehicles';
 import type { SceneryType } from '../render/scatter';
@@ -50,6 +59,7 @@ export class Editor {
   brushRadius = 60;
   brushStrength = 0.6;
   sceneryType: SceneryType = 'tree_pine';
+  signalType: SignalType = 'main';
   trainKind: 'passenger' | 'shuttle' | 'freight' | 'emptyFreight' = 'passenger';
   selected: number | null = null;
   status = '';
@@ -459,6 +469,37 @@ export class Editor {
     } else if (grade > MAX_GRADE) {
       ok = false;
       reason = `Too steep: ${(grade * 100).toFixed(1)}%, maximum ${(MAX_GRADE * 100).toFixed(0)}%. Change the height with [ and ]`;
+    } else {
+      const ignore = new Set<number>();
+      for (const a of [startA, endA]) {
+        if (a.kind === 'node') ignore.add(a.node);
+        else if (a.kind === 'seg') {
+          const s = g.net.segs.get(a.seg);
+          if (s) {
+            ignore.add(s.a);
+            ignore.add(s.b);
+          }
+        }
+      }
+      const hits = findCurveCrossings(
+        g.net,
+        curve.xs,
+        curve.zs,
+        curve.cum,
+        curve.steps,
+        (f) => P.y + (Q.y - P.y) * f,
+        ignore,
+      );
+      const tight = hits.find((h) => h.dy > DIAMOND_MAX_DY && h.dy < CROSSING_CLEARANCE);
+      const flat = hits.find((h) => h.dy <= DIAMOND_MAX_DY);
+      if (tight) {
+        reason += ` — Tight clearance (${tight.dy.toFixed(1)} m): raise to ≥${CROSSING_CLEARANCE} m for a bridge or match height for a diamond`;
+      } else if (flat) {
+        reason += ' — Crosses track at grade: interlocked diamond crossing';
+      } else if (hits.length) {
+        const minClear = Math.min(...hits.map((h) => h.dy));
+        reason += ` — Crosses over/under track (${minClear.toFixed(1)} m clearance)`;
+      }
     }
     return { ok, reason, curve, P, Q, d0x, d0z, d1x, d1z };
   }
@@ -560,7 +601,7 @@ export class Editor {
       this.cancel();
       return;
     }
-    g.net.addSegment(a.node.id, a.side, b.node.id, b.side);
+    const seg = g.net.addSegment(a.node.id, a.side, b.node.id, b.side);
     if (endIsFree) {
       this.start = { kind: 'node', node: b.node.id };
     } else {
@@ -569,6 +610,12 @@ export class Editor {
     }
     g.commitEdit({ scenery: true });
     this.refreshPreview();
+    const crossings = g.net.crossingsOn(seg.id);
+    if (crossings.some((c) => Math.abs(c.y1 - c.y2) > DIAMOND_MAX_DY)) {
+      g.hud.toast('Tight crossing clearance: raise to ≥5 m for a bridge, or match height for a diamond', true);
+    } else if (crossings.length) {
+      g.hud.toast('Interlocked diamond crossing formed');
+    }
   }
 
   /** Finds or creates a node on the track near a point, along with the travel side the mouse favours. */
@@ -603,12 +650,19 @@ export class Editor {
     g.pushUndo();
     const node = this.nodeForPoint(pt);
     const side: Side = node.dx * pt.tx + node.dz * pt.tz >= 0 ? 1 : -1;
-    if (node.signals[side]) {
-      delete node.signals[side];
-      g.hud.toast('Signal removed');
+    const labels: Record<SignalType, string> = { main: 'main', distant: 'distant', shunt: 'calling-on' };
+    const existing = node.signals[side];
+    if (existing) {
+      if (signalType(existing) !== this.signalType) {
+        existing.type = this.signalType;
+        g.hud.toast(`Signal changed to ${labels[this.signalType]}`);
+      } else {
+        delete node.signals[side];
+        g.hud.toast('Signal removed');
+      }
     } else {
-      node.signals[side] = { hold: false };
-      g.hud.toast('Signal placed');
+      node.signals[side] = { hold: false, type: this.signalType };
+      g.hud.toast(`${labels[this.signalType][0].toUpperCase()}${labels[this.signalType].slice(1)} signal placed`);
     }
     g.net.version++;
     g.commitEdit();

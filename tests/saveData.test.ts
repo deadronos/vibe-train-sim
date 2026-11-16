@@ -37,6 +37,17 @@ describe('parseSave', () => {
     expect(r.ok && Network.fromJSON(r.data.net).nodes.size).toBeGreaterThan(0);
   });
 
+  it('accepts signal types, segment speed limits, and restricted train state', () => {
+    const d = starterSave();
+    const sigNode = d.net.nodes.find((n) => Object.keys(n.signals).length > 0)!;
+    const side = Object.keys(sigNode.signals)[0];
+    sigNode.signals[side]!.type = 'shunt';
+    d.net.segs[0].speedLimit = 18;
+    d.trains[0].state!.restricted = true;
+    const r = parseSave(JSON.stringify(d));
+    expect(r.ok).toBe(true);
+  });
+
   it('accepts a version 1 save, which has no train state, and raises its version', () => {
     const v1 = JSON.parse(JSON.stringify(starterSave())) as Record<string, unknown> & SaveData;
     v1.v = 1 as never;
@@ -102,6 +113,15 @@ describe('parseSave', () => {
     ['target as text', (d: SaveData) => (d.trains[0].state!.targetStation = 'x' as never)],
     ['grant as number', (d: SaveData) => (d.trains[0].state!.grants = [1] as never)],
     ['score missing', (d: SaveData) => (d.trains[0].state!.score = null as never)],
+    [
+      'signal type',
+      (d: SaveData) => {
+        const sigNode = d.net.nodes.find((n) => Object.keys(n.signals).length > 0)!;
+        sigNode.signals[Object.keys(sigNode.signals)[0]]!.type = 'semaphore' as never;
+      },
+    ],
+    ['segment speed limit', (d: SaveData) => (d.net.segs[0].speedLimit = 0)],
+    ['restricted flag', (d: SaveData) => (d.trains[0].state!.restricted = 'yes' as never)],
   ])('rejects a wrong %s', (_name, fn) => {
     const r = mutate(fn);
     expect(r).toEqual({ ok: false, reason: expect.stringMatching(/\S/) });
