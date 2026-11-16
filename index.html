@@ -251,14 +251,25 @@
           <select id="tt-train"></select
         ></label>
         <p class="hint">
-          A train waits at each stop until its time. Times follow the clock, so choose Real on the clock for trains to
-          keep time. Leave a time empty to leave as soon as the doors close.
+          A train waits at each stop until its leaving time. Arrive sets when a driver is due. Times follow the clock,
+          so choose Real on the clock for trains to keep time. Turn changes ends before leaving.
         </p>
+        <div class="tt-head" aria-hidden="true">
+          <span></span><span>Station</span><span>Arrive</span><span>Leave</span><span>Turn</span><span></span>
+        </div>
         <ol id="tt-stops"></ol>
         <div class="row">
           <select id="tt-add-station" aria-label="Station to add"></select>
           <button id="tt-add" type="button">Add stop</button>
         </div>
+        <h3>Vehicles <span id="tt-cars-sum"></span></h3>
+        <p class="hint">Front to back. A train must stand still to change its vehicles, and needs a locomotive.</p>
+        <ol id="tt-cars"></ol>
+        <div class="row">
+          <select id="tt-add-car" aria-label="Vehicle to add"></select>
+          <button id="tt-add-car-btn" type="button">Add vehicle</button>
+        </div>
+        <p id="tt-consist-msg" class="hint" role="status"></p>
         <menu>
           <button id="tt-clear" type="button">Call at every station</button>
           <button value="ok">Close</button>

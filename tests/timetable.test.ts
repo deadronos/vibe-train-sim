@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { buildDemoNetwork, populateDemoTrains, SHUTTLE } from '../src/rail/demoMap';
 import { Network } from '../src/rail/network';
@@ -127,5 +127,62 @@ describe('a timetabled starter railway', () => {
     expect(waited).toBeGreaterThan(0);
     expect(events).not.toContain('collision');
     for (const t of sim.trains) expect(t.score.stops, `${t.name} made too few stops`).toBeGreaterThan(3);
+  });
+});
+
+describe('stops and consists', () => {
+  it('is due at a stop by its arrival time when it has one', () => {
+    const { sim, t, last } = atPlatform(false, null);
+    t.times = [null, 8 * H + 600];
+    t.arrivals = [null, 8 * H + 300];
+    t.schedIdx = 1;
+    t.targetStation = last.id;
+    expect(sim.dueIn(t)).toBeCloseTo(300, 5);
+  });
+
+  it('changes ends before leaving a stop marked as a turn, and only then', () => {
+    for (const ai of [true, false]) {
+      for (const turn of [true, false]) {
+        const { sim, t } = atPlatform(ai, null);
+        t.turns = [turn, false];
+        const reverse = vi.spyOn(sim, 'reverse');
+        run(sim, 0.5);
+        // Bourne lies ahead, so nothing but the timetable would turn the train here.
+        expect(reverse.mock.calls.length > 0).toBe(turn);
+      }
+    }
+  });
+
+  it("changes a standing train's vehicles, keeping its head and timetable place", () => {
+    const { sim, t, first } = atPlatform(true, null);
+    const head = sim.head(t);
+    const longer = [...t.cars, { type: 'coach' as const, flip: false }];
+    expect(sim.setConsist(t, longer)).toBeNull();
+    expect(t.cars).toHaveLength(longer.length);
+    const now = sim.head(t);
+    expect(Math.hypot(now.x - head.x, now.z - head.z)).toBeLessThan(0.01);
+    expect(t.schedIdx).toBe(0);
+    expect(t.targetStation).toBe(first.id);
+    expect(t.dwell).toBeGreaterThan(0);
+  });
+
+  it('refuses a consist with no locomotive, or a train on the move', () => {
+    const { sim, t } = atPlatform(true, null);
+    expect(sim.setConsist(t, [{ type: 'coach', flip: false }])).toMatch(/locomotive/);
+    t.speed = 5;
+    expect(sim.setConsist(t, [...t.cars])).toMatch(/Stop the train/);
+  });
+
+  it('refuses a longer train that would run into the one behind', () => {
+    const { sim, t } = atPlatform(true, null);
+    sim.place(t, sim.trains[0].trail.at(-1)!.seg, 300, 1);
+    const behind = new Train(2, 'U', SHUTTLE());
+    sim.trains.push(behind);
+    sim.place(behind, t.trail.at(-1)!.seg, 300 - t.length - 8, 1);
+    expect(sim.touching(t)).toBeNull();
+    const cars = [...t.cars];
+    expect(sim.setConsist(t, [...cars, ...SHUTTLE().slice(1)])).toMatch(/no room/);
+    expect(t.cars).toEqual(cars);
+    expect(sim.touching(t)).toBeNull();
   });
 });

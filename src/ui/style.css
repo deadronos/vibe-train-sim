@@ -989,7 +989,51 @@ dialog menu {
   padding: 3px 7px 1px;
 }
 #dlg-timetable {
-  width: min(520px, 92vw);
+  width: min(640px, 94vw);
+}
+#dlg-timetable h3 {
+  margin: 14px 0 2px;
+  font: 600 14px var(--sans);
+  color: var(--brass);
+}
+#tt-cars-sum {
+  color: var(--text-dim);
+  font-weight: 400;
+  font-size: 12px;
+}
+.tt-head,
+#tt-stops li {
+  display: grid;
+  grid-template-columns: 1.4em minmax(0, 1fr) 6.6em 6.6em 2.6em 5.2em;
+  gap: 6px;
+  align-items: center;
+}
+.tt-head {
+  color: var(--text-dim);
+  font-size: 12px;
+  margin-top: 6px;
+}
+#tt-stops input[type='checkbox'],
+.tt-head span:nth-child(5) {
+  justify-self: center;
+}
+#tt-stops select,
+#tt-stops input[type='time'] {
+  min-width: 0;
+}
+#tt-cars {
+  margin: 4px 0 8px;
+  padding-left: 22px;
+}
+#tt-cars li {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 2px 0;
+}
+#tt-cars label.check {
+  margin: 0;
 }
 #dlg-timetable .hint {
   color: var(--text-dim);
@@ -1003,10 +1047,6 @@ dialog menu {
   overflow-y: auto;
 }
 #tt-stops li {
-  display: grid;
-  grid-template-columns: 1.4em 1fr auto auto;
-  gap: 6px;
-  align-items: center;
   padding: 3px 0;
 }
 #tt-stops li.state {

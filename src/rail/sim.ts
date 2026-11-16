@@ -34,6 +34,14 @@ export function untilTime(target: number, now: number) {
   return ((((target - now + DAY / 2) % DAY) + DAY) % DAY) - DAY / 2;
 }
 
+/** One stop of a train's timetable. Times are seconds of the day. */
+export interface Stop {
+  id: number;
+  arr: number | null;
+  dep: number | null;
+  turn: boolean;
+}
+
 /** A time of day as 08:05. */
 export function clockText(seconds: number) {
   const m = Math.floor((((seconds % DAY) + DAY) % DAY) / 60);
@@ -129,6 +137,10 @@ export class Train {
   schedule: number[] = []; // Station ids; empty = every station
   /** Departure time from each scheduled stop, in seconds of the day, or null to leave once the dwell is over. */
   times: (number | null)[] = [];
+  /** Timetabled arrival at each stop, in seconds of the day, or null for a dwell before departure. */
+  arrivals: (number | null)[] = [];
+  /** True where the train changes ends before leaving a stop, to go back the way it came. */
+  turns: boolean[] = [];
   schedIdx = 0;
   route: Piece[] = [];
   targetStation: number | null = null;
@@ -566,10 +578,18 @@ export class Sim {
   }
 
   /** The train's stops in order with their departure times. With no schedule, every station without times. */
-  stops(t: Train): { id: number; dep: number | null }[] {
+  stops(t: Train): Stop[] {
     const all = new Set(this.net.stations.map((s) => s.id));
-    const listed = t.schedule.map((id, i) => ({ id, dep: t.times[i] ?? null })).filter((s) => all.has(s.id));
-    return listed.length ? listed : [...all].map((id) => ({ id, dep: null }));
+    const listed = t.schedule
+      .map((id, i) => ({ id, arr: t.arrivals[i] ?? null, dep: t.times[i] ?? null, turn: t.turns[i] ?? false }))
+      .filter((s) => all.has(s.id));
+    return listed.length ? listed : [...all].map((id) => ({ id, arr: null, dep: null, turn: false }));
+  }
+
+  /** Leaves the current stop: changes ends first if the timetable says so, then heads for the next stop. */
+  private leaveStop(t: Train) {
+    if (this.stops(t)[t.schedIdx]?.turn) this.reverse(t);
+    this.plan(t, true);
   }
 
   private stationOrder(t: Train) {
@@ -944,7 +964,7 @@ export class Sim {
       t.statusText = 'At platform';
       if (t.dwell <= 0 && !this.holdForTimetable(t)) {
         t.stopRemain = -1;
-        this.plan(t, true);
+        this.leaveStop(t);
       }
       return;
     }
@@ -1192,6 +1212,32 @@ export class Sim {
     this.onEvent({ kind: 'damage', train: t.id, text: `${text}. Recover it to carry on` });
   }
 
+  /**
+   * Changes the vehicles of a standing train, keeping its head where it is and its place in the timetable.
+   * Returns why it can't, or null once done: a train needs a locomotive, must be stopped and must fit.
+   */
+  setConsist(t: Train, cars: Car[]): string | null {
+    if (!cars.some((c) => VEHICLES[c.type].traction)) return 'A train needs at least one locomotive';
+    if (t.speed > 0.3) return 'Stop the train before changing its vehicles';
+    const old = { cars: t.cars, trail: t.trail, headS: t.headS };
+    const keep = { dwell: t.dwell, schedIdx: t.schedIdx, target: t.targetStation };
+    const h = t.trail[t.trail.length - 1];
+    t.cars = cars;
+    this.place(t, h.seg, t.headS, h.dir);
+    if (this.touching(t)) {
+      t.cars = old.cars;
+      t.trail = old.trail;
+      t.headS = old.headS;
+      return 'There is no room behind the train for a longer one';
+    }
+    t.dwell = keep.dwell;
+    t.schedIdx = keep.schedIdx;
+    // A train at a platform finishes its stop there; one that isn't heads on for the same stop.
+    if (t.dwell > 0) t.targetStation = keep.target;
+    else this.plan(t, false);
+    return null;
+  }
+
   /** Puts a damaged train back on the track where it last stood at a platform, or where it is. */
   recover(t: Train) {
     const at = t.lastStop;
@@ -1274,7 +1320,7 @@ export class Sim {
 
   private depart(t: Train) {
     t.dwell = 0;
-    this.plan(t, true);
+    this.leaveStop(t);
     this.startLeg(t);
     const next = this.net.stations.find((s) => s.id === t.targetStation);
     this.onEvent({
@@ -1295,9 +1341,10 @@ export class Sim {
    * the stop has a time, and otherwise an estimate from the route. Negative means it's already late.
    */
   dueIn(t: Train): number | null {
-    const dep = this.stops(t)[t.schedIdx]?.dep;
-    if (dep !== null && dep !== undefined && t.targetStation === this.stops(t)[t.schedIdx].id) {
-      return untilTime(dep - DWELL, this.clock);
+    const stop = this.stops(t)[t.schedIdx];
+    if (stop && t.targetStation === stop.id) {
+      if (stop.arr !== null) return untilTime(stop.arr, this.clock);
+      if (stop.dep !== null) return untilTime(stop.dep - DWELL, this.clock);
     }
     return this.legTime(t);
   }

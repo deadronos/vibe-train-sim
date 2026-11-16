@@ -38,6 +38,8 @@ export function captureSave(w: WorldState): SaveData {
       cars: t.cars,
       schedule: t.schedule,
       times: t.schedule.map((_, i) => t.times[i] ?? null),
+      arrivals: t.schedule.map((_, i) => t.arrivals[i] ?? null),
+      turns: t.schedule.map((_, i) => t.turns[i] ?? false),
       schedIdx: t.schedIdx,
       ai: t.ai,
       x: h.x,
@@ -74,6 +76,8 @@ export function restoreTrains(sim: Sim, data: SaveData): Train | null {
     const t = new Train(j.id, j.name, j.cars);
     t.schedule = j.schedule;
     t.times = j.times ?? j.schedule.map(() => null);
+    t.arrivals = j.arrivals ?? j.schedule.map(() => null);
+    t.turns = j.turns ?? j.schedule.map(() => false);
     t.schedIdx = j.schedIdx;
     t.ai = j.ai;
     sim.trains.push(t);
