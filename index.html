@@ -271,9 +271,28 @@
         </div>
         <p id="tt-consist-msg" class="hint" role="status"></p>
         <menu>
+          <button id="tt-diagram" type="button">Service diagram</button>
           <button id="tt-clear" type="button">Call at every station</button>
           <button value="ok">Close</button>
         </menu>
+      </form>
+    </dialog>
+
+    <dialog id="dlg-diagram" class="plate" aria-labelledby="diagram-title">
+      <form method="dialog">
+        <h2 id="diagram-title">Service diagram</h2>
+        <p class="hint">
+          Stations down the side, the clock across. Dashed lines are the timetable, solid lines what each train actually
+          did. The brass line is now.
+        </p>
+        <canvas
+          width="900"
+          height="420"
+          role="img"
+          aria-label="Service diagram of each train's timetabled and actual stops against the clock"
+        ></canvas>
+        <ul id="diagram-legend"></ul>
+        <menu><button value="ok">Close</button></menu>
       </form>
     </dialog>
 

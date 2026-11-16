@@ -1071,3 +1071,34 @@ dialog menu {
   display: flex;
   gap: 6px;
 }
+#dlg-diagram {
+  width: min(940px, 96vw);
+}
+#dlg-diagram .hint {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+#dlg-diagram canvas {
+  display: block;
+  width: 100%;
+  border: 1px solid #0c1b1d;
+}
+#diagram-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+  font-size: 13px;
+}
+#diagram-legend li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+#diagram-legend i {
+  width: 16px;
+  height: 3px;
+  display: block;
+}

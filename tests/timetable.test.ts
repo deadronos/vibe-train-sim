@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { buildDemoNetwork, populateDemoTrains, SHUTTLE } from '../src/rail/demoMap';
 import { Network } from '../src/rail/network';
 import { clockText, Sim, STEP, Train, untilTime } from '../src/rail/sim';
+import { plannedPoints, stationOrder } from '../src/ui/serviceDiagram';
 import { Heightfield } from '../src/world/heightfield';
 
 const H = 3600;
@@ -184,5 +185,29 @@ describe('stops and consists', () => {
     expect(sim.setConsist(t, [...cars, ...SHUTTLE().slice(1)])).toMatch(/no room/);
     expect(t.cars).toEqual(cars);
     expect(sim.touching(t)).toBeNull();
+  });
+});
+
+describe('service diagram data', () => {
+  it('logs each stop as it happened, with clock times', () => {
+    const { sim, t, first } = atPlatform(true, 8 * H + 60);
+    t.log.push({ station: first.id, arr: 8 * H - 30, dep: null });
+    run(sim, 1);
+    expect(t.log.at(-1)!.dep).toBeNull();
+    sim.clock = 8 * H + 61;
+    run(sim, 0.5);
+    expect(t.log.at(-1)!.dep).toBeCloseTo(8 * H + 61, 0);
+  });
+
+  it('plans points from arrivals and departures, and orders stations as trains visit them', () => {
+    const { sim, t, first, last } = atPlatform(true, 8 * H + 60);
+    t.arrivals = [null, 9 * H];
+    t.times = [8 * H + 60, null];
+    expect(plannedPoints(sim, t)).toEqual([
+      { station: first.id, time: 8 * H + 60 - 22 },
+      { station: first.id, time: 8 * H + 60 },
+      { station: last.id, time: 9 * H },
+    ]);
+    expect(stationOrder(sim)).toEqual([first.id, last.id]);
   });
 });

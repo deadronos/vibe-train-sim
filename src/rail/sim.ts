@@ -28,6 +28,7 @@ const CRASH_SPEED = 15 / 3.6; // Under strict rules, hits faster than this damag
 const LEG_PACE = 0.8; // Share of the line speed a timetable expects on average
 const LEG_ALLOWANCE = 40; // s added to every leg for starting and stopping
 export const DAY = 24 * 3600;
+const LOG_STOPS = 40;
 
 /** Seconds from now to a time of day, between -12 and +12 hours: negative means it has passed. */
 export function untilTime(target: number, now: number) {
@@ -141,6 +142,8 @@ export class Train {
   arrivals: (number | null)[] = [];
   /** True where the train changes ends before leaving a stop, to go back the way it came. */
   turns: boolean[] = [];
+  /** Recent stops as they actually happened, with clock times, for the service diagram. Not saved. */
+  log: { station: number; arr: number; dep: number | null }[] = [];
   schedIdx = 0;
   route: Piece[] = [];
   targetStation: number | null = null;
@@ -586,8 +589,17 @@ export class Sim {
     return listed.length ? listed : [...all].map((id) => ({ id, arr: null, dep: null, turn: false }));
   }
 
+  /** Records an arrival for the service diagram, keeping only the most recent stops. */
+  private logArrival(t: Train) {
+    if (t.targetStation === null) return;
+    t.log.push({ station: t.targetStation, arr: this.clock, dep: null });
+    if (t.log.length > LOG_STOPS) t.log.shift();
+  }
+
   /** Leaves the current stop: changes ends first if the timetable says so, then heads for the next stop. */
   private leaveStop(t: Train) {
+    const last = t.log.at(-1);
+    if (last && last.dep === null) last.dep = this.clock;
     if (this.stops(t)[t.schedIdx]?.turn) this.reverse(t);
     this.plan(t, true);
   }
@@ -992,8 +1004,9 @@ export class Sim {
     t.emergency = hold > 1 && need > 1;
     // Arrival.
     if (t.speed < 0.25 && lim.stationAt <= 2.5) {
-      t.dwell = 22;
+      t.dwell = DWELL;
       t.score.stops++;
+      this.logArrival(t);
       const st = this.net.stations.find((s) => s.id === t.targetStation);
       if (st) this.onEvent({ kind: 'arrive', train: t.id, text: `${t.name} arrived at ${st.name}` });
       t.stuck = 0;
@@ -1311,6 +1324,7 @@ export class Sim {
     if (t.speed >= 0.15) return;
     t.dwell = DWELL;
     t.score.stops++;
+    this.logArrival(t);
     const h = t.trail[t.trail.length - 1];
     t.lastStop = { seg: h.seg, s: t.headS, dir: h.dir };
     const points = t.duty?.stop(st.name, offset, this.time);

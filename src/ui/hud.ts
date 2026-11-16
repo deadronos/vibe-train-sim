@@ -14,6 +14,7 @@ import type { Preset } from '../world/heightfield';
 import { Guide } from './guide';
 import { OverviewMap } from './overviewMap';
 import { PerfOverlay } from './perfOverlay';
+import { ServiceDiagram } from './serviceDiagram';
 import { TimetableDialog } from './timetableDialog';
 
 // oxlint-disable-next-line typescript/no-unnecessary-type-parameters -- Callers name the element type they expect.
@@ -132,6 +133,8 @@ export class Hud {
     this.perf = new PerfOverlay(g, $('perf'));
     this.timetable = new TimetableDialog(g);
     $('btn-timetable').onclick = () => this.timetable.open(g.driven);
+    const diagram = new ServiceDiagram(g);
+    $('tt-diagram').onclick = () => diagram.open();
     $('btn-overview').onclick = () => this.map.toggle();
     $('overview-close').onclick = () => this.map.toggle(false);
     this.guide = new Guide(g, $('guide'));
