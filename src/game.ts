@@ -80,7 +80,7 @@ export class Game {
   /** How fast the railway runs: 0 is paused. */
   trainSpeed = 1;
   input = new DriverInput();
-  private history = new History();
+  readonly history = new History();
   private last = performance.now();
   private elapsed = 0;
   private scatterTimer = 0;
@@ -210,6 +210,7 @@ export class Game {
     this.scatter.rebuild(hf, net);
     this.driven = null;
     this.history.clear();
+    this.hud.syncUndo();
   }
 
   newWorld(preset: Preset, seed: number, starter: boolean) {
@@ -348,6 +349,14 @@ export class Game {
   // ------------------------------------------------------------ editing
   pushUndo() {
     this.history.push(JSON.stringify(this.snapshot()));
+    this.hud.syncUndo();
+  }
+
+  /** Puts the map back as it was at the last pushUndo, leaving nothing to redo. For an edit that was refused. */
+  abandonEdit() {
+    const s = this.history.discard();
+    if (s !== null) this.restoreSnapshot(s);
+    this.hud.syncUndo();
   }
 
   private restoreSnapshot(json: string) {
@@ -371,11 +380,13 @@ export class Game {
   undo() {
     const s = this.history.undo(JSON.stringify(this.snapshot()));
     if (s !== null) this.restoreSnapshot(s);
+    this.hud.syncUndo();
   }
 
   redo() {
     const s = this.history.redo(JSON.stringify(this.snapshot()));
     if (s !== null) this.restoreSnapshot(s);
+    this.hud.syncUndo();
   }
 
   /** Call after any change to the map. Keeps terrain and trains consistent with the new track. */

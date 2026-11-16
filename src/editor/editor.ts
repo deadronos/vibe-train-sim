@@ -64,6 +64,7 @@ export class Editor {
   private arrow: THREE.Mesh;
   private root = new THREE.Group();
   private dragging = false;
+  private dragMoved = false;
   private brushing = false;
   private flattenTo = 0;
   private shift = false;
@@ -239,7 +240,8 @@ export class Editor {
         if (n) {
           this.controls.enabled = false;
           this.dragging = true;
-          g.pushUndo();
+          // Undo is recorded on the first real move, so selecting a point leaves history alone.
+          this.dragMoved = false;
         }
         g.hud.syncEditor();
         break;
@@ -294,8 +296,13 @@ export class Editor {
     if (this.dragging && this.selected !== null) {
       const n = g.net.nodes.get(this.selected);
       if (n) {
+        if (!this.dragMoved) {
+          g.pushUndo();
+          this.dragMoved = true;
+        }
         g.net.moveNode(n.id, p.x, n.y, p.z);
         g.commitEdit();
+        this.status = g.net.problemAt(n.id) ?? 'Release to place the point here';
         g.hud.syncEditor();
       }
       return;
@@ -309,7 +316,8 @@ export class Editor {
     if (this.dragging) {
       this.dragging = false;
       this.controls.enabled = true;
-      this.game.commitEdit({ scenery: true });
+      if (this.dragMoved && this.selected !== null) this.refuseIfBroken(this.selected, 'Move');
+      else this.game.commitEdit({ scenery: true });
     }
     if (this.brushing) {
       this.brushing = false;
@@ -514,7 +522,7 @@ export class Editor {
       b = this.resolveAnchor(endAnchor, plan.d1x, plan.d1z);
     }
     if (a.node.id === b.node.id) {
-      g.undo();
+      g.abandonEdit();
       g.hud.toast('A track cannot start and end at the same point');
       this.cancel();
       return;
@@ -620,8 +628,8 @@ export class Editor {
 
   private clickTrain(p: { x: number; z: number }) {
     const g = this.game;
-    const near = g.net.nearest(p.x, p.z, 26);
-    if (!near) {
+    const pt = this.trackPointFromMouse(p);
+    if (!pt) {
       g.hud.toast('Click a track to add a train');
       return;
     }
@@ -639,7 +647,13 @@ export class Editor {
     const id = g.sim.trains.reduce((m, t) => Math.max(m, t.id), 0) + 1;
     const train = new Train(id, `${label} ${num}`, types[this.trainKind]());
     g.sim.trains.push(train);
-    g.sim.place(train, near.seg, near.s, 1);
+    g.sim.place(train, pt.seg, pt.s, pt.travel);
+    const other = g.sim.touching(train);
+    if (other) {
+      g.abandonEdit();
+      g.hud.toast(`There's no room: ${other.name} is in the way. Click a clear stretch of track`, true);
+      return;
+    }
     g.sim.plan(train, false);
     g.hud.syncTrains();
     g.hud.toast(`${train.name} is on the line`);
@@ -695,6 +709,29 @@ export class Editor {
     }
   }
 
+  /** Undoes an edit that left a point breaking the track rules, and says why. Otherwise commits it. */
+  refuseIfBroken(node: number, action: string): boolean {
+    const g = this.game;
+    const problem = g.net.nodes.has(node) ? g.net.problemAt(node) : null;
+    if (problem) {
+      g.abandonEdit();
+      g.hud.toast(`${action} undone. ${problem}`, true);
+      g.hud.syncEditor();
+      return true;
+    }
+    g.commitEdit({ scenery: true });
+    return false;
+  }
+
+  /** Turns the selected point by degrees, positive to the left. */
+  turnSelected(deg: number) {
+    if (this.selected === null) return;
+    const g = this.game;
+    g.pushUndo();
+    g.net.turnNode(this.selected, (deg * Math.PI) / 180);
+    this.refuseIfBroken(this.selected, 'Turn');
+  }
+
   deleteSelected() {
     if (this.selected === null) return;
     const g = this.game;
@@ -730,19 +767,22 @@ export class Editor {
         break;
       }
       case 'signal':
-      case 'station': {
+      case 'station':
+      case 'train': {
         const pt = this.trackPointFromMouse(p);
         if (pt) {
-          this.arrow.visible = this.tool === 'signal';
+          this.arrow.visible = this.tool !== 'station';
           this.arrow.position.set(pt.x + pt.tx * 7, pt.y + 2, pt.z + pt.tz * 7);
           this.arrow.lookAt(pt.x + pt.tx * 12, pt.y + 2, pt.z + pt.tz * 12);
           this.highlight.visible = true;
           this.highlight.position.set(pt.x, pt.y + 0.5, pt.z);
           this.highlight.scale.setScalar(4);
-          this.status =
-            this.tool === 'signal'
-              ? 'The signal controls trains running in the arrow direction. Move to the other side of the track to flip it'
-              : 'The platform is built on the side the mouse is on';
+          this.status = {
+            signal:
+              'The signal controls trains running in the arrow direction. Move to the other side of the track to flip it',
+            station: 'The platform is built on the side the mouse is on',
+            train: 'The train will head the way the arrow points. Move to the other side of the track to turn it',
+          }[this.tool];
         } else {
           this.status = 'Move close to a track';
         }

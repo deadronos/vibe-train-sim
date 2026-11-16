@@ -28,6 +28,19 @@ export class History {
     return s;
   }
 
+  get canUndo() {
+    return this.undoStack.length > 0;
+  }
+
+  get canRedo() {
+    return this.redoStack.length > 0;
+  }
+
+  /** Takes back the last push without leaving anything to redo: for an edit that turned out not to happen. */
+  discard(): string | null {
+    return this.undoStack.pop() ?? null;
+  }
+
   clear() {
     this.undoStack = [];
     this.redoStack = [];

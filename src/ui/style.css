@@ -45,6 +45,10 @@ input {
 button {
   cursor: pointer;
 }
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
 :focus-visible {
   outline: 2px solid var(--brass);
   outline-offset: 2px;
@@ -388,8 +392,7 @@ input[type='range'] {
 #desk.empty #controls {
   opacity: 0.55;
 }
-#power-lever:disabled,
-.desk-buttons button:disabled {
+#power-lever:disabled {
   cursor: not-allowed;
 }
 .desk-buttons button:disabled:hover {

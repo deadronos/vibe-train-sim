@@ -41,14 +41,14 @@ export class DriverInput {
   bind(g: Game) {
     window.addEventListener('keydown', (e) => {
       const ctx = keyContext(e);
-      const undoKey = (e.ctrlKey || e.metaKey) && !e.altKey && e.code === 'KeyZ';
+      const undoKey = (e.ctrlKey || e.metaKey) && !e.altKey && (e.code === 'KeyZ' || e.code === 'KeyY');
       if (!gameKeyAllowed(undoKey ? { ...ctx, modifier: false } : ctx)) return;
       g.audio.unlock();
       // Space is the brake; stop it also pressing a focused button.
       if (activatesFocused(ctx)) e.preventDefault();
-      if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ' && g.editing) {
+      if (undoKey && g.editing) {
         e.preventDefault();
-        if (e.shiftKey) g.redo();
+        if (e.shiftKey || e.code === 'KeyY') g.redo();
         else g.undo();
         return;
       }
