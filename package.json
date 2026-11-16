@@ -18,6 +18,8 @@
     "check": "npm run format:check && npm run lint && npm test && npm run build"
   },
   "dependencies": {
+    "@fontsource/barlow-condensed": "^5.3.0",
+    "@fontsource/overpass": "^5.3.0",
     "three": "^0.187.0"
   },
   "devDependencies": {

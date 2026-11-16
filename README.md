@@ -23,7 +23,7 @@ npm run dev
 - Saves keep trains moving: they come back where they were, at the same speed and on the same route
 - Autopilot that follows a timetable, stops at stations and turns around at termini
 - Chase, cab and trackside cameras
-- Synthesised engine, rail joint and horn sounds
+- Synthesised engine, rail joint and horn sounds, with saved volume levels for each, that go quiet in a hidden tab
 
 **Railway**
 

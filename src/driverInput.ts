@@ -57,10 +57,12 @@ export class DriverInput {
         g.setMode(!g.editing);
         return;
       }
-      if (e.code === 'KeyH' && !e.repeat) g.audio.horn(true);
       this.press(e.code);
       if (g.editing || e.repeat) return;
       switch (e.code) {
+        case 'KeyH':
+          g.audio.horn(true);
+          break;
         case 'KeyC':
           g.rig.cycle();
           g.hud.syncDrive();
@@ -84,7 +86,7 @@ export class DriverInput {
           g.changeTrainSpeed(1);
           break;
         case 'KeyM':
-          g.audio.setMuted(!g.audio.muted);
+          g.setSound({ muted: !g.audio.muted });
           g.hud.toast(g.audio.muted ? 'Sound off' : 'Sound on');
           break;
       }

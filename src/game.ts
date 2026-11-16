@@ -5,6 +5,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 
+import type { SoundSettings } from './audio';
 import { SimAudio } from './audio';
 import { DriverInput } from './driverInput';
 import { Editor } from './editor/editor';
@@ -16,10 +17,12 @@ import {
   captureSave,
   downloadMap,
   readQuality,
+  readSound,
   readSave,
   restoreEdit,
   restoreTrains,
   writeQuality,
+  writeSound,
   writeSave,
 } from './persistence';
 import { buildDemoNetwork, populateDemoTrains } from './rail/demoMap';
@@ -81,6 +84,7 @@ export class Game {
   private focus = new THREE.Vector3();
 
   constructor() {
+    this.audio.settings = readSound();
     const canvas = document.getElementById('view') as HTMLCanvasElement;
     this.renderer = new THREE.WebGLRenderer({
       canvas,
@@ -261,6 +265,12 @@ export class Game {
     showFatal(CONTEXT_LOST_TEXT, true);
   }
 
+  setSound(change: Partial<SoundSettings>) {
+    this.audio.set(change);
+    writeSound(this.audio.settings);
+    this.hud.syncSound();
+  }
+
   setQuality(q: Quality) {
     writeQuality(q);
     this.save(true);
@@ -319,6 +329,7 @@ export class Game {
     if (editing === this.editing) return;
     this.editing = editing;
     document.body.dataset.mode = editing ? 'edit' : 'drive';
+    this.audio.horn(false);
     if (editing) this.editor.enter();
     else {
       this.editor.leave();
@@ -474,6 +485,8 @@ export class Game {
       const d = this.camera.position.distanceTo(this.focus.set(h.x, h.y, h.z));
       const quiet = this.editing || this.trainSpeed === 0;
       this.audio.update(dt, t.speed, t.throttle, quiet ? 0 : Math.max(0.05, 1 - d / 500));
+    } else {
+      this.audio.update(dt, 0, 0, 0);
     }
     this.hud.update();
     this.composer.render();

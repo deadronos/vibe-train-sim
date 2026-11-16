@@ -5,6 +5,7 @@
 | Tool        | Used for                                                                       |
 | ----------- | ------------------------------------------------------------------------------ |
 | Three.js    | Rendering, loaded from npm with addons from `three/addons/`                    |
+| Fontsource  | Overpass and Barlow Condensed, bundled so the site makes no outside requests   |
 | TypeScript  | Language, type-checked by `tsc --noEmit`                                       |
 | Vite        | Dev server and build, with `base: './'` so `dist/` can be hosted from any path |
 | Vitest      | Simulation, save and terrain tests                                             |
