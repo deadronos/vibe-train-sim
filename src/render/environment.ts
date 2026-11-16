@@ -6,6 +6,8 @@ import { smoothstep } from '../core/noise';
 
 const LAT = THREE.MathUtils.degToRad(47);
 const DECL = THREE.MathUtils.degToRad(12);
+/** Half the width of ground the sun's shadow map covers, in metres. */
+const SHADOW_SPAN = 300;
 
 const COLORS = {
   sunHigh: new THREE.Color(1.0, 0.96, 0.88),
@@ -48,6 +50,15 @@ export class Environment {
   private tmp = new THREE.Vector3();
   private keyDir = new THREE.Vector3();
 
+  /** Changes the shadow map resolution in place; three.js allocates the new map on the next render. */
+  setShadowSize(size: number) {
+    if (this.sun.shadow.mapSize.x === size && this.sun.shadow.map) return;
+    this.sun.shadow.mapSize.set(size, size);
+    this.sun.shadow.map?.dispose();
+    this.sun.shadow.map = null;
+    this.shadowTexelSnap = (SHADOW_SPAN * 2) / size;
+  }
+
   constructor(
     private scene: THREE.Scene,
     private renderer: THREE.WebGLRenderer,
@@ -71,9 +82,8 @@ export class Environment {
 
     scene.fog = new THREE.FogExp2(COLORS.fogDay.getHex(), 0.00016);
     this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(shadowSize, shadowSize);
     const cam = this.sun.shadow.camera;
-    const span = 300;
+    const span = SHADOW_SPAN;
     cam.left = -span;
     cam.right = span;
     cam.top = span;
@@ -82,7 +92,7 @@ export class Environment {
     cam.far = 2400;
     this.sun.shadow.bias = -0.00035;
     this.sun.shadow.normalBias = 0.9;
-    this.shadowTexelSnap = (span * 2) / shadowSize;
+    this.setShadowSize(shadowSize);
     scene.add(this.sun, this.sun.target, this.hemi);
 
     this.stars = this.makeStars();

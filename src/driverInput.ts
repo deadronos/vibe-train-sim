@@ -58,6 +58,10 @@ export class DriverInput {
         return;
       }
       this.press(e.code);
+      if (e.code === 'Backquote' && !e.repeat) {
+        g.hud.perf.toggle();
+        return;
+      }
       if (e.code === 'KeyO' && !e.repeat) {
         g.hud.map.toggle();
         return;

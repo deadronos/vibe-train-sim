@@ -359,14 +359,16 @@ describe('browser storage', () => {
     vi.stubGlobal('localStorage', { getItem: blocked, setItem: blocked, removeItem: blocked });
     expect(readSave()).toEqual({ saved: null, recovered: false });
     expect(() => backupStoredSave()).not.toThrow();
-    expect(readQuality()).toBe('high');
+    expect(readQuality()).toBe('auto');
     expect(() => writeQuality('low')).not.toThrow();
     expect(() => writeSave(captureSave(world()))).toThrow('blocked');
   });
 
-  it('remembers the graphics quality, defaulting to high', () => {
-    expect(readQuality()).toBe('high');
+  it('remembers the graphics quality, defaulting to auto', () => {
+    expect(readQuality()).toBe('auto');
     writeQuality('low');
     expect(readQuality()).toBe('low');
+    writeQuality('high');
+    expect(readQuality()).toBe('high');
   });
 });

@@ -8,7 +8,8 @@ import type { SaveData } from './saveData';
 import { parseSave } from './saveData';
 import { Heightfield } from './world/heightfield';
 
-export type Quality = 'high' | 'low';
+/** auto starts at high and lowers resolution, then effects, while frames run slow. */
+export type Quality = 'auto' | 'high' | 'low';
 export type Rules = 'relaxed' | 'strict';
 
 export const SAVE_KEY = 'vibe-train-sim/map-v1';
@@ -141,9 +142,10 @@ export function downloadMap(data: SaveData) {
 
 export function readQuality(): Quality {
   try {
-    return localStorage.getItem(QUALITY_KEY) === 'low' ? 'low' : 'high';
+    const q = localStorage.getItem(QUALITY_KEY);
+    return q === 'high' || q === 'low' ? q : 'auto';
   } catch {
-    return 'high';
+    return 'auto';
   }
 }
 
