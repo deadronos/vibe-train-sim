@@ -37,6 +37,7 @@ export function captureSave(w: WorldState): SaveData {
       name: t.name,
       cars: t.cars,
       schedule: t.schedule,
+      times: t.schedule.map((_, i) => t.times[i] ?? null),
       schedIdx: t.schedIdx,
       ai: t.ai,
       x: h.x,
@@ -72,6 +73,7 @@ export function restoreTrains(sim: Sim, data: SaveData): Train | null {
   for (const j of data.trains) {
     const t = new Train(j.id, j.name, j.cars);
     t.schedule = j.schedule;
+    t.times = j.times ?? j.schedule.map(() => null);
     t.schedIdx = j.schedIdx;
     t.ai = j.ai;
     sim.trains.push(t);

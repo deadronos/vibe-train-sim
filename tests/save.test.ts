@@ -39,6 +39,7 @@ function world() {
   for (let i = 0; i < 600; i++) sim.update(0.1);
   // Values a fresh train wouldn't have, so a field that isn't restored shows up.
   sim.trains[0].schedIdx = 1;
+  sim.trains[0].times = sim.trains[0].schedule.map((_, i) => (i === 0 ? 8 * 3600 + 300 : null));
   sim.trains[0].ai = false;
   return { hf, net, sim, placed: PLACED, hours: 17.5, drivenId: sim.trains[1].id as number | null };
 }
@@ -59,11 +60,20 @@ function expectSameTrains(a: SaveData, b: SaveData) {
   expect(b.trains).toHaveLength(a.trains.length);
   a.trains.forEach((t, i) => {
     const u = b.trains[i];
-    expect({ id: u.id, name: u.name, cars: u.cars, schedule: u.schedule, schedIdx: u.schedIdx, ai: u.ai }).toEqual({
+    expect({
+      id: u.id,
+      name: u.name,
+      cars: u.cars,
+      schedule: u.schedule,
+      times: u.times,
+      schedIdx: u.schedIdx,
+      ai: u.ai,
+    }).toEqual({
       id: t.id,
       name: t.name,
       cars: t.cars,
       schedule: t.schedule,
+      times: t.times,
       schedIdx: t.schedIdx,
       ai: t.ai,
     });
