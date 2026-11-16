@@ -80,6 +80,10 @@
         </div>
         <div class="readout">
           <span id="signal-text">No signal ahead</span>
+          <span id="brake-row" hidden>
+            <span id="brake-bar"><i></i></span>
+            <span id="brake-text"></span>
+          </span>
           <span id="station-text"></span>
           <span id="junction-text"></span>
           <span id="train-text"></span>
@@ -115,6 +119,14 @@
         </svg>
       </div>
 
+      <div class="desk-group" id="line-info" aria-label="Line ahead">
+        <div class="readout">
+          <span id="limit-text"></span>
+          <span id="next-limit-text"></span>
+          <span id="grade-text"></span>
+        </div>
+      </div>
+
       <div class="desk-group" id="controls">
         <div id="lever-wrap">
           <label for="power-lever">Power</label>
@@ -135,6 +147,7 @@
           <button id="btn-switch">Throw points</button>
           <button id="btn-reverse">Change ends</button>
           <button id="btn-camera">Chase view</button>
+          <output id="lever-text"></output>
         </div>
       </div>
     </section>

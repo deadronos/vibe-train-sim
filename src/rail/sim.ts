@@ -1,5 +1,5 @@
 // Train physics, block signalling with route locking, and timetable AI. Contains no rendering code.
-import type { Dir, Network, Piece, Side } from './network';
+import type { Dir, Exit, Network, Piece, Side } from './network';
 import type { Car } from './vehicles';
 import { carBrake, carMass, VEHICLES } from './vehicles';
 
@@ -17,6 +17,11 @@ const ADHESION = 0.3; // Share of the weight on driven wheels that the rail can 
 const SLIP_GRIP = 0.75; // Share of that limit left once the wheels are slipping
 const CURVE_RESISTANCE = 0.6; // Divided by radius in metres, as a share of weight
 const DYNAMIC_FADE_SPEED = 2; // m/s; engine braking fades out below this
+const LIMIT_LOOKAHEAD = 2500; // m; how far the desk looks for a lower limit
+const GRADIENT_LOOKAHEAD = 300; // m; the stretch the desk's gradient reading covers
+
+/** Rolling, bearing and air resistance in kN, for a mass in tonnes. */
+const drag = (m: number, v: number) => 0.012 * G * m + 0.0035 * m * v + 0.012 * v * v;
 
 export const keyOf = (node: number, side: Side) => `${node}:${side}`;
 
@@ -30,6 +35,27 @@ interface Occupancy {
   train: number;
   sMin: number;
   sMax: number;
+}
+
+/** What the driver's desk shows about the line ahead. Speeds in m/s, distances in metres. */
+export interface DeskInfo {
+  /** The limit where the head is, capped by the train's own top speed. */
+  limit: number;
+  /** The first lower limit ahead on the train's route, if any. */
+  nextLimit: { speed: number; dist: number } | null;
+  /** Rise per metre over the stretch ahead: positive is uphill. */
+  gradient: number;
+  /** Distance to stand from the current speed with the lever at full brake. Infinity if it can't stop. */
+  brakingDistance: number;
+}
+
+/** A piece of track ahead. start and end are distances from the head to its entry and exit nodes. */
+interface AheadPiece {
+  seg: number;
+  dir: Dir;
+  start: number;
+  end: number;
+  exit: Exit;
 }
 
 export interface NextSignal {
@@ -953,11 +979,10 @@ export class Sim {
   private physics(t: Train, dt: number) {
     const { slope, curve } = this.track(t);
     const m = t.mass; // tonnes -> force in kN gives m/s^2
-    const drag = 0.012 * G * m + 0.0035 * m * t.speed + 0.012 * t.speed * t.speed;
     let a = this.traction(t) / m - G * slope;
     this.updateAirBrake(t, dt);
     const braking = t.airBrake * t.airDecel(t.speed) + t.dynamic * t.dynamicDecel(t.speed);
-    const resist = drag / m + G * curve + braking;
+    const resist = drag(m, t.speed) / m + G * curve + braking;
     if (t.speed > 0 || a > resist) {
       a -= resist;
     } else {
@@ -1046,76 +1071,99 @@ export class Sim {
     t.statusText = '';
   }
 
-  /** The next junction ahead that the driver can throw, within the given range. */
-  nextJunction(t: Train, range = 800) {
+  /**
+   * Walks the track ahead of the head along the route the train would take. visit returns undefined to carry on,
+   * or a value to stop with; null stops with nothing found. The walk also stops where the line ends.
+   */
+  private walkAhead<T>(t: Train, range: number, visit: (p: AheadPiece) => T | null | undefined): T | null {
     const net = this.net;
     const h = t.trail[t.trail.length - 1];
     let seg = h.seg;
     let dir = h.dir;
-    let geo = net.geom.get(seg)!;
-    let d = dir > 0 ? geo.length - t.headS : t.headS;
+    let start = dir > 0 ? -t.headS : t.headS - net.geom.get(seg)!.length;
     const seen = new Set<number>();
-    while (d < range && !seen.has(seg)) {
+    while (start < range && !seen.has(seg)) {
       seen.add(seg);
-      const e = net.exit(seg, dir);
-      if (e.options.length > 1) {
-        return { node: e.node, side: e.side, dist: d, selected: net.selected(e.node, e.side)!, options: e.options };
-      }
-      const nx = this.pick(t, seg, e.node, e.side);
+      const exit = net.exit(seg, dir);
+      const end = start + net.geom.get(seg)!.length;
+      const r = visit({ seg, dir, start, end, exit });
+      if (r !== undefined) return r;
+      const nx = this.pick(t, seg, exit.node, exit.side);
       if (nx === undefined) return null;
-      dir = net.entryDir(nx, e.node, e.side);
+      dir = net.entryDir(nx, exit.node, exit.side);
       seg = nx;
-      geo = net.geom.get(seg)!;
-      d += geo.length;
+      start = end;
     }
     return null;
+  }
+
+  /** The next junction ahead that the driver can throw, within the given range. */
+  nextJunction(t: Train, range = 800) {
+    return this.walkAhead(t, range, ({ end, exit }) => {
+      if (end >= range) return null;
+      if (exit.options.length < 2) return undefined;
+      const selected = this.net.selected(exit.node, exit.side)!;
+      return { node: exit.node, side: exit.side, dist: end, selected, options: exit.options };
+    });
   }
 
   /** Next signal for the HUD, walking past granted ones so the repeater shows what matters. */
   signalAhead(t: Train) {
-    const net = this.net;
-    const h = t.trail[t.trail.length - 1];
-    let seg = h.seg;
-    let dir = h.dir;
-    let geo = net.geom.get(seg)!;
-    let d = dir > 0 ? geo.length - t.headS : t.headS;
-    const seen = new Set<number>();
-    while (d < 4000 && !seen.has(seg)) {
-      seen.add(seg);
-      const e = net.exit(seg, dir);
-      if (net.nodes.get(e.node)!.signals[e.side]) {
-        return { dist: d, aspect: this.aspects.get(keyOf(e.node, e.side)) ?? 'green', node: e.node, side: e.side };
-      }
-      const nx = this.pick(t, seg, e.node, e.side);
-      if (nx === undefined) return null;
-      dir = net.entryDir(nx, e.node, e.side);
-      seg = nx;
-      geo = net.geom.get(seg)!;
-      d += geo.length;
-    }
-    return null;
+    return this.walkAhead(t, 4000, ({ end, exit }) => {
+      if (end >= 4000) return null;
+      if (!this.net.nodes.get(exit.node)!.signals[exit.side]) return undefined;
+      const aspect: Aspect = this.aspects.get(keyOf(exit.node, exit.side)) ?? 'green';
+      return { dist: end, aspect, node: exit.node, side: exit.side };
+    });
   }
 
   stationAhead(t: Train) {
+    return this.walkAhead(t, 5000, ({ end, exit }) => {
+      if (end >= 5000) return null;
+      const st = this.net.stations.find((s) => s.nodeId === exit.node);
+      return st ? { name: st.name, dist: end } : undefined;
+    });
+  }
+
+  /** Limits, gradient and braking for the driver's desk. */
+  deskInfo(t: Train): DeskInfo {
     const net = this.net;
-    const h = t.trail[t.trail.length - 1];
-    let seg = h.seg;
-    let dir = h.dir;
-    let geo = net.geom.get(seg)!;
-    let d = dir > 0 ? geo.length - t.headS : t.headS;
-    const seen = new Set<number>();
-    while (d < 5000 && !seen.has(seg)) {
-      seen.add(seg);
-      const e = net.exit(seg, dir);
-      const st = net.stations.find((s) => s.nodeId === e.node);
-      if (st) return { name: st.name, dist: d };
-      const nx = this.pick(t, seg, e.node, e.side);
-      if (nx === undefined) return null;
-      dir = net.entryDir(nx, e.node, e.side);
-      seg = nx;
-      geo = net.geom.get(seg)!;
-      d += geo.length;
+    const head = this.head(t);
+    const limit = Math.min(net.geom.get(head.seg)!.vmax, t.topSpeed);
+    const nextLimit = this.walkAhead(t, LIMIT_LOOKAHEAD, ({ seg, start }) => {
+      if (start <= 0) return undefined;
+      const speed = Math.min(net.geom.get(seg)!.vmax, t.topSpeed);
+      return speed < limit - 0.3 ? { speed, dist: start } : undefined;
+    });
+    // Height at the end of the stretch, or where the line ends if that comes first.
+    let far = { y: head.y, dist: 0 };
+    this.walkAhead(t, GRADIENT_LOOKAHEAD, ({ seg, dir, start, end }) => {
+      const L = net.geom.get(seg)!.length;
+      const along = Math.min(end, GRADIENT_LOOKAHEAD) - start;
+      far = { y: net.sample(seg, dir > 0 ? along : L - along).y, dist: start + along };
+      return end >= GRADIENT_LOOKAHEAD ? null : undefined;
+    });
+    const gradient = far.dist > 1 ? (far.y - head.y) / far.dist : 0;
+    return { limit, nextLimit, gradient, brakingDistance: this.brakingDistance(t) };
+  }
+
+  /** Steps the train's own physics forward with the lever at full brake, from its brakes as they are now. */
+  private brakingDistance(t: Train) {
+    const { slope, curve } = this.track(t);
+    const m = t.mass;
+    const dt = 0.1;
+    let v = t.speed;
+    let air = t.airBrake;
+    let dist = 0;
+    for (let time = 0; v > 0; time += dt) {
+      if (time > 600) return Infinity;
+      air = Math.min(1, air + dt / t.brakeLag);
+      const decel = air * t.airDecel(v) + t.dynamicDecel(v) + drag(m, v) / m + G * (curve + slope);
+      if (decel <= 0 && time > t.brakeLag) return Infinity;
+      const nv = Math.max(0, v - decel * dt);
+      dist += ((v + nv) / 2) * dt;
+      v = nv;
     }
-    return null;
+    return dist;
   }
 }
