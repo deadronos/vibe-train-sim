@@ -181,6 +181,16 @@ export class Editor {
     this.setTool(this.tool);
   }
 
+  /** Moves the planning view to look at a point, keeping the camera's angle and distance. */
+  lookAt(x: number, z: number) {
+    const cam = this.game.camera;
+    const t = this.controls.target;
+    const y = this.game.hf.height(x, z);
+    cam.position.set(cam.position.x + x - t.x, cam.position.y + y - t.y, cam.position.z + z - t.z);
+    t.set(x, y, z);
+    this.controls.update();
+  }
+
   leave() {
     this.root.visible = false;
     this.controls.enabled = false;

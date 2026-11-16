@@ -58,6 +58,10 @@ export class DriverInput {
         return;
       }
       this.press(e.code);
+      if (e.code === 'KeyO' && !e.repeat) {
+        g.hud.map.toggle();
+        return;
+      }
       if (g.editing || e.repeat) return;
       switch (e.code) {
         case 'KeyH':

@@ -11,6 +11,8 @@ import type { DeskInfo, SimEvent, Train } from '../rail/sim';
 import { CAM_LABEL } from '../render/cameraRig';
 import type { SceneryType } from '../render/scatter';
 import type { Preset } from '../world/heightfield';
+import { Guide } from './guide';
+import { OverviewMap } from './overviewMap';
 
 // oxlint-disable-next-line typescript/no-unnecessary-type-parameters -- Callers name the element type they expect.
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -65,6 +67,8 @@ export class Hud {
   private frameCounter = 0;
   private lastLimit = -1;
   private empty: boolean | null = null;
+  map!: OverviewMap;
+  guide!: Guide;
 
   constructor(private game: Game) {}
 
@@ -119,6 +123,14 @@ export class Hud {
       else help.showModal();
     });
     this.bindSound();
+    this.map = new OverviewMap(g, $('overview'));
+    $('btn-overview').onclick = () => this.map.toggle();
+    $('overview-close').onclick = () => this.map.toggle(false);
+    this.guide = new Guide(g, $('guide'));
+    $('btn-guide').onclick = () => {
+      help.close();
+      this.guide.restart();
+    };
     this.bindMaps();
     const q = $<HTMLSelectElement>('quality');
     q.value = g.quality;
@@ -211,6 +223,10 @@ export class Hud {
   }
 
   /** Lists saved copies and backups. Loading needs no prompt, because the map it replaces becomes a backup. */
+  syncMapButton(open: boolean) {
+    $('btn-overview').setAttribute('aria-pressed', String(open));
+  }
+
   private syncMaps() {
     const g = this.game;
     const dateText = (ms: number) =>
@@ -607,6 +623,8 @@ export class Hud {
       if (st.textContent !== g.editor.status) st.textContent = g.editor.status;
     }
     if (this.frameCounter % 15 === 0) $('fps').textContent = `${Math.round(g.fps)} fps`;
+    this.map.update();
+    if (this.frameCounter % 15 === 0) this.guide.update();
     const t = g.driven;
     this.setEmpty(!t);
     if (!t) return;
@@ -619,7 +637,9 @@ export class Hud {
 
     if (this.frameCounter % 8 !== 0) return;
     this.autopilot = t.ai;
-    $('train-text').textContent = t.ai ? '' : t.statusText || brakeText(t);
+    $('train-text').textContent = t.ai
+      ? 'Autopilot is driving. Press W or move the lever to take over'
+      : t.statusText || brakeText(t);
     const recover = $('btn-recover');
     recover.hidden = !t.damaged;
     $('lever-text').hidden = t.damaged;
