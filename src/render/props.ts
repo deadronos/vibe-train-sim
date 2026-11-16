@@ -57,7 +57,10 @@ export class PropsRenderer {
   private lamps: THREE.Vector3[] = [];
   private lightPool: THREE.PointLight[] = [];
   private glowTex = glowTexture();
-  private levers = new Map<string, { arm: THREE.Object3D }>();
+  private levers = new Map<string, { arm: THREE.Object3D; node: number; side: Side }>();
+  /** Lamps nearest the camera first. Re-sorted in place only once the camera has moved a fair way. */
+  private nearLamps: THREE.Vector3[] = [];
+  private sortedAt = new THREE.Vector3(Infinity, 0, 0);
   // Shared by every rebuild, so never disposed when props are cleared.
   private armGeo = new THREE.BoxGeometry(0.46, 0.46, 0.04);
   private boardGeo = new THREE.PlaneGeometry(6.4, 1.2);
@@ -105,6 +108,7 @@ export class PropsRenderer {
     this.signals.clear();
     this.levers.clear();
     this.lamps = [];
+    this.nearLamps = [];
   }
 
   private rebuild(net: Network) {
@@ -184,7 +188,7 @@ export class PropsRenderer {
     arm.position.y = 1.35;
     obj.add(arm);
     this.group.add(obj);
-    this.levers.set(keyOf(node.id, side), { arm });
+    this.levers.set(keyOf(node.id, side), { arm, node: node.id, side });
   }
 
   private addBuffer(node: RailNode, side: Side) {
@@ -307,10 +311,8 @@ export class PropsRenderer {
       }
       v.glow.material.opacity = 0.15 + night * 0.75;
     }
-    for (const [key, lever] of this.levers) {
-      const [nid, sideStr] = key.split(':');
-      const node = Number(nid);
-      const side = Number(sideStr) as Side;
+    for (const lever of this.levers.values()) {
+      const { node, side } = lever;
       const opts = net.attached(node, side);
       if (!opts.length) continue;
       const idx = opts.indexOf(net.selected(node, side)!);
@@ -321,7 +323,12 @@ export class PropsRenderer {
     const camPos = camera.position;
     const on = night > 0.25;
     if (on && this.lamps.length) {
-      const sorted = [...this.lamps].sort((a, b) => a.distanceToSquared(camPos) - b.distanceToSquared(camPos));
+      if (this.nearLamps.length !== this.lamps.length || this.sortedAt.distanceToSquared(camPos) > 25 * 25) {
+        if (this.nearLamps.length !== this.lamps.length) this.nearLamps = [...this.lamps];
+        this.nearLamps.sort((a, b) => a.distanceToSquared(camPos) - b.distanceToSquared(camPos));
+        this.sortedAt.copy(camPos);
+      }
+      const sorted = this.nearLamps;
       this.lightPool.forEach((l, i) => {
         const p = sorted[i];
         if (p && p.distanceTo(camPos) < 500) {

@@ -365,6 +365,14 @@ export class Network {
   }
 
   sample(segId: number, s: number) {
+    return this.sampleOn(segId, s, 1);
+  }
+
+  /**
+   * A point on a segment, with the segment, distance and direction of travel included in the same object.
+   * Trains are placed through this every frame, so it builds one object rather than two.
+   */
+  sampleOn(segId: number, s: number, dir: Dir) {
     const g = this.geom.get(segId)!;
     const f = Math.max(0, Math.min(g.n - 1.0001, s / g.step));
     const i = Math.floor(f);
@@ -373,6 +381,9 @@ export class Network {
     const a = i * 3;
     const b = a + 3;
     return {
+      seg: segId,
+      s,
+      dir,
       x: pos[a] + (pos[b] - pos[a]) * u,
       y: pos[a + 1] + (pos[b + 1] - pos[a + 1]) * u,
       z: pos[a + 2] + (pos[b + 2] - pos[a + 2]) * u,

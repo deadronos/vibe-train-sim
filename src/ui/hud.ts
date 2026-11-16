@@ -68,6 +68,7 @@ export class Hud {
   private lastLimit = -1;
   private empty: boolean | null = null;
   map!: OverviewMap;
+  private lamps: HTMLElement[] | null = null;
   guide!: Guide;
 
   constructor(private game: Game) {}
@@ -648,8 +649,8 @@ export class Hud {
     const info = g.sim.deskInfo(t);
     this.showLine(info, kmh);
     const sig = g.sim.signalAhead(t);
-    const lamps = document.querySelectorAll<HTMLElement>('.lamps i');
-    lamps.forEach((l) => l.classList.toggle('on', !!sig && l.dataset.lamp === sig.aspect));
+    this.lamps ??= [...document.querySelectorAll<HTMLElement>('.lamps i')];
+    this.lamps.forEach((l) => l.classList.toggle('on', !!sig && l.dataset.lamp === sig.aspect));
     const word = sig ? { red: 'Stop', yellow: 'Caution', green: 'Clear' }[sig.aspect] : '';
     $('signal-text').textContent = sig ? `${word} in ${formatDist(sig.dist)}` : 'No signal ahead';
     this.showBraking(sig?.aspect === 'red' && sig.dist < BRAKE_MARKER_RANGE ? sig.dist : null, t, info);

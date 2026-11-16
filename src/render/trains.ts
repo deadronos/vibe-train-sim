@@ -15,6 +15,10 @@ interface TrainVisual {
   group: THREE.Group;
   cars: CarVisual[];
   signature: string;
+  /** The consist the order below was worked out for. Reversing a train replaces its cars array. */
+  orderFor: Train['cars'] | null;
+  /** Car visuals in the train's current car order. */
+  ordered: CarVisual[];
 }
 
 const signature = (t: Train) =>
@@ -52,7 +56,7 @@ export class TrainRenderer {
       return { root, body, bogieA, bogieB };
     });
     this.group.add(group);
-    return { group, cars, signature: signature(t) };
+    return { group, cars, signature: signature(t), orderFor: null, ordered: [] };
   }
 
   sync(sim: Sim) {
@@ -65,7 +69,8 @@ export class TrainRenderer {
     }
     for (const t of sim.trains) {
       let v = this.visuals.get(t.id);
-      if (!v || v.signature !== signature(t)) {
+      // Signatures are only compared when the consist changes, so steady running builds no strings.
+      if (!v || (v.orderFor !== t.cars && v.signature !== signature(t))) {
         if (v) this.group.remove(v.group);
         v = this.build(t);
         this.visuals.set(t.id, v);
@@ -80,8 +85,12 @@ export class TrainRenderer {
   }
 
   private pose(sim: Sim, t: Train, v: TrainVisual) {
-    // Consist order can reverse, so visuals are re-keyed by car index each frame.
-    const ordered = this.assignVisuals(t, v);
+    // Consist order can reverse, so visuals are re-keyed by car index whenever the consist changes.
+    if (v.orderFor !== t.cars) {
+      v.ordered = this.assignVisuals(t, v);
+      v.orderFor = t.cars;
+    }
+    const ordered = v.ordered;
     t.cars.forEach((car, i) => {
       const cv = ordered[i];
       const p = sim.carPose(t, i);

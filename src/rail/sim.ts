@@ -421,12 +421,15 @@ export class Sim {
       avail = geo.length;
       if (rem <= avail) {
         const s = piece.dir > 0 ? geo.length - rem : rem;
-        return { seg: piece.seg, s, dir: piece.dir, ...net.sample(piece.seg, s) };
+        return net.sampleOn(piece.seg, s, piece.dir);
       }
     }
     const baseS = i === t.trail.length - 1 ? t.headS : piece.dir > 0 ? geo.length : 0;
     const s = baseS - piece.dir * rem;
-    return { seg: piece.seg, s, dir: piece.dir, ...net.sample(piece.seg, Math.max(0, Math.min(geo.length, s))) };
+    const p = net.sampleOn(piece.seg, Math.max(0, Math.min(geo.length, s)), piece.dir);
+    // Keep the unclamped distance, as before: callers past the end of the trail rely on it.
+    p.s = s;
+    return p;
   }
 
   head(t: Train) {
