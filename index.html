@@ -6,7 +6,13 @@
     <title>Vibe Train Sim</title>
   </head>
   <body data-mode="drive">
-    <canvas id="view"></canvas>
+    <canvas
+      id="view"
+      role="img"
+      aria-label="3D view of the railway. The desk, train list and menus describe what it shows."
+    >
+      Vibe Train Sim needs a browser with WebGL 2 to show the railway.
+    </canvas>
 
     <div id="loading">
       <p>Vibe Train Sim</p>
@@ -33,7 +39,9 @@
             10 min/s
           </button>
         </div>
-        <label class="inline">Cloud <input id="cloud-slider" type="range" min="0" max="1" step="0.01" /></label>
+        <label class="inline"
+          >Cloud <input id="cloud-slider" aria-label="Cloud cover" type="range" min="0" max="1" step="0.01"
+        /></label>
       </div>
 
       <div class="plate" id="menu-plate">
@@ -75,7 +83,7 @@
     <!-- Driver's desk -->
     <section id="desk" aria-label="Driver's desk">
       <div class="desk-group" id="repeater" title="Next signal">
-        <div class="lamps">
+        <div class="lamps" aria-hidden="true">
           <i data-lamp="red"></i>
           <i data-lamp="yellow"></i>
           <i data-lamp="green"></i>
@@ -92,7 +100,7 @@
         </div>
       </div>
 
-      <div id="dial" aria-label="Speed">
+      <div id="dial" role="img" aria-label="Speed 0 km/h">
         <svg viewBox="0 0 200 200">
           <defs>
             <radialGradient id="bezel" cx="42%" cy="35%" r="75%">
@@ -162,6 +170,7 @@
     <output id="status"></output>
 
     <div id="toasts" aria-live="polite"></div>
+    <p id="drive-status" class="visually-hidden" aria-live="polite"></p>
     <pre id="perf" hidden></pre>
 
     <section id="overview" class="plate" aria-label="Overview map" hidden>
@@ -170,7 +179,12 @@
         <span>Click a train to drive it. In the editor, click a place to go there. Scroll to zoom, drag to move.</span>
         <button id="overview-close" aria-label="Close the map">Close</button>
       </div>
-      <canvas width="720" height="720"></canvas>
+      <canvas
+        width="720"
+        height="720"
+        role="img"
+        aria-label="Map of the railway with trains and stations. The train list names every train."
+      ></canvas>
     </section>
 
     <aside id="guide" class="plate" aria-live="polite" hidden>
@@ -179,9 +193,9 @@
       <button class="guide-skip">Skip the guide</button>
     </aside>
 
-    <dialog id="dlg-new" class="plate">
+    <dialog id="dlg-new" class="plate" aria-labelledby="dlg-new-title">
       <form method="dialog">
-        <h2>New map</h2>
+        <h2 id="dlg-new-title">New map</h2>
         <label
           >Landscape
           <select id="new-preset">
@@ -200,9 +214,9 @@
       </form>
     </dialog>
 
-    <dialog id="dlg-maps" class="plate">
+    <dialog id="dlg-maps" class="plate" aria-labelledby="dlg-maps-title">
       <form method="dialog">
-        <h2>Maps</h2>
+        <h2 id="dlg-maps-title">Maps</h2>
         <p>The map you're working on saves itself in this browser. Keep a copy to come back to later.</p>
         <div class="row">
           <input id="copy-name" type="text" maxlength="40" aria-label="Name for the copy" placeholder="Name" />
@@ -217,7 +231,7 @@
       </form>
     </dialog>
 
-    <dialog id="dlg-duty" class="plate">
+    <dialog id="dlg-duty" class="plate" aria-labelledby="duty-title">
       <form method="dialog">
         <h2 id="duty-title">Run finished</h2>
         <p id="duty-total"></p>
@@ -226,9 +240,9 @@
       </form>
     </dialog>
 
-    <dialog id="dlg-sound" class="plate">
+    <dialog id="dlg-sound" class="plate" aria-labelledby="dlg-sound-title">
       <form method="dialog">
-        <h2>Sound</h2>
+        <h2 id="dlg-sound-title">Sound</h2>
         <label class="check"><input id="sound-on" type="checkbox" /> Sound on</label>
         <label>Volume <input id="sound-volume" type="range" min="0" max="1" step="0.05" /></label>
         <label>Engine <input id="sound-engine" type="range" min="0" max="1" step="0.05" /></label>
@@ -239,56 +253,60 @@
       </form>
     </dialog>
 
-    <dialog id="dlg-help" class="plate">
+    <dialog id="dlg-help" class="plate" aria-labelledby="dlg-help-title">
       <form method="dialog">
-        <h2>Controls</h2>
+        <h2 id="dlg-help-title">Controls</h2>
         <div class="help-cols">
-          <dl>
+          <section>
             <h3>Driving</h3>
-            <dt>W, S</dt>
-            <dd>More power; less power, then engine brake, then air brake</dd>
-            <dt>Space</dt>
-            <dd>Emergency brake while held</dd>
-            <dt>P</dt>
-            <dd>Autopilot on or off. Driving by hand scores your stops</dd>
-            <dt>J</dt>
-            <dd>Throw the next points ahead</dd>
-            <dt>R</dt>
-            <dd>Change ends when stopped</dd>
-            <dt>H</dt>
-            <dd>Horn</dd>
-            <dt>C</dt>
-            <dd>Change camera; drag to look around</dd>
-            <dt>N</dt>
-            <dd>Drive the next train</dd>
-            <dt>, and .</dt>
-            <dd>Slow down or speed up the railway; the slowest is pause</dd>
-            <dt>O</dt>
-            <dd>Overview map, while driving or editing</dd>
-            <dt>M</dt>
-            <dd>Sound on or off; Sound in the menu sets levels</dd>
-            <dt>E</dt>
-            <dd>Switch between driving and editing</dd>
-          </dl>
-          <dl>
+            <dl>
+              <dt>W, S</dt>
+              <dd>More power; less power, then engine brake, then air brake</dd>
+              <dt>Space</dt>
+              <dd>Emergency brake while held</dd>
+              <dt>P</dt>
+              <dd>Autopilot on or off. Driving by hand scores your stops</dd>
+              <dt>J</dt>
+              <dd>Throw the next points ahead</dd>
+              <dt>R</dt>
+              <dd>Change ends when stopped</dd>
+              <dt>H</dt>
+              <dd>Horn</dd>
+              <dt>C</dt>
+              <dd>Change camera; drag to look around</dd>
+              <dt>N</dt>
+              <dd>Drive the next train</dd>
+              <dt>, and .</dt>
+              <dd>Slow down or speed up the railway; the slowest is pause</dd>
+              <dt>O</dt>
+              <dd>Overview map, while driving or editing</dd>
+              <dt>M</dt>
+              <dd>Sound on or off; Sound in the menu sets levels</dd>
+              <dt>E</dt>
+              <dd>Switch between driving and editing</dd>
+            </dl>
+          </section>
+          <section>
             <h3>Editing</h3>
-            <dt>Right drag</dt>
-            <dd>Rotate the view</dd>
-            <dt>Middle drag, WASD</dt>
-            <dd>Move the view</dd>
-            <dt>Wheel</dt>
-            <dd>Zoom</dd>
-            <dt>[ and ]</dt>
-            <dd>Lower or raise the track being laid</dd>
-            <dt>Shift</dt>
-            <dd>Snap a new line to 15° steps</dd>
-            <dt>Esc</dt>
-            <dd>Stop laying track</dd>
-            <dt>Delete</dt>
-            <dd>Remove the selected point</dd>
-            <dt>Ctrl+Z</dt>
-            <dd>Undo; Ctrl+Y or Ctrl+Shift+Z to redo</dd>
-          </dl>
+            <dl>
+              <dt>Right drag</dt>
+              <dd>Rotate the view</dd>
+              <dt>Middle drag, WASD</dt>
+              <dd>Move the view</dd>
+              <dt>Wheel</dt>
+              <dd>Zoom</dd>
+              <dt>[ and ]</dt>
+              <dd>Lower or raise the track being laid</dd>
+              <dt>Shift</dt>
+              <dd>Snap a new line to 15° steps</dd>
+              <dt>Esc</dt>
+              <dd>Stop laying track</dd>
+              <dt>Delete</dt>
+              <dd>Remove the selected point</dd>
+              <dt>Ctrl+Z</dt>
+              <dd>Undo; Ctrl+Y or Ctrl+Shift+Z to redo</dd>
+            </dl>
+          </section>
         </div>
         <menu>
           <button id="btn-guide" type="button">Show the getting started guide</button>
