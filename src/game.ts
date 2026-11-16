@@ -35,6 +35,15 @@ import { buildDemoNetwork, populateDemoTrains } from './rail/demoMap';
 import { Duty } from './rail/duty';
 import { Network } from './rail/network';
 import type { Train } from './rail/sim';
+import type { Car } from './rail/vehicles';
+
+/** A train's stops with, for each, the times and whether it changes ends there. */
+export interface Timetable {
+  schedule: number[];
+  times: (number | null)[];
+  arrivals: (number | null)[];
+  turns: boolean[];
+}
 import { Sim } from './rail/sim';
 import { Assets } from './render/assets';
 import { CameraRig } from './render/cameraRig';
@@ -481,9 +490,11 @@ export class Game {
   }
 
   /** Sets a train's stops and departure times, and sends it to the first stop of the new timetable. */
-  setTimetable(t: Train, schedule: number[], times: (number | null)[]) {
-    t.schedule = schedule;
-    t.times = times;
+  setTimetable(t: Train, tt: Timetable) {
+    t.schedule = tt.schedule;
+    t.times = tt.times;
+    t.arrivals = tt.arrivals;
+    t.turns = tt.turns;
     t.schedIdx = 0;
     // A train standing at a platform finishes its stop; one on the move heads for the new first stop.
     if (t.dwell <= 0) {
@@ -492,6 +503,16 @@ export class Game {
       if (!t.ai) this.sim.startLeg(t);
     }
     this.save(true);
+  }
+
+  /** Changes a train's vehicles. Returns why it can't, or null once done. */
+  setConsist(t: Train, cars: Car[]) {
+    const why = this.sim.setConsist(t, cars);
+    if (!why) {
+      this.hud.syncTrains();
+      this.save(true);
+    }
+    return why;
   }
 
   setRules(r: Rules) {

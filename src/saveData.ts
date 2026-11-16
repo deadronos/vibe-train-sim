@@ -23,6 +23,10 @@ export interface SaveData {
     schedule: number[];
     /** Departure from each scheduled stop in seconds of the day, or null. Missing from older saves. */
     times?: (number | null)[];
+    /** Arrival at each scheduled stop in seconds of the day, or null. Missing from older saves. */
+    arrivals?: (number | null)[];
+    /** Whether the train changes ends at each scheduled stop. Missing from older saves. */
+    turns?: boolean[];
     schedIdx: number;
     ai: boolean;
     x: number;
@@ -188,13 +192,20 @@ function check(d: Record<string, unknown>): SaveData {
     for (const s of arr(o.schedule, `train ${id} has no timetable`)) {
       if (!stationIds.has(s as number)) fail(`train ${id} has a timetable stop at a station that does not exist`);
     }
-    if (o.times !== undefined) {
-      const times = arr(o.times, `train ${id} has bad timetable times`);
-      if (times.length !== (o.schedule as unknown[]).length) fail(`train ${id} has a time for each stop missing`);
+    const stops = (o.schedule as unknown[]).length;
+    for (const key of ['times', 'arrivals'] as const) {
+      if (o[key] === undefined) continue;
+      const times = arr(o[key], `train ${id} has bad timetable times`);
+      if (times.length !== stops) fail(`train ${id} has a time for each stop missing`);
       for (const v of times) {
         if (v !== null && (num(v, `train ${id} has a bad timetable time`) < 0 || (v as number) >= 86400))
           fail(`train ${id} has a timetable time outside the day`);
       }
+    }
+    if (o.turns !== undefined) {
+      const turns = arr(o.turns, `train ${id} has bad timetable turns`);
+      if (turns.length !== stops) fail(`train ${id} has a turn for each stop missing`);
+      for (const v of turns) bool(v, `train ${id} has a bad timetable turn`);
     }
     if (int(o.schedIdx, `train ${id} has a bad timetable position`) < 0)
       fail(`train ${id} has a bad timetable position`);
