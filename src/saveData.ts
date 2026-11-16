@@ -1,5 +1,5 @@
 // Save format and validation. Kept free of Three.js and the DOM so tests can run it without WebGL.
-import type { Network } from './rail/network';
+import type { Network, SignalType } from './rail/network';
 import type { TrainState } from './rail/sim';
 import type { Car, CarType } from './rail/vehicles';
 import type { PlacedItem, SceneryType } from './render/scatter';
@@ -60,6 +60,7 @@ const CAR_TYPES: Record<CarType, true> = {
   wagon_tank: true,
 };
 const BRIDGES = ['auto', 'force', 'none'];
+const SIGNAL_TYPES: Record<SignalType, true> = { main: true, distant: true, shunt: true };
 
 class Bad extends Error {}
 const fail = (what: string): never => {
@@ -91,8 +92,11 @@ function checkNet(raw: unknown) {
     obj(o.sw, `track point ${id} has no switch list`);
     obj(o.signals, `track point ${id} has no signal list`);
     for (const s of Object.values(o.signals as object)) {
-      if (s !== undefined)
-        bool(obj(s, `track point ${id} has a bad signal`).hold, `track point ${id} has a bad signal`);
+      if (s !== undefined) {
+        const so = obj(s, `track point ${id} has a bad signal`);
+        bool(so.hold, `track point ${id} has a bad signal`);
+        if (so.type !== undefined) oneOf(so.type, SIGNAL_TYPES, `track point ${id} has an unknown signal type`);
+      }
     }
     return o;
   });
@@ -108,6 +112,10 @@ function checkNet(raw: unknown) {
     side(o.sa, `track piece ${id} has a bad side`);
     side(o.sb, `track piece ${id} has a bad side`);
     oneOf(o.bridge, BRIDGES, `track piece ${id} has a bad bridge setting`);
+    if (o.speedLimit !== undefined) {
+      const lim = num(o.speedLimit, `track piece ${id} has a bad speed limit`);
+      if (lim <= 0 || lim > 100) fail(`track piece ${id} has a bad speed limit`);
+    }
   }
   for (const o of nodes) {
     for (const v of Object.values(o.sw as object)) {
@@ -154,6 +162,7 @@ function checkTrainState(raw: unknown, id: number) {
   num(score.spads, what);
   num(score.stops, what);
   if (s.damaged !== undefined) bool(s.damaged, what);
+  if (s.restricted !== undefined) bool(s.restricted, what);
 }
 
 function check(d: Record<string, unknown>): SaveData {

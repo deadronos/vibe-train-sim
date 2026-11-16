@@ -78,11 +78,15 @@ export function buildDemoNetwork(hf: Heightfield): { net: Network; stations: Rec
   signal(n9, 1);
   signal(n10, -1);
 
-  // Exit signals protect the single line from the loops.
+  // Exit signals protect the single line from the loops, with distant repeaters ahead of the loops.
   signal(n4, 1);
   signal(n3, -1);
   signal(n10, 1);
   signal(n9, -1);
+  const distNorth = net.split(mainSegs[2], Math.max(80, net.geom.get(mainSegs[2])!.length - 210));
+  distNorth.signals[1] = { hold: false, type: 'distant' };
+  const distSouth = net.split(mainSegs[8], Math.max(80, net.geom.get(mainSegs[8])!.length - 210));
+  distSouth.signals[1] = { hold: false, type: 'distant' };
 
   // Branch to a terminus, leaving ring node 7 outward.
   const n7 = ring[7];

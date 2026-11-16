@@ -217,7 +217,12 @@ export class Game {
     this.net = net;
     this.sim = new Sim(net);
     this.sim.strict = this.rules === 'strict';
-    this.sim.onEvent = (e) => this.hud.onSimEvent(e);
+    this.sim.onEvent = (e) => {
+      if ((e.kind === 'protection' || (e.kind === 'spad' && this.sim.strict)) && e.train === this.driven?.id) {
+        this.audio.playTrip();
+      }
+      this.hud.onSimEvent(e);
+    };
     if (!this.terrain) this.terrain = new TerrainRenderer(this.scene, hf);
     else this.terrain.setField(hf);
     this.track.clear();
@@ -519,7 +524,19 @@ export class Game {
     this.rules = r;
     writeRules(r);
     this.sim.strict = r === 'strict';
-    for (const t of this.sim.trains) t.tripped = false;
+    for (const t of this.sim.trains) {
+      t.tripped = false;
+      t.spadTripped = false;
+      t.warning = null;
+    }
+  }
+
+  acknowledgeWarning() {
+    const t = this.driven;
+    if (!t || t.ai) return;
+    const wasTripped = t.tripped;
+    this.sim.acknowledge(t);
+    if (wasTripped && !t.tripped) this.hud.toast('Train protection reset');
   }
 
   recoverDriven() {
@@ -701,8 +718,10 @@ export class Game {
       const d = this.camera.position.distanceTo(this.focus.set(h.x, h.y, h.z));
       const quiet = this.editing || this.trainSpeed === 0;
       this.audio.update(dt, t.speed, t.throttle, quiet ? 0 : Math.max(0.05, 1 - d / 500));
+      this.audio.updateWarning(dt, !quiet && !t.ai && !!t.warning && !t.warning.acknowledged);
     } else {
       this.audio.update(dt, 0, 0, 0);
+      this.audio.updateWarning(dt, false);
     }
     this.hud.update();
     this.renderer.info.reset();

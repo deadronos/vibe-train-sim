@@ -1,5 +1,6 @@
 // A 2D map of the whole railway, drawn from the same data as the simulation.
 import type { Game } from '../game';
+import { signalType } from '../rail/network';
 import type { Train } from '../rail/sim';
 import { keyOf } from '../rail/sim';
 import { RES, WATER_LEVEL, WORLD_SIZE } from '../world/heightfield';
@@ -158,16 +159,45 @@ export class OverviewMap {
       ctx.stroke();
     }
 
+    // Level crossings: diamond outline, amber when claimed by interlocking.
+    for (const c of net.crossings) {
+      const [px, py] = this.toPx(c.x, c.z);
+      const r = this.zoom >= SIGNAL_ZOOM ? 6 : 4;
+      ctx.save();
+      ctx.translate(px, py);
+      ctx.rotate(Math.PI / 4);
+      ctx.fillStyle = g.sim.crossingClaims.has(c.id) ? COLOR.occupied : '#122629';
+      ctx.strokeStyle = COLOR.label;
+      ctx.lineWidth = 1.5;
+      ctx.fillRect(-r, -r, r * 2, r * 2);
+      ctx.strokeRect(-r, -r, r * 2, r * 2);
+      ctx.restore();
+    }
+
     if (this.zoom >= SIGNAL_ZOOM) {
       for (const n of net.nodes.values()) {
         for (const side of [1, -1] as const) {
-          if (!n.signals[side]) continue;
-          const aspect = g.sim.aspects.get(keyOf(n.id, side)) ?? 'green';
+          const def = n.signals[side];
+          if (!def) continue;
+          const key = keyOf(n.id, side);
+          const ind = g.sim.indications.get(key);
+          const aspect = ind?.aspect ?? g.sim.aspects.get(key) ?? 'green';
+          const type = ind?.type ?? signalType(def);
           // Signals stand on the right of the trains they control.
           const [px, py] = this.toPx(n.x - n.dz * side * 6, n.z + n.dx * side * 6);
-          ctx.fillStyle = COLOR[aspect];
+          ctx.fillStyle = type === 'shunt' && ind?.callingOn ? '#f4f1de' : COLOR[aspect];
           ctx.beginPath();
-          ctx.arc(px, py, 3.5, 0, Math.PI * 2);
+          if (type === 'distant') {
+            ctx.moveTo(px, py - 4.5);
+            ctx.lineTo(px + 4.5, py);
+            ctx.lineTo(px, py + 4.5);
+            ctx.lineTo(px - 4.5, py);
+            ctx.closePath();
+          } else if (type === 'shunt') {
+            ctx.rect(px - 3, py - 3, 6, 6);
+          } else {
+            ctx.arc(px, py, 3.5, 0, Math.PI * 2);
+          }
           ctx.fill();
         }
       }

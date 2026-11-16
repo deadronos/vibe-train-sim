@@ -387,6 +387,17 @@ input[type='range'] {
   color: var(--ink);
   font-weight: 600;
 }
+#btn-ack {
+  grid-column: 1 / -1;
+  background: var(--sig-yellow);
+  color: var(--ink);
+  border-color: var(--brass-dark);
+  font-weight: 600;
+}
+#btn-ack:hover:not(:disabled) {
+  background: #f5b94c;
+}
+#btn-ack[hidden],
 #btn-recover[hidden],
 #lever-text[hidden] {
   display: none;
@@ -463,6 +474,8 @@ input[type='range'] {
 }
 #controls {
   width: 268px;
+  height: auto;
+  min-height: 128px;
 }
 #lever-wrap {
   display: flex;
@@ -948,7 +961,8 @@ dialog menu {
   #controls {
     grid-area: ctl;
     width: auto;
-    height: 108px;
+    height: auto;
+    min-height: 108px;
   }
   .lamps {
     padding: 4px 3px;
@@ -1062,7 +1076,8 @@ dialog menu {
   }
   #controls {
     width: 280px;
-    height: 100px;
+    height: auto;
+    min-height: 100px;
   }
   #dial {
     width: 100px;

@@ -78,6 +78,9 @@ export class DriverInput {
         case 'KeyJ':
           g.throwNextSwitch();
           break;
+        case 'KeyQ':
+          g.acknowledgeWarning();
+          break;
         case 'KeyP':
           g.setAutopilot(!g.driven?.ai);
           break;
