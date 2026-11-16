@@ -27,6 +27,18 @@ const STOP_SLACK = 4; // m a stopped train may stand beyond its platform and sti
 const CRASH_SPEED = 15 / 3.6; // Under strict rules, hits faster than this damage the train
 const LEG_PACE = 0.8; // Share of the line speed a timetable expects on average
 const LEG_ALLOWANCE = 40; // s added to every leg for starting and stopping
+export const DAY = 24 * 3600;
+
+/** Seconds from now to a time of day, between -12 and +12 hours: negative means it has passed. */
+export function untilTime(target: number, now: number) {
+  return ((((target - now + DAY / 2) % DAY) + DAY) % DAY) - DAY / 2;
+}
+
+/** A time of day as 08:05. */
+export function clockText(seconds: number) {
+  const m = Math.floor((((seconds % DAY) + DAY) % DAY) / 60);
+  return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+}
 
 /** Rolling, bearing and air resistance in kN, for a mass in tonnes. */
 const drag = (m: number, v: number) => 0.012 * G * m + 0.0035 * m * v + 0.012 * v * v;
@@ -115,6 +127,8 @@ export class Train {
   slipping = false;
   ai = true;
   schedule: number[] = []; // Station ids; empty = every station
+  /** Departure time from each scheduled stop, in seconds of the day, or null to leave once the dwell is over. */
+  times: (number | null)[] = [];
   schedIdx = 0;
   route: Piece[] = [];
   targetStation: number | null = null;
@@ -224,6 +238,8 @@ export class Sim {
   steps = 0;
   /** Strict rules: train protection brakes a player train well over the limit, and hard hits damage it. */
   strict = false;
+  /** Time of day in seconds, which timetabled departures wait for. Set by the game from its clock. */
+  clock = 12 * 3600;
   private interlockTimer = 0;
   private unspent = 0;
   private prints: Map<number, string>;
@@ -549,10 +565,31 @@ export class Sim {
     return null;
   }
 
+  /** The train's stops in order with their departure times. With no schedule, every station without times. */
+  stops(t: Train): { id: number; dep: number | null }[] {
+    const all = new Set(this.net.stations.map((s) => s.id));
+    const listed = t.schedule.map((id, i) => ({ id, dep: t.times[i] ?? null })).filter((s) => all.has(s.id));
+    return listed.length ? listed : [...all].map((id) => ({ id, dep: null }));
+  }
+
   private stationOrder(t: Train) {
-    const all = this.net.stations.map((s) => s.id);
-    const ids = t.schedule.filter((id) => all.includes(id));
-    return ids.length ? ids : all;
+    return this.stops(t).map((s) => s.id);
+  }
+
+  /** Seconds a train at its current stop must still wait for its timetabled departure. */
+  departureWait(t: Train) {
+    const dep = this.stops(t)[t.schedIdx]?.dep;
+    return dep === null || dep === undefined ? 0 : Math.max(0, untilTime(dep, this.clock));
+  }
+
+  /** Holds a train whose dwell is over until its departure time. Returns true while it waits. */
+  private holdForTimetable(t: Train) {
+    const wait = this.departureWait(t);
+    if (wait <= 0) return false;
+    // One step at a time, so the status reads the same every step until it leaves.
+    t.dwell = Math.min(wait, STEP);
+    t.statusText = `Leaves at ${clockText(this.stops(t)[t.schedIdx].dep!)}`;
+    return true;
   }
 
   /** Chooses the next station and a route to it, reversing at a terminus when only that works. */
@@ -905,7 +942,7 @@ export class Sim {
       t.dynamic = 0;
       t.emergency = false;
       t.statusText = 'At platform';
-      if (t.dwell <= 0) {
+      if (t.dwell <= 0 && !this.holdForTimetable(t)) {
         t.stopRemain = -1;
         this.plan(t, true);
       }
@@ -1121,7 +1158,7 @@ export class Sim {
     if (t.dwell > 0) {
       t.statusText = 'Doors open';
       t.dwell -= dt;
-      if (t.dwell <= 0) this.depart(t);
+      if (t.dwell <= 0 && !this.holdForTimetable(t)) this.depart(t);
       return;
     }
     this.checkStop(t);
@@ -1166,7 +1203,7 @@ export class Sim {
     t.airBrake = 1;
     t.passedStop = false;
     this.plan(t, false);
-    t.duty?.startLeg(this.time, this.legTime(t));
+    t.duty?.startLeg(this.time, this.dueIn(t));
   }
 
   /** Running time a timetable allows from here to the next stop along the planned route, or null with no route. */
@@ -1250,7 +1287,19 @@ export class Sim {
   /** Begins timing the run to the train's next stop. */
   startLeg(t: Train) {
     t.passedStop = false;
-    t.duty?.startLeg(this.time, this.legTime(t));
+    t.duty?.startLeg(this.time, this.dueIn(t));
+  }
+
+  /**
+   * Seconds until the train is due at its next stop: the timetabled arrival, a dwell before departure, when
+   * the stop has a time, and otherwise an estimate from the route. Negative means it's already late.
+   */
+  dueIn(t: Train): number | null {
+    const dep = this.stops(t)[t.schedIdx]?.dep;
+    if (dep !== null && dep !== undefined && t.targetStation === this.stops(t)[t.schedIdx].id) {
+      return untilTime(dep - DWELL, this.clock);
+    }
+    return this.legTime(t);
   }
 
   /**

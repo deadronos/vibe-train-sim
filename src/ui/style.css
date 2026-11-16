@@ -976,3 +976,58 @@ dialog menu {
   clip-path: inset(50%);
   white-space: nowrap;
 }
+
+/* ---------- Timetables ---------- */
+.trains-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.trains-head button {
+  font-size: 12px;
+  padding: 3px 7px 1px;
+}
+#dlg-timetable {
+  width: min(520px, 92vw);
+}
+#dlg-timetable .hint {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+#tt-stops {
+  margin: 8px 0;
+  padding: 0;
+  list-style: none;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+#tt-stops li {
+  display: grid;
+  grid-template-columns: 1.4em 1fr auto auto;
+  gap: 6px;
+  align-items: center;
+  padding: 3px 0;
+}
+#tt-stops li.state {
+  display: block;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+#tt-stops .n {
+  font: 600 15px var(--num);
+  color: var(--text-dim);
+}
+#tt-stops li.next .n {
+  color: var(--brass);
+}
+#dlg-timetable select,
+#dlg-timetable input[type='time'] {
+  background: var(--enamel-deep);
+  border: 1px solid #0c1b1d;
+  padding: 4px 6px;
+}
+#dlg-timetable .row {
+  display: flex;
+  gap: 6px;
+}

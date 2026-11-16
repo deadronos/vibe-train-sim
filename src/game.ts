@@ -480,6 +480,20 @@ export class Game {
     this.hud.showDuty(t.name, d, best);
   }
 
+  /** Sets a train's stops and departure times, and sends it to the first stop of the new timetable. */
+  setTimetable(t: Train, schedule: number[], times: (number | null)[]) {
+    t.schedule = schedule;
+    t.times = times;
+    t.schedIdx = 0;
+    // A train standing at a platform finishes its stop; one on the move heads for the new first stop.
+    if (t.dwell <= 0) {
+      t.stopRemain = -1;
+      this.sim.plan(t, false);
+      if (!t.ai) this.sim.startLeg(t);
+    }
+    this.save(true);
+  }
+
   setRules(r: Rules) {
     this.rules = r;
     writeRules(r);
@@ -626,6 +640,7 @@ export class Game {
     }
 
     if (!this.editing && this.trainSpeed > 0) this.driveInput(dt);
+    this.sim.clock = this.env.hours * 3600;
     if (!this.editing || this.editor.runTrains) {
       this.sim.update(dt * this.trainSpeed);
     } else {

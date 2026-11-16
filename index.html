@@ -69,7 +69,10 @@
 
     <!-- Train register -->
     <aside id="trains" class="plate" aria-label="Trains">
-      <h2>Trains</h2>
+      <div class="trains-head">
+        <h2>Trains</h2>
+        <button id="btn-timetable">Timetables</button>
+      </div>
       <div class="rate" role="group" aria-label="Train speed">
         <button data-speed="0" title="Pause the railway">Pause</button>
         <button data-speed="1" title="Normal speed">1×</button>
@@ -237,6 +240,29 @@
         <p id="duty-total"></p>
         <ul id="duty-lines"></ul>
         <menu><button value="ok">Close</button></menu>
+      </form>
+    </dialog>
+
+    <dialog id="dlg-timetable" class="plate" aria-labelledby="tt-title">
+      <form method="dialog">
+        <h2 id="tt-title">Timetables</h2>
+        <label
+          >Train
+          <select id="tt-train"></select
+        ></label>
+        <p class="hint">
+          A train waits at each stop until its time. Times follow the clock, so choose Real on the clock for trains to
+          keep time. Leave a time empty to leave as soon as the doors close.
+        </p>
+        <ol id="tt-stops"></ol>
+        <div class="row">
+          <select id="tt-add-station" aria-label="Station to add"></select>
+          <button id="tt-add" type="button">Add stop</button>
+        </div>
+        <menu>
+          <button id="tt-clear" type="button">Call at every station</button>
+          <button value="ok">Close</button>
+        </menu>
       </form>
     </dialog>
 

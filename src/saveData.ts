@@ -21,6 +21,8 @@ export interface SaveData {
     name: string;
     cars: Car[];
     schedule: number[];
+    /** Departure from each scheduled stop in seconds of the day, or null. Missing from older saves. */
+    times?: (number | null)[];
     schedIdx: number;
     ai: boolean;
     x: number;
@@ -185,6 +187,14 @@ function check(d: Record<string, unknown>): SaveData {
     }
     for (const s of arr(o.schedule, `train ${id} has no timetable`)) {
       if (!stationIds.has(s as number)) fail(`train ${id} has a timetable stop at a station that does not exist`);
+    }
+    if (o.times !== undefined) {
+      const times = arr(o.times, `train ${id} has bad timetable times`);
+      if (times.length !== (o.schedule as unknown[]).length) fail(`train ${id} has a time for each stop missing`);
+      for (const v of times) {
+        if (v !== null && (num(v, `train ${id} has a bad timetable time`) < 0 || (v as number) >= 86400))
+          fail(`train ${id} has a timetable time outside the day`);
+      }
     }
     if (int(o.schedIdx, `train ${id} has a bad timetable position`) < 0)
       fail(`train ${id} has a bad timetable position`);

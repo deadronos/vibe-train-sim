@@ -14,6 +14,7 @@ import type { Preset } from '../world/heightfield';
 import { Guide } from './guide';
 import { OverviewMap } from './overviewMap';
 import { PerfOverlay } from './perfOverlay';
+import { TimetableDialog } from './timetableDialog';
 
 // oxlint-disable-next-line typescript/no-unnecessary-type-parameters -- Callers name the element type they expect.
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -70,6 +71,7 @@ export class Hud {
   private empty: boolean | null = null;
   map!: OverviewMap;
   perf!: PerfOverlay;
+  timetable!: TimetableDialog;
   private lamps: HTMLElement[] | null = null;
   guide!: Guide;
 
@@ -128,6 +130,8 @@ export class Hud {
     this.bindSound();
     this.map = new OverviewMap(g, $('overview'));
     this.perf = new PerfOverlay(g, $('perf'));
+    this.timetable = new TimetableDialog(g);
+    $('btn-timetable').onclick = () => this.timetable.open(g.driven);
     $('btn-overview').onclick = () => this.map.toggle();
     $('overview-close').onclick = () => this.map.toggle(false);
     this.guide = new Guide(g, $('guide'));
@@ -428,11 +432,13 @@ export class Hud {
         break;
       case 'train':
         p.innerHTML = `<h2>Add a train</h2><label>Type<select id="train-kind"><option value="passenger">Express: 3 coaches, 2 locomotives</option><option value="shuttle">Local: 2 coaches</option><option value="freight">Freight: 5 loaded wagons</option><option value="emptyFreight">Empties: 5 empty wagons</option></select></label><p>Click a track to place it. New trains call at every station.</p>
-          <label class="check"><input id="run-trains" type="checkbox" /> Keep trains moving while editing</label>`;
+          <label class="check"><input id="run-trains" type="checkbox" /> Keep trains moving while editing</label>
+          <div class="row"><button id="btn-tt-edit">Edit timetables</button></div>`;
         {
           const k = $<HTMLSelectElement>('train-kind');
           k.value = ed.trainKind;
           k.onchange = () => (ed.trainKind = k.value as typeof ed.trainKind);
+          $('btn-tt-edit').onclick = () => this.timetable.open(g.sim.trains.at(-1) ?? null);
           const r = $<HTMLInputElement>('run-trains');
           r.checked = ed.runTrains;
           r.onchange = () => (ed.runTrains = r.checked);
