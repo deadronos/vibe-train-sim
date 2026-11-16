@@ -484,14 +484,14 @@ input[type='range'] {
 .desk-buttons {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 5px;
+  gap: 4px;
   flex: 1;
 }
 .desk-buttons button {
   background: var(--enamel-deep);
   border: 1px solid #0c1b1d;
   border-radius: 2px;
-  padding: 7px 4px 5px;
+  padding: 5px 4px 3px;
   line-height: 1.1;
   color: var(--text);
   font-size: 13px;
@@ -799,7 +799,7 @@ dialog menu {
 }
 .help-cols {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
   gap: 26px;
 }
 .help-cols h3 {
@@ -823,39 +823,299 @@ dialog menu {
   color: var(--text-dim);
 }
 
+/* ---------- Small screens ----------
+   Below 1200px the menu folds behind a Menu button. Below 900px the train list folds behind a Trains button
+   and the clock shows only the time until the menu is open. Phones, upright or on their side, get a compact
+   desk and lever frame. */
+.toggle {
+  display: none;
+  background: linear-gradient(180deg, var(--enamel-lift), var(--enamel));
+  border: 1px solid #0c1b1d;
+  border-radius: 3px;
+  box-shadow: 0 3px 10px rgba(5, 15, 16, 0.45);
+  padding: 8px 14px 6px;
+  font-weight: 600;
+  color: var(--text);
+}
+.toggle[aria-expanded='true'] {
+  background: linear-gradient(180deg, #ecd38f, var(--brass));
+  color: var(--ink);
+  border-color: var(--brass-dark);
+}
+@media (max-width: 1200px) {
+  #btn-menu {
+    display: block;
+    margin-left: auto;
+  }
+  #menu-plate {
+    display: none;
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    width: min(330px, 100%);
+    margin: 0;
+    padding: 8px;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+  body.menu-open #menu-plate {
+    display: grid;
+  }
+  #menu-plate button,
+  #menu-plate select {
+    min-height: 36px;
+  }
+  #fps {
+    text-align: left;
+  }
+}
 @media (max-width: 900px) {
+  #btn-trains {
+    display: block;
+    margin-left: auto;
+  }
+  #btn-menu {
+    margin-left: 0;
+  }
+  body[data-mode='edit'] #btn-trains {
+    visibility: hidden;
+  }
   #trains {
     display: none;
+    top: auto;
   }
-  #repeater,
-  #line-info,
-  #controls {
-    width: auto;
+  body[data-mode='drive'].trains-open #trains {
+    display: block;
+    top: 60px;
+    z-index: 6;
+    max-height: 60vh;
   }
-  #desk {
-    flex-wrap: wrap;
-    justify-content: center;
-    width: 100%;
+  /* The clock keeps just the time; the menu shows the rest. */
+  body:not(.menu-open) #clock-plate > :not(#clock) {
+    display: none;
   }
-  #dial {
-    width: 130px;
-    height: 130px;
+  #clock-plate {
+    padding: 4px 8px;
   }
   .help-cols {
     grid-template-columns: 1fr;
-  }
-  .lever {
-    width: 54px;
   }
   #frame {
     max-width: 100%;
     overflow-x: auto;
   }
-  #menu-plate {
-    margin-left: 0;
-  }
   #status {
     max-width: 90vw;
+  }
+}
+/* Narrow screens with room to spare upright: the dial beside the two readouts, and the controls below. */
+@media (max-width: 900px) and (min-height: 501px) {
+  #desk {
+    left: 6px;
+    right: 6px;
+    bottom: 6px;
+    max-width: 600px;
+    margin: 0 auto;
+    transform: none;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    grid-template-areas:
+      'dial rep'
+      'dial line'
+      'ctl ctl';
+    align-items: stretch;
+    gap: 6px;
+  }
+  .desk-group {
+    height: auto;
+    padding: 6px 8px;
+  }
+  #repeater {
+    grid-area: rep;
+    width: auto;
+    gap: 8px;
+  }
+  #line-info {
+    grid-area: line;
+    width: auto;
+  }
+  #dial {
+    grid-area: dial;
+    align-self: center;
+    width: 112px;
+    height: 112px;
+  }
+  #controls {
+    grid-area: ctl;
+    width: auto;
+    height: 108px;
+  }
+  .lamps {
+    padding: 4px 3px;
+    gap: 3px;
+  }
+  .lamps i {
+    width: 14px;
+    height: 14px;
+  }
+  .readout {
+    gap: 1px;
+    font-size: 13px;
+    line-height: 1.25;
+  }
+  .desk-buttons {
+    grid-template-columns: 1fr 1fr 1fr;
+  }
+  .desk-buttons button {
+    min-height: 32px;
+  }
+}
+
+/* Phones upright: a tighter top bar and a two-row lever frame. */
+@media (max-width: 600px) {
+  #topbar {
+    top: 6px;
+    left: 6px;
+    right: 6px;
+    gap: 6px;
+  }
+  #mode-plate {
+    padding: 3px;
+  }
+  #mode-plate .mode-btn {
+    padding: 7px 8px 5px;
+  }
+  .toggle {
+    padding: 7px 10px 5px;
+  }
+  #clock {
+    font-size: 22px;
+    min-width: 0;
+  }
+  #clock-plate {
+    padding: 2px 8px;
+  }
+  /* Lever frame: two rows of levers, shorter. */
+  #frame {
+    left: 0;
+    right: 0;
+    transform: none;
+    flex-wrap: wrap;
+    justify-content: center;
+    padding: 0 4px;
+  }
+  .lever {
+    width: 70px;
+    height: 84px;
+  }
+  .lever .slot {
+    top: 8px;
+    bottom: 32px;
+  }
+  .lever .rod {
+    top: 10px;
+    height: 24px;
+  }
+  .lever[aria-pressed='true'] .rod {
+    top: 26px;
+    height: 24px;
+  }
+  .lever .tag {
+    bottom: 5px;
+  }
+  #tool-panel {
+    left: 6px;
+    right: 6px;
+    width: auto;
+    bottom: 178px;
+    max-height: 26vh;
+    overflow-y: auto;
+  }
+  #status {
+    top: 62px;
+    bottom: auto;
+  }
+  #guide {
+    top: 62px;
+    right: 10px;
+    width: auto;
+  }
+}
+
+/* Phones on their side: one short row of desk, and room left for the view. */
+@media (max-height: 500px) and (min-width: 601px) {
+  #desk {
+    flex-wrap: nowrap;
+    bottom: 6px;
+    gap: 6px;
+  }
+  .desk-group {
+    height: auto;
+    min-height: 100px;
+    padding: 6px 8px;
+  }
+  #repeater {
+    width: 240px;
+  }
+  #line-info {
+    width: 140px;
+  }
+  #controls {
+    width: 280px;
+    height: 100px;
+  }
+  #dial {
+    width: 100px;
+    height: 100px;
+  }
+  .lamps i {
+    width: 16px;
+    height: 16px;
+  }
+  .readout {
+    gap: 1px;
+    font-size: 12px;
+    line-height: 1.25;
+  }
+  .desk-buttons {
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 4px;
+  }
+  .desk-buttons button {
+    padding: 4px 3px 2px;
+    font-size: 12px;
+  }
+  body:not(.menu-open) #clock-plate > :not(#clock) {
+    display: none;
+  }
+  #trains {
+    max-height: 50vh;
+  }
+  .lever {
+    height: 84px;
+  }
+  .lever .slot {
+    top: 8px;
+    bottom: 32px;
+  }
+  .lever .rod {
+    top: 10px;
+    height: 24px;
+  }
+  .lever[aria-pressed='true'] .rod {
+    top: 26px;
+    height: 24px;
+  }
+  .lever .tag {
+    bottom: 5px;
+  }
+  #tool-panel {
+    bottom: 96px;
+    max-height: calc(100vh - 170px);
+    overflow-y: auto;
+  }
+  #status {
+    bottom: 96px;
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -1101,4 +1361,44 @@ dialog menu {
   width: 16px;
   height: 3px;
   display: block;
+}
+
+/* Timetable stops on a phone: station, turn and remove on one line, the two times under them. */
+@media (max-width: 600px) {
+  .tt-head,
+  #tt-stops li {
+    grid-template-columns: 1.4em minmax(0, 1fr) minmax(0, 1fr) 2.6em 5.2em;
+    grid-template-areas:
+      'n st st turn rm'
+      '. arr arr dep dep';
+    row-gap: 4px;
+  }
+  .tt-head > :nth-child(1),
+  #tt-stops li > :nth-child(1) {
+    grid-area: n;
+  }
+  .tt-head > :nth-child(2),
+  #tt-stops li > :nth-child(2) {
+    grid-area: st;
+  }
+  .tt-head > :nth-child(3),
+  #tt-stops li > :nth-child(3) {
+    grid-area: arr;
+  }
+  .tt-head > :nth-child(4),
+  #tt-stops li > :nth-child(4) {
+    grid-area: dep;
+  }
+  .tt-head > :nth-child(5),
+  #tt-stops li > :nth-child(5) {
+    grid-area: turn;
+  }
+  .tt-head > :nth-child(6),
+  #tt-stops li > :nth-child(6) {
+    grid-area: rm;
+  }
+  #tt-stops li {
+    padding: 5px 0;
+    border-bottom: 1px solid rgba(12, 27, 29, 0.6);
+  }
 }

@@ -53,6 +53,12 @@ npm run dev
 - Day and night cycle with atmospheric sky, clouds, stars, moon and image-based lighting
 - Sun shadows, bloom, lit windows, platform lamps and a train headlight
 
+**Phones and tablets**
+
+- On narrow screens the menu, the clock controls and the train list fold behind **Menu** and **Trains** buttons, and the desk stacks into a compact block. Turned sideways, the desk fits in one short row
+- The desk has Horn and Next train buttons, and the track panel has Snap and Stop laying, so nothing needs a keyboard
+- Editor tools that place something show what a tap will do first; tap the same place again to do it
+
 Press `?` in the app for all controls.
 
 ## Project layout

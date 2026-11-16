@@ -157,6 +157,18 @@ export class Hud {
       );
     };
     $('btn-recover').onclick = () => g.recoverDriven();
+    this.bindFolds();
+    const horn = $('btn-horn');
+    horn.onpointerdown = () => g.audio.horn(true);
+    for (const ev of ['pointerup', 'pointerleave', 'pointercancel'] as const)
+      horn.addEventListener(ev, () => g.audio.horn(false));
+    // Keyboard presses send click only, so give them a short blast.
+    horn.onclick = (e) => {
+      if (e.detail > 0) return;
+      g.audio.horn(true);
+      setTimeout(() => g.audio.horn(false), 500);
+    };
+    $('btn-next').onclick = () => g.nextTrain();
 
     $('btn-auto').onclick = () => g.setAutopilot(!g.driven?.ai);
     $('btn-switch').onclick = () => g.throwNextSwitch();
@@ -300,6 +312,30 @@ export class Hud {
     fill($('backup-list'), g.library.backups(), 'No backups yet. One is kept each time a map is replaced.');
   }
 
+  /** The Menu and Trains buttons that small screens use to fold the menu, clock controls and train list away. */
+  private bindFolds() {
+    const folds = [
+      { btn: $('btn-menu'), cls: 'menu-open' },
+      { btn: $('btn-trains'), cls: 'trains-open' },
+    ];
+    const set = (open: string | null) => {
+      for (const f of folds) {
+        const on = f.cls === open;
+        document.body.classList.toggle(f.cls, on);
+        f.btn.setAttribute('aria-expanded', String(on));
+      }
+    };
+    for (const f of folds) f.btn.onclick = () => set(document.body.classList.contains(f.cls) ? null : f.cls);
+    // A menu item that opens something closes the menu behind it. Lists and sliders keep it open.
+    $('menu-plate').addEventListener('click', (e) => {
+      if ((e.target as HTMLElement).closest('button')) set(null);
+    });
+    $('view').addEventListener('pointerdown', () => set(null));
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && document.body.matches('.menu-open, .trains-open')) set(null);
+    });
+  }
+
   private bindSound() {
     const g = this.game;
     const dlg = $<HTMLDialogElement>('dlg-sound');
@@ -399,8 +435,14 @@ export class Hud {
       case 'track':
         p.innerHTML = `<h2>Lay track</h2><p>Click to start, then click again to lay a section. Start on a track to branch into a junction, or finish on one to join it.</p>
           <label><span>Height above ground: <output id="height-val"></output> m</span><input id="height" type="range" min="-30" max="60" step="1" /></label>
-          <p>High sections become bridges automatically. Low sections cut through the ground.</p>`;
+          <p>High sections become bridges automatically. Low sections cut through the ground.</p>
+          <label class="check"><input id="snap" type="checkbox" /> Snap new lines to 15° steps (Shift)</label>
+          <div class="row"><button id="stop-laying">Stop laying (Esc)</button></div>`;
         {
+          const snap = $<HTMLInputElement>('snap');
+          snap.checked = ed.snap;
+          snap.onchange = () => (ed.snap = snap.checked);
+          $('stop-laying').onclick = () => ed.cancel();
           const hv = $<HTMLOutputElement>('height-val');
           const h = $<HTMLInputElement>('height');
           h.value = String(ed.heightOffset);
@@ -743,7 +785,7 @@ export class Hud {
     if (empty === this.empty) return;
     this.empty = empty;
     $('desk').classList.toggle('empty', empty);
-    for (const id of ['power-lever', 'btn-auto', 'btn-switch', 'btn-reverse']) {
+    for (const id of ['power-lever', 'btn-auto', 'btn-switch', 'btn-reverse', 'btn-horn']) {
       $<HTMLInputElement | HTMLButtonElement>(id).disabled = empty;
     }
     if (!empty) return;

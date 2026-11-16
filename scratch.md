@@ -40,6 +40,8 @@ Do these before any large refactor. The follow-ups #5, #6 and #7 are still open.
 
 [#49](https://github.com/deadronos/vibe-train-sim/issues/49), [#50](https://github.com/deadronos/vibe-train-sim/issues/50) and [#47](https://github.com/deadronos/vibe-train-sim/issues/47) landed in #75.
 
+[#60](https://github.com/deadronos/vibe-train-sim/issues/60) landed in #84, #85 and #86, and [#42](https://github.com/deadronos/vibe-train-sim/issues/42) with the small-screen layouts after them. Real phones still need a try: emulated sizes don't show touch feel or performance.
+
 ## Partly done
 
 - [#20](https://github.com/deadronos/vibe-train-sim/issues/20): the listed allocation sources are fixed (#80). Still needs an allocation profile before and after.
@@ -48,9 +50,7 @@ Do these before any large refactor. The follow-ups #5, #6 and #7 are still open.
 
 ## 5. Next
 
-1. [#60](https://github.com/deadronos/vibe-train-sim/issues/60): timetables run from the clock, and an editor for stops and consists. This gives the new driving score real timings and is the next large step towards the goal in `IDEA.md`.
-2. [#42](https://github.com/deadronos/vibe-train-sim/issues/42): phone and small-screen layouts, together with collapsing the clock and map controls while driving, left over from #41.
-3. [#62](https://github.com/deadronos/vibe-train-sim/issues/62) and [#63](https://github.com/deadronos/vibe-train-sim/issues/63): more signal types and level crossings of lines, which build on the strict rules.
+1. [#62](https://github.com/deadronos/vibe-train-sim/issues/62) and [#63](https://github.com/deadronos/vibe-train-sim/issues/63): more signal types and level crossings of lines, which build on the strict rules.
 
 ## Wait on these
 
