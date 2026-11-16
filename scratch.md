@@ -1,6 +1,6 @@
 # Next issues
 
-Suggested order for the review issues, written on 2026-11-04. [#55](https://github.com/deadronos/vibe-train-sim/issues/55), the gradient bug, and groups 1 and 2 below are done.
+Suggested order for the review issues, written on 2026-11-04 and updated on 2026-11-16. Groups 1 to 4 and the cheap wins are done.
 
 ## 1. Fix what can hurt a normal session (done)
 
@@ -28,28 +28,31 @@ Do these before any large refactor. The follow-ups #5, #6 and #7 are still open.
 
 [#67](https://github.com/deadronos/vibe-train-sim/issues/67), [#57](https://github.com/deadronos/vibe-train-sim/issues/57), [#56](https://github.com/deadronos/vibe-train-sim/issues/56), [#61](https://github.com/deadronos/vibe-train-sim/issues/61) and [#66](https://github.com/deadronos/vibe-train-sim/issues/66) were done ahead of group 3. Rolling back, part of #56, waits for [#64](https://github.com/deadronos/vibe-train-sim/issues/64).
 
-## 3. Make driving a game
+## 3. Make driving a game (done)
 
-Driving by hand has no goal or consequences yet, so this adds the most for players.
+[#44](https://github.com/deadronos/vibe-train-sim/issues/44), [#59](https://github.com/deadronos/vibe-train-sim/issues/59), [#58](https://github.com/deadronos/vibe-train-sim/issues/58), [#41](https://github.com/deadronos/vibe-train-sim/issues/41) and [#40](https://github.com/deadronos/vibe-train-sim/issues/40) landed in #74, #78 and #79.
 
-1. [#44](https://github.com/deadronos/vibe-train-sim/issues/44): show limits ahead on the desk, so players can drive well.
-2. [#59](https://github.com/deadronos/vibe-train-sim/issues/59): add timetabled services and a score, which gives driving a goal.
-3. [#58](https://github.com/deadronos/vibe-train-sim/issues/58): add consequences for overspeed and collisions, which fits with the score.
-4. [#41](https://github.com/deadronos/vibe-train-sim/issues/41): add a first-run guide, once there is a goal to guide players towards.
-5. [#40](https://github.com/deadronos/vibe-train-sim/issues/40): add an overview map.
+## 4. Protect players' maps (done)
 
-## 4. Protect players' maps
+[#36](https://github.com/deadronos/vibe-train-sim/issues/36) landed in #76, and the editor bugs [#35](https://github.com/deadronos/vibe-train-sim/issues/35), [#37](https://github.com/deadronos/vibe-train-sim/issues/37) and [#38](https://github.com/deadronos/vibe-train-sim/issues/38) in #77.
 
-- [#36](https://github.com/deadronos/vibe-train-sim/issues/36): add save slots and warnings before work is overwritten.
-- [#37](https://github.com/deadronos/vibe-train-sim/issues/37), [#35](https://github.com/deadronos/vibe-train-sim/issues/35) and [#38](https://github.com/deadronos/vibe-train-sim/issues/38): fix the remaining editor bugs.
+## Cheap wins (done)
 
-## Cheap wins for any time
+[#49](https://github.com/deadronos/vibe-train-sim/issues/49), [#50](https://github.com/deadronos/vibe-train-sim/issues/50) and [#47](https://github.com/deadronos/vibe-train-sim/issues/47) landed in #75.
 
-- [#49](https://github.com/deadronos/vibe-train-sim/issues/49): stop sound playing in hidden tabs and in edit mode.
-- [#50](https://github.com/deadronos/vibe-train-sim/issues/50): add volume and mute controls.
-- [#47](https://github.com/deadronos/vibe-train-sim/issues/47): bundle the fonts.
+## Partly done
+
+- [#20](https://github.com/deadronos/vibe-train-sim/issues/20): the listed allocation sources are fixed (#80). Still needs an allocation profile before and after.
+- [#19](https://github.com/deadronos/vibe-train-sim/issues/19): quality applies live, Auto adapts to frame rate, and `?debug` shows a perf overlay (#81). Still needs measurements on a low-end laptop and a phone.
+- [#46](https://github.com/deadronos/vibe-train-sim/issues/46): keyboard and screen reader fixes are in (#82). Still needs an axe or Lighthouse audit and a contrast check.
+
+## 5. Next
+
+1. [#60](https://github.com/deadronos/vibe-train-sim/issues/60): timetables run from the clock, and an editor for stops and consists. This gives the new driving score real timings and is the next large step towards the goal in `IDEA.md`.
+2. [#42](https://github.com/deadronos/vibe-train-sim/issues/42): phone and small-screen layouts, together with collapsing the clock and map controls while driving, left over from #41.
+3. [#62](https://github.com/deadronos/vibe-train-sim/issues/62) and [#63](https://github.com/deadronos/vibe-train-sim/issues/63): more signal types and level crossings of lines, which build on the strict rules.
 
 ## Wait on these
 
-- **Large graphics work** ([#18](https://github.com/deadronos/vibe-train-sim/issues/18), [#23](https://github.com/deadronos/vibe-train-sim/issues/23)): do [#19](https://github.com/deadronos/vibe-train-sim/issues/19) first, so there are real numbers from slower hardware to compare against.
+- **Large graphics work** ([#18](https://github.com/deadronos/vibe-train-sim/issues/18), [#23](https://github.com/deadronos/vibe-train-sim/issues/23)): measure first with the `?debug` overlay on slower hardware.
 - **Shunting** ([#64](https://github.com/deadronos/vibe-train-sim/issues/64)): this needs a design note first, because it changes how trains reverse.
