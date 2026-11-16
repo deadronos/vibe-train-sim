@@ -804,7 +804,6 @@ dialog menu {
 }
 .help-cols h3 {
   margin: 0 0 6px;
-  grid-column: 1 / -1;
   font: 600 14px var(--sans);
   color: var(--brass);
 }
@@ -965,4 +964,15 @@ dialog menu {
 }
 #perf[hidden] {
   display: none;
+}
+
+/* Read by screen readers, not shown. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }

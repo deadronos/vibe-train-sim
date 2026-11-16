@@ -207,9 +207,30 @@ export class Hud {
       b.style.setProperty('--lever', l.color);
       b.innerHTML = `<span class="slot"></span><span class="rod"></span><span class="tag">${l.label}</span>`;
       b.setAttribute('aria-pressed', 'false');
+      b.tabIndex = -1;
       b.onclick = () => this.game.editor.setTool(l.tool);
       frame.appendChild(b);
     }
+    // A toolbar is one tab stop; arrow keys move between its levers.
+    frame.addEventListener('keydown', (e) => {
+      const levers = [...frame.querySelectorAll<HTMLButtonElement>('.lever')];
+      const i = levers.indexOf(document.activeElement as HTMLButtonElement);
+      if (i < 0) return;
+      const to = {
+        ArrowRight: i + 1,
+        ArrowDown: i + 1,
+        ArrowLeft: i - 1,
+        ArrowUp: i - 1,
+        Home: 0,
+        End: levers.length - 1,
+      }[e.key];
+      if (to === undefined) return;
+      e.preventDefault();
+      e.stopPropagation(); // Arrow keys also move the editor camera
+      const next = levers[(to + levers.length) % levers.length];
+      for (const l of levers) l.tabIndex = l === next ? 0 : -1;
+      next.focus();
+    });
   }
 
   private bindMaps() {
@@ -346,6 +367,7 @@ export class Hud {
       b.innerHTML = `<span class="name"><span></span><span class="speed"></span></span><span class="state"></span>`;
       b.querySelector('.name span')!.textContent = t.name;
       b.onclick = () => g.setDriven(t);
+      if (t === g.driven) b.setAttribute('aria-current', 'true');
       li.appendChild(b);
       ul.appendChild(li);
       this.trainRows.set(t.id, { speed: b.querySelector('.speed')!, state: b.querySelector('.state')!, li });
@@ -357,9 +379,10 @@ export class Hud {
     const g = this.game;
     if (!g.editor) return;
     const ed = g.editor;
-    document
-      .querySelectorAll<HTMLButtonElement>('.lever')
-      .forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.tool === ed.tool)));
+    document.querySelectorAll<HTMLButtonElement>('.lever').forEach((b) => {
+      b.setAttribute('aria-pressed', String(b.dataset.tool === ed.tool));
+      if (document.activeElement?.parentElement !== b.parentElement) b.tabIndex = b.dataset.tool === ed.tool ? 0 : -1;
+    });
     const p = $('tool-panel');
     p.innerHTML = '';
     switch (ed.tool) {
@@ -656,6 +679,8 @@ export class Hud {
     this.lamps.forEach((l) => l.classList.toggle('on', !!sig && l.dataset.lamp === sig.aspect));
     const word = sig ? { red: 'Stop', yellow: 'Caution', green: 'Clear' }[sig.aspect] : '';
     $('signal-text').textContent = sig ? `${word} in ${formatDist(sig.dist)}` : 'No signal ahead';
+    $('dial').setAttribute('aria-label', `Speed ${Math.round(kmh)} km/h, limit ${Math.round(info.limit * 3.6)}`);
+    this.announce(t, sig ? `Signal ahead: ${word.toLowerCase()} in ${formatDist(sig.dist)}` : null, kmh, info);
     this.showBraking(sig?.aspect === 'red' && sig.dist < BRAKE_MARKER_RANGE ? sig.dist : null, t, info);
     const stn = g.sim.stationAhead(t);
     $('station-text').textContent = stn ? `${stn.name} in ${formatDist(stn.dist)}${this.dueText(t, stn.name)}` : '';
@@ -673,6 +698,26 @@ export class Hud {
       const text = train.ai ? train.statusText : `You are driving: ${train.duty?.total ?? 0} points`;
       if (row.state.textContent !== text) row.state.textContent = text;
     }
+  }
+
+  private spoken = { train: -1, signal: '', over: false };
+
+  /**
+   * Tells screen readers about changes that matter while driving: a new signal aspect ahead, or going over
+   * the limit. Speed itself is on the dial's label, to read on demand rather than announced constantly.
+   */
+  private announce(t: Train, signal: string | null, kmh: number, info: DeskInfo) {
+    const s = this.spoken;
+    const aspect = signal?.split(' in ')[0] ?? '';
+    const over = !t.ai && kmh > info.limit * 3.6 + OVERSPEED_KMH;
+    let text = '';
+    if (t.id !== s.train) text = `Driving ${t.name}. ${signal ?? 'No signal ahead'}`;
+    else if (aspect !== s.signal && signal) text = signal;
+    if (over && !s.over) text = `${text} Over the ${Math.round(info.limit * 3.6)} km/h limit`.trim();
+    s.train = t.id;
+    s.signal = aspect;
+    s.over = over;
+    if (text) $('drive-status').textContent = text;
   }
 
   /** When the player is due at the station ahead, how long until then, or how late they are. */
