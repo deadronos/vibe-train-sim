@@ -2,6 +2,9 @@ import type { BrushMode, Tool } from '../editor/editor';
 // HTML interface: mode lever, clock, train register, driver's desk and the editor's lever frame.
 import type { Game } from '../game';
 import type { MapEntry } from '../mapLibrary';
+import type { Rules } from '../persistence';
+import type { Duty } from '../rail/duty';
+import { clock } from '../rail/duty';
 import type { Side } from '../rail/network';
 import { LINE_VMAX } from '../rail/network';
 import type { DeskInfo, SimEvent, Train } from '../rail/sim';
@@ -120,6 +123,17 @@ export class Hud {
     const q = $<HTMLSelectElement>('quality');
     q.value = g.quality;
     q.onchange = () => g.setQuality(q.value as 'high' | 'low');
+    const rules = $<HTMLSelectElement>('rules');
+    rules.value = g.rules;
+    rules.onchange = () => {
+      g.setRules(rules.value as Rules);
+      this.toast(
+        g.rules === 'strict'
+          ? 'Strict rules: train protection brakes trains well over the limit, and hard hits damage the train'
+          : 'Relaxed rules: mistakes cost points but never stop the train',
+      );
+    };
+    $('btn-recover').onclick = () => g.recoverDriven();
 
     $('btn-auto').onclick = () => g.setAutopilot(!g.driven?.ai);
     $('btn-switch').onclick = () => g.throwNextSwitch();
@@ -536,11 +550,35 @@ export class Hud {
   onSimEvent(e: SimEvent) {
     const driven = this.game.driven;
     const isMine = driven && driven.id === e.train;
-    if (e.kind === 'arrive') {
+    if (e.kind === 'arrive' || e.kind === 'stop' || e.kind === 'depart') {
       if (isMine) this.toast(e.text);
     } else {
       this.toast(e.text, true);
     }
+  }
+
+  /** The end-of-run summary, with every scored event and how it compares with the best on this landscape. */
+  showDuty(name: string, d: Duty, best: number | null) {
+    $('duty-title').textContent = `Your run on ${name}`;
+    const record =
+      best === null
+        ? 'Your first score on this landscape'
+        : d.total > best
+          ? `A new best, beating ${best}`
+          : `Best on this landscape: ${best}`;
+    $('duty-total').textContent = `${d.total} points from ${d.stops} stop${d.stops === 1 ? '' : 's'}. ${record}.`;
+    const ul = $('duty-lines');
+    ul.innerHTML = '';
+    for (const line of d.lines) {
+      const li = document.createElement('li');
+      li.innerHTML = '<span></span><span class="pts"></span>';
+      li.children[0].textContent = line.text;
+      const pts = Math.round(line.points);
+      li.children[1].textContent = pts > 0 ? `+${pts}` : String(pts);
+      li.classList.toggle('lost', pts < 0);
+      ul.appendChild(li);
+    }
+    $<HTMLDialogElement>('dlg-duty').showModal();
   }
 
   private setDialLimit(kmh: number) {
@@ -581,7 +619,10 @@ export class Hud {
 
     if (this.frameCounter % 8 !== 0) return;
     this.autopilot = t.ai;
-    $('train-text').textContent = t.ai ? '' : brakeText(t);
+    $('train-text').textContent = t.ai ? '' : t.statusText || brakeText(t);
+    const recover = $('btn-recover');
+    recover.hidden = !t.damaged;
+    $('lever-text').hidden = t.damaged;
     $('btn-auto').setAttribute('aria-pressed', String(t.ai));
     $('lever-text').textContent = leverText(t, lever);
     const info = g.sim.deskInfo(t);
@@ -593,7 +634,7 @@ export class Hud {
     $('signal-text').textContent = sig ? `${word} in ${formatDist(sig.dist)}` : 'No signal ahead';
     this.showBraking(sig?.aspect === 'red' && sig.dist < BRAKE_MARKER_RANGE ? sig.dist : null, t, info);
     const stn = g.sim.stationAhead(t);
-    $('station-text').textContent = stn ? `${stn.name} in ${formatDist(stn.dist)}` : '';
+    $('station-text').textContent = stn ? `${stn.name} in ${formatDist(stn.dist)}${this.dueText(t, stn.name)}` : '';
     const j = g.sim.nextJunction(t);
     if (j) {
       const idx = j.options.indexOf(j.selected);
@@ -605,9 +646,18 @@ export class Hud {
       const row = this.trainRows.get(train.id);
       if (!row) continue;
       row.speed.textContent = `${Math.round(train.speed * 3.6)} km/h`;
-      const text = train.ai ? train.statusText : 'You are driving';
+      const text = train.ai ? train.statusText : `You are driving: ${train.duty?.total ?? 0} points`;
       if (row.state.textContent !== text) row.state.textContent = text;
     }
+  }
+
+  /** When the player is due at the station ahead, how long until then, or how late they are. */
+  private dueText(t: Train, station: string) {
+    const due = t.duty?.due;
+    const target = this.game.net.stations.find((s) => s.id === t.targetStation);
+    if (t.ai || due === undefined || due === null || target?.name !== station) return '';
+    const left = due - this.game.sim.time;
+    return left >= 0 ? `, due in ${clock(left)}` : `, ${clock(-left)} late`;
   }
 
   /** Clears the desk when there is no train to drive, so it never shows the last train's values. */

@@ -22,6 +22,8 @@ npm run dev
 - Pause and fast-forward
 - Saves keep trains moving: they come back where they were, at the same speed and on the same route
 - Autopilot that follows a timetable, stops at stations and turns around at termini
+- Take over any train to drive its service by hand: stop within each platform with the doors open, on time, and you score points. Speeding, passing red signals, missed stops and crashes cost points, and you get a summary with your best score for that landscape when you hand back to the autopilot
+- Relaxed or strict rules. Under strict rules train protection brakes a train well over the limit, and a hard hit or a derailment damages the train until you recover it
 - Chase, cab and trackside cameras
 - Synthesised engine, rail joint and horn sounds, with saved volume levels for each, that go quiet in a hidden tab
 

@@ -147,6 +147,7 @@ function checkTrainState(raw: unknown, id: number) {
   const score = obj(s.score, what);
   num(score.spads, what);
   num(score.stops, what);
+  if (s.damaged !== undefined) bool(s.damaged, what);
 }
 
 function check(d: Record<string, unknown>): SaveData {

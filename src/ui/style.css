@@ -381,6 +381,45 @@ input[type='range'] {
 #line-info {
   width: 190px;
 }
+#btn-recover {
+  grid-column: 1 / -1;
+  background: var(--plate);
+  color: var(--ink);
+  font-weight: 600;
+}
+#btn-recover[hidden],
+#lever-text[hidden] {
+  display: none;
+}
+#dlg-duty {
+  width: min(520px, 92vw);
+}
+#duty-total {
+  color: var(--text-dim);
+}
+#duty-lines {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+  max-height: 45vh;
+  overflow-y: auto;
+}
+#duty-lines li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(12, 27, 29, 0.6);
+  font-size: 13px;
+}
+#duty-lines .pts {
+  font: 600 15px var(--num);
+  font-variant-numeric: tabular-nums;
+  color: var(--brass);
+}
+#duty-lines li.lost .pts {
+  color: var(--text-dim);
+}
 #lever-text {
   grid-column: 1 / -1;
   font: 600 15px var(--num);

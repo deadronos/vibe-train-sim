@@ -9,12 +9,15 @@ import { parseSave } from './saveData';
 import { Heightfield } from './world/heightfield';
 
 export type Quality = 'high' | 'low';
+export type Rules = 'relaxed' | 'strict';
 
 export const SAVE_KEY = 'vibe-train-sim/map-v1';
 // A save that fails validation is moved here so nothing the player made is thrown away.
 const BACKUP_KEY = 'vibe-train-sim/map-v1-backup';
 const QUALITY_KEY = 'vibe-train-sim/quality';
 const SOUND_KEY = 'vibe-train-sim/sound';
+const RULES_KEY = 'vibe-train-sim/rules';
+const BEST_PREFIX = 'vibe-train-sim/best/';
 
 export interface WorldState {
   hf: Heightfield;
@@ -180,5 +183,34 @@ export function writeSound(s: SoundSettings) {
     localStorage.setItem(SOUND_KEY, JSON.stringify(s));
   } catch {
     /* The choice simply lasts for this page only. */
+  }
+}
+
+export function readRules(): Rules {
+  try {
+    return localStorage.getItem(RULES_KEY) === 'strict' ? 'strict' : 'relaxed';
+  } catch {
+    return 'relaxed';
+  }
+}
+
+export function writeRules(r: Rules) {
+  try {
+    localStorage.setItem(RULES_KEY, r);
+  } catch {
+    /* The choice simply lasts for this page only. */
+  }
+}
+
+/** Records a driving score for a landscape, returning the best before this one, or null if there was none. */
+export function recordBest(map: string, score: number): number | null {
+  try {
+    const raw = localStorage.getItem(BEST_PREFIX + map);
+    const best = raw === null ? null : Number(raw);
+    const previous = best !== null && Number.isFinite(best) ? best : null;
+    if (previous === null || score > previous) localStorage.setItem(BEST_PREFIX + map, String(score));
+    return previous;
+  } catch {
+    return null;
   }
 }
