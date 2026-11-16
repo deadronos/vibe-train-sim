@@ -391,6 +391,14 @@ export class Hud {
     p.appendChild(undoRow);
     $('btn-undo').onclick = () => g.undo();
     $('btn-redo').onclick = () => g.redo();
+    this.syncUndo();
+  }
+
+  syncUndo() {
+    const undo = document.getElementById('btn-undo') as HTMLButtonElement | null;
+    const redo = document.getElementById('btn-redo') as HTMLButtonElement | null;
+    if (undo) undo.disabled = !this.game.history.canUndo;
+    if (redo) redo.disabled = !this.game.history.canRedo;
   }
 
   private panelTerrain(p: HTMLElement) {
@@ -429,7 +437,15 @@ export class Hud {
       `<h2>Track point</h2>`,
       `<label><span>Rail height: <output id="sel-y">${n.y.toFixed(1)}</output> m</span><input id="sel-h" type="range" min="-5" max="160" step="0.5" value="${n.y}" /></label>`,
     ];
-    if (station) rows.push(`<label>Station name<input id="sel-name" type="text" maxlength="24" /></label>`);
+    rows.push(
+      `<div class="row"><button data-turn="5">Turn 5° left</button><button data-turn="-5">Turn 5° right</button></div>`,
+    );
+    if (station) {
+      rows.push(`<label>Station name<input id="sel-name" type="text" maxlength="24" /></label>`);
+      rows.push(
+        `<label><span>Platform length: <output id="sel-len">${station.length}</output> m</span><input id="sel-len-in" type="range" min="60" max="300" step="10" value="${station.length}" /></label>`,
+      );
+    }
     for (const side of [1, -1] as Side[]) {
       const count = g.net.attached(n.id, side).length;
       const label = side === 1 ? 'Forward' : 'Backward';
@@ -453,18 +469,45 @@ export class Hud {
       g.net.moveNode(n.id, n.x, Number(h.value), n.z);
       y.textContent = Number(h.value).toFixed(1);
       g.commitEdit();
+      ed.status = g.net.problemAt(n.id) ?? '';
     };
-    h.onchange = () => g.commitEdit({ scenery: true });
+    h.onchange = () => {
+      undoPushed = false;
+      ed.refuseIfBroken(n.id, 'Height change');
+    };
+    p.querySelectorAll<HTMLButtonElement>('[data-turn]').forEach((b) => {
+      b.onclick = () => ed.turnSelected(Number(b.dataset.turn));
+    });
     if (station) {
       const name = $<HTMLInputElement>('sel-name');
       name.value = station.name;
+      // Typing a name is one undo step, not one per key.
+      let renamePushed = false;
+      name.onfocus = () => (renamePushed = false);
       name.oninput = () => {
+        if (!renamePushed) {
+          g.pushUndo();
+          renamePushed = true;
+        }
         station.name = name.value || station.name;
         g.net.version++;
       };
+      const len = $<HTMLInputElement>('sel-len-in');
+      let lenPushed = false;
+      len.oninput = () => {
+        if (!lenPushed) {
+          g.pushUndo();
+          lenPushed = true;
+        }
+        station.length = Number(len.value);
+        $('sel-len').textContent = len.value;
+        g.net.version++;
+      };
+      len.onchange = () => (lenPushed = false);
     }
     p.querySelectorAll<HTMLButtonElement>('[data-throw]').forEach((b) => {
       b.onclick = () => {
+        g.pushUndo();
         g.net.throwSwitch(n.id, Number(b.dataset.throw) as Side);
         g.sim.interlock();
         this.toast('Points thrown');
@@ -472,6 +515,7 @@ export class Hud {
     });
     p.querySelectorAll<HTMLInputElement>('[data-hold]').forEach((c) => {
       c.onchange = () => {
+        g.pushUndo();
         n.signals[Number(c.dataset.hold)]!.hold = c.checked;
         g.net.version++;
       };

@@ -992,6 +992,26 @@ export class Sim {
     if (t.speed > 0) this.advance(t, t.speed * dt);
   }
 
+  /** True when any part of one train is within a car's width of the other. */
+  private touch(A: Train, B: Train) {
+    const ha = this.behind(A, 0);
+    const hb = this.behind(B, 0);
+    if (Math.hypot(ha.x - hb.x, ha.z - hb.z) > A.length + B.length + 10) return false;
+    for (let da = 0; da <= A.length; da += 6) {
+      const a = this.behind(A, da);
+      for (let db = 0; db <= B.length; db += 6) {
+        const b = this.behind(B, db);
+        if (Math.hypot(a.x - b.x, a.z - b.z) < 3.2 && Math.abs(a.y - b.y) < 3.5) return true;
+      }
+    }
+    return false;
+  }
+
+  /** The first other train this one is touching, for refusing a placement on top of it. */
+  touching(t: Train): Train | null {
+    return this.trains.find((o) => o !== t && this.touch(t, o)) ?? null;
+  }
+
   private collisions(dt: number) {
     for (const t of this.trains) if (t.crashCooldown > 0) t.crashCooldown -= dt;
     for (let i = 0; i < this.trains.length; i++) {
@@ -999,21 +1019,7 @@ export class Sim {
         const A = this.trains[i];
         const B = this.trains[j];
         if (A.crashCooldown > 0 || B.crashCooldown > 0) continue;
-        const pa = [this.behind(A, 0), this.behind(A, A.length)];
-        const pb = [this.behind(B, 0), this.behind(B, B.length)];
-        const reach = A.length + B.length;
-        if (Math.hypot(pa[0].x - pb[0].x, pa[0].z - pb[0].z) > reach + 10) continue;
-        let hit = false;
-        for (let da = 0; da <= A.length && !hit; da += 6) {
-          const a = this.behind(A, da);
-          for (let db = 0; db <= B.length; db += 6) {
-            const b = this.behind(B, db);
-            if (Math.hypot(a.x - b.x, a.z - b.z) < 3.2 && Math.abs(a.y - b.y) < 3.5) {
-              hit = true;
-              break;
-            }
-          }
-        }
+        const hit = this.touch(A, B);
         if (hit) {
           const fast = Math.max(A.speed, B.speed);
           this.onEvent({

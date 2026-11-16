@@ -235,6 +235,39 @@ export class Network {
     return node;
   }
 
+  /**
+   * Why track at a point breaks the laying rules, or null if it doesn't. Checks every segment that meets the point.
+   * Built geometry samples curves more finely than the editor's preview, so radius gets a little slack.
+   */
+  problemAt(id: number): string | null {
+    for (const side of [1, -1] as Side[]) {
+      for (const sid of this.attached(id, side)) {
+        const seg = this.segs.get(sid)!;
+        const g = this.geom.get(sid)!;
+        if (g.minRadius < MIN_RADIUS * 0.95) {
+          return `Curve too tight: radius ${Math.round(g.minRadius)} m, minimum ${MIN_RADIUS} m`;
+        }
+        const grade = Math.abs(this.nodes.get(seg.a)!.y - this.nodes.get(seg.b)!.y) / g.length;
+        if (grade > MAX_GRADE * 1.02) {
+          return `Too steep: ${(grade * 100).toFixed(1)}%, maximum ${(MAX_GRADE * 100).toFixed(0)}%`;
+        }
+      }
+    }
+    return null;
+  }
+
+  /** Turns a point's heading by an angle in radians, positive anticlockwise seen from above. */
+  turnNode(id: number, angle: number) {
+    const n = this.nodes.get(id)!;
+    const c = Math.cos(angle);
+    const s = Math.sin(angle);
+    const dx = n.dx * c + n.dz * s;
+    const dz = -n.dx * s + n.dz * c;
+    n.dx = dx;
+    n.dz = dz;
+    this.touchNodes([id]);
+  }
+
   moveNode(id: number, x: number, y: number, z: number) {
     const n = this.nodes.get(id)!;
     n.x = x;
