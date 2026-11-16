@@ -12,23 +12,27 @@ import { Editor } from './editor/editor';
 import { History } from './history';
 import type { MapEntry } from './mapLibrary';
 import { browserStorage, MapLibrary } from './mapLibrary';
-import type { Quality } from './persistence';
+import type { Quality, Rules } from './persistence';
 import {
   backupStoredSave,
   buildWorld,
   captureSave,
   downloadMap,
   readQuality,
+  readRules,
+  recordBest,
   readSound,
   readSave,
   restoreEdit,
   restoreTrains,
   SAVE_KEY,
   writeQuality,
+  writeRules,
   writeSound,
   writeSave,
 } from './persistence';
 import { buildDemoNetwork, populateDemoTrains } from './rail/demoMap';
+import { Duty } from './rail/duty';
 import { Network } from './rail/network';
 import type { Train } from './rail/sim';
 import { Sim } from './rail/sim';
@@ -77,6 +81,7 @@ export class Game {
   driven: Train | null = null;
   editing = false;
   quality: Quality = readQuality();
+  rules: Rules = readRules();
   /** How fast the railway runs: 0 is paused. */
   trainSpeed = 1;
   input = new DriverInput();
@@ -195,6 +200,7 @@ export class Game {
     this.hf = hf;
     this.net = net;
     this.sim = new Sim(net);
+    this.sim.strict = this.rules === 'strict';
     this.sim.onEvent = (e) => this.hud.onSimEvent(e);
     if (!this.terrain) this.terrain = new TerrainRenderer(this.scene, hf);
     else this.terrain.setField(hf);
@@ -246,6 +252,7 @@ export class Game {
     this.hud.syncTrains();
     if (restoreTime) this.env.hours = data.hours;
     if (!this.driven && this.sim.trains.length) this.setDriven(this.sim.trains[0]);
+    if (this.driven && !this.driven.ai) this.beginDuty(this.driven);
   }
 
   save(silent = false) {
@@ -362,10 +369,13 @@ export class Game {
   private restoreSnapshot(json: string) {
     const d = JSON.parse(json) as SaveData;
     const onEvent = this.sim.onEvent;
+    const duties = new Map(this.sim.trains.map((t) => [t.id, t.duty]));
     const { net, sim, driven } = restoreEdit(this.hf, d);
     this.net = net;
     this.sim = sim;
     this.sim.onEvent = onEvent;
+    this.sim.strict = this.rules === 'strict';
+    for (const t of sim.trains) t.duty = duties.get(t.id) ?? null;
     this.driven = driven;
     this.track.clear();
     net.dirty = new Set(net.segs.keys());
@@ -397,6 +407,36 @@ export class Game {
     this.hud.syncTrains();
   }
 
+  /** Starts scoring the player's run on a train. */
+  private beginDuty(t: Train) {
+    t.duty = new Duty();
+    this.sim.startLeg(t);
+  }
+
+  /** Ends the player's run on a train and shows how it went, if anything happened. */
+  private endDuty(t: Train) {
+    const d = t.duty;
+    t.duty = null;
+    if (!d || (!d.stops && !d.lines.length)) return;
+    d.overspeed(0, 0, Infinity); // Closes a spell over the limit that was still going
+    const best = recordBest(`${this.hf.preset}-${this.hf.seed}`, d.total);
+    this.hud.showDuty(t.name, d, best);
+  }
+
+  setRules(r: Rules) {
+    this.rules = r;
+    writeRules(r);
+    this.sim.strict = r === 'strict';
+    for (const t of this.sim.trains) t.tripped = false;
+  }
+
+  recoverDriven() {
+    const t = this.driven;
+    if (!t?.damaged) return;
+    this.sim.recover(t);
+    this.hud.toast(t.lastStop ? `${t.name} is back at its last stop` : `${t.name} is back on the line`);
+  }
+
   removeTrain(t: Train) {
     this.sim.trains = this.sim.trains.filter((x) => x !== t);
     if (this.driven === t) this.driven = this.sim.trains[0] ?? null;
@@ -421,6 +461,7 @@ export class Game {
   setDriven(t: Train | null) {
     if (this.driven && this.driven !== t && !this.driven.ai) {
       this.driven.ai = true;
+      this.endDuty(this.driven);
       this.sim.plan(this.driven, false);
     }
     this.driven = t;
@@ -432,8 +473,11 @@ export class Game {
     const t = this.driven;
     if (!t) return;
     t.ai = on;
-    if (on) this.sim.plan(t, false);
-    else {
+    if (on) {
+      this.endDuty(t);
+      this.sim.plan(t, false);
+    } else {
+      this.beginDuty(t);
       t.throttle = 0;
       this.input.lever = t.speed > 0.2 ? 0 : -0.5;
       t.dwell = 0;

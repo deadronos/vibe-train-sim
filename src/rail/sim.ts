@@ -1,5 +1,8 @@
 // Train physics, block signalling with route locking, and timetable AI. Contains no rendering code.
+import type { Duty } from './duty';
+import { PENALTY } from './duty';
 import type { Dir, Exit, Network, Piece, Side } from './network';
+import { LINE_VMAX } from './network';
 import type { Car } from './vehicles';
 import { carBrake, carMass, VEHICLES } from './vehicles';
 
@@ -19,6 +22,11 @@ const CURVE_RESISTANCE = 0.6; // Divided by radius in metres, as a share of weig
 const DYNAMIC_FADE_SPEED = 2; // m/s; engine braking fades out below this
 const LIMIT_LOOKAHEAD = 2500; // m; how far the desk looks for a lower limit
 const GRADIENT_LOOKAHEAD = 300; // m; the stretch the desk's gradient reading covers
+const DWELL = 22; // s at a platform
+const STOP_SLACK = 4; // m a stopped train may stand beyond its platform and still count
+const CRASH_SPEED = 15 / 3.6; // Under strict rules, hits faster than this damage the train
+const LEG_PACE = 0.8; // Share of the line speed a timetable expects on average
+const LEG_ALLOWANCE = 40; // s added to every leg for starting and stopping
 
 /** Rolling, bearing and air resistance in kN, for a mass in tonnes. */
 const drag = (m: number, v: number) => 0.012 * G * m + 0.0035 * m * v + 0.012 * v * v;
@@ -26,7 +34,8 @@ const drag = (m: number, v: number) => 0.012 * G * m + 0.0035 * m * v + 0.012 * 
 export const keyOf = (node: number, side: Side) => `${node}:${side}`;
 
 export interface SimEvent {
-  kind: 'spad' | 'collision' | 'buffer' | 'arrive';
+  /** arrive, stop and depart are news for the train's driver; the rest are warnings for everyone. */
+  kind: 'spad' | 'collision' | 'buffer' | 'arrive' | 'stop' | 'depart' | 'missed' | 'protection' | 'damage';
   train: number;
   text: string;
 }
@@ -83,6 +92,8 @@ export interface TrainState {
   crashCooldown: number;
   grants: string[];
   score: { spads: number; stops: number };
+  /** Missing from saves made before damage existed. */
+  damaged?: boolean;
 }
 
 export class Train {
@@ -116,6 +127,16 @@ export class Train {
   limit = 33.3; // Current speed limit, m/s
   score = { spads: 0, stops: 0 };
   statusText = '';
+  /** Set by train protection under strict rules: emergency braking until back under the limit. */
+  tripped = false;
+  /** Crashed or derailed under strict rules. It can't move until recovered. */
+  damaged = false;
+  /** Where the train last stood at a platform, so recovery has somewhere to put it. */
+  lastStop: { seg: number; s: number; dir: Dir } | null = null;
+  /** The player's run, while they drive this train. */
+  duty: Duty | null = null;
+  /** True once the head has passed the stop it's due at, so leaving it behind counts as a miss. */
+  passedStop = false;
   /** Last known head position, used to re-seat the train when track under it is deleted. */
   lastPos: { x: number; z: number; hx: number; hz: number } | null = null;
 
@@ -201,6 +222,8 @@ export class Sim {
   occ = new Map<number, Occupancy[]>();
   /** Simulation steps run so far. */
   steps = 0;
+  /** Strict rules: train protection brakes a player train well over the limit, and hard hits damage it. */
+  strict = false;
   private interlockTimer = 0;
   private unspent = 0;
   private prints: Map<number, string>;
@@ -324,6 +347,7 @@ export class Sim {
       crashCooldown: t.crashCooldown,
       grants: [...t.grants],
       score: { ...t.score },
+      damaged: t.damaged,
     };
   }
 
@@ -364,6 +388,7 @@ export class Sim {
     t.crashCooldown = s.crashCooldown;
     t.grants = [...s.grants];
     t.score = { ...s.score };
+    t.damaged = s.damaged ?? false;
     t.next = null;
     this.remember(t);
     return true;
@@ -770,11 +795,10 @@ export class Sim {
       const nxt = this.pick(t, p.seg, e.node, e.side);
       if (nxt === undefined) {
         if (!silent && t.speed > 1.5) {
-          this.onEvent({
-            kind: 'buffer',
-            train: t.id,
-            text: `${t.name} hit the buffer stop at ${Math.round(t.speed * 3.6)} km/h`,
-          });
+          const text = `${t.name} hit the buffer stop at ${Math.round(t.speed * 3.6)} km/h`;
+          t.duty?.add(`Hit the buffer stop at ${Math.round(t.speed * 3.6)} km/h`, -PENALTY.buffer);
+          if (this.strict && !t.ai && t.speed > CRASH_SPEED) this.damage(t, text);
+          else this.onEvent({ kind: 'buffer', train: t.id, text });
         }
         t.speed = 0;
         break;
@@ -797,6 +821,7 @@ export class Sim {
         t.grants.shift();
       } else if (this.aspects.get(key) === 'red') {
         t.score.spads++;
+        t.duty?.add('Passed a signal at danger', -PENALTY.spad);
         this.onEvent({ kind: 'spad', train: t.id, text: `${t.name} passed a signal at danger` });
       }
     }
@@ -808,6 +833,7 @@ export class Sim {
     }
     const st = net.stations.find((s) => s.nodeId === node);
     if (st && t.ai && st.id === t.targetStation) t.stopRemain = Math.max(1, t.length / 2);
+    if (st && !t.ai && st.id === t.targetStation) t.passedStop = true;
   }
 
   private collectLimits(t: Train) {
@@ -958,7 +984,8 @@ export class Sim {
 
   /** Force at the rail after the adhesion limit, in kN. The autopilot eases off before the wheels slip. */
   private traction(t: Train) {
-    const asked = t.speed < t.topSpeed && !t.emergency ? t.tractiveForce(t.speed) * t.throttle : 0;
+    const cut = t.emergency || t.tripped || t.damaged || (!t.ai && t.dwell > 0);
+    const asked = t.speed < t.topSpeed && !cut ? t.tractiveForce(t.speed) * t.throttle : 0;
     const grip = t.adhesionLimit;
     t.slipping = !t.ai && asked > grip;
     if (t.slipping) return grip * SLIP_GRIP;
@@ -966,10 +993,13 @@ export class Sim {
   }
 
   private updateAirBrake(t: Train, dt: number) {
-    const demand = t.emergency ? EMERGENCY : t.brake;
+    const emergency = t.emergency || t.tripped;
+    // Doors open and a damaged train both hold the brakes on.
+    const held = t.damaged || (!t.ai && t.dwell > 0) ? 1 : 0;
+    const demand = emergency ? EMERGENCY : Math.max(t.brake, held);
     if (demand > t.airBrake) {
       // An emergency application vents the brake pipe from every car, so it reaches them far sooner.
-      const time = t.emergency ? t.brakeLag / 3 : t.brakeLag;
+      const time = emergency ? t.brakeLag / 3 : t.brakeLag;
       t.airBrake = Math.min(demand, t.airBrake + dt / time);
     } else {
       t.airBrake = Math.max(demand, t.airBrake - dt / (t.brakeLag * 1.5));
@@ -1028,6 +1058,8 @@ export class Sim {
             text: `${A.name} and ${B.name} collided at ${Math.round(fast * 3.6)} km/h`,
           });
           for (const t of [A, B]) {
+            t.duty?.add(`Collided at ${Math.round(fast * 3.6)} km/h`, -PENALTY.collision);
+            if (this.strict && !t.ai && fast > CRASH_SPEED) this.damage(t, `${t.name} was damaged in the collision`);
             t.speed = 0;
             t.crashCooldown = 12;
             if (t.ai) {
@@ -1064,17 +1096,158 @@ export class Sim {
     }
     for (const t of this.trains) {
       if (t.ai) this.driveAI(t, STEP);
-      else this.updatePlayerLimit(t);
+      else this.driveManual(t, STEP);
       this.physics(t, STEP);
       this.remember(t);
     }
     this.collisions(STEP);
   }
 
-  private updatePlayerLimit(t: Train) {
+  /** Seconds since the simulation started. */
+  get time() {
+    return this.steps * STEP;
+  }
+
+  /** What the player's train does by itself: limits, train protection, stops and doors. */
+  private driveManual(t: Train, dt: number) {
     const lim = this.collectLimits(t);
     t.limit = lim.lineLimit;
     t.statusText = '';
+    if (this.strict) this.protect(t);
+    t.duty?.overspeed(dt, t.speed, t.limit);
+    if (t.dwell > 0) {
+      t.statusText = 'Doors open';
+      t.dwell -= dt;
+      if (t.dwell <= 0) this.depart(t);
+      return;
+    }
+    this.checkStop(t);
+  }
+
+  /** Train protection: emergency braking well over the limit, and derailment far over a curve's limit. */
+  private protect(t: Train) {
+    const trip = t.limit + Math.max(10 / 3.6, t.limit * 0.1);
+    if (!t.tripped && t.speed > trip) {
+      t.tripped = true;
+      t.duty?.add('Train protection braked the train', -PENALTY.protection);
+      this.onEvent({
+        kind: 'protection',
+        train: t.id,
+        text: `Train protection braked ${t.name}: ${Math.round(t.speed * 3.6)} km/h in a ${Math.round(t.limit * 3.6)} km/h limit`,
+      });
+    }
+    if (t.tripped && t.speed <= t.limit) t.tripped = false;
+    // Protection normally stops this happening; it matters when a curve comes up faster than the brakes can act.
+    if (t.limit < LINE_VMAX - 0.5 && t.speed > t.limit * 1.5 && t.speed - t.limit > 30 / 3.6) {
+      this.damage(t, `${t.name} derailed on a curve at ${Math.round(t.speed * 3.6)} km/h`);
+    }
+  }
+
+  private damage(t: Train, text: string) {
+    if (t.damaged) return;
+    t.damaged = true;
+    t.speed = 0;
+    t.throttle = 0;
+    t.duty?.add('Train damaged', -PENALTY.damage);
+    this.onEvent({ kind: 'damage', train: t.id, text: `${text}. Recover it to carry on` });
+  }
+
+  /** Puts a damaged train back on the track where it last stood at a platform, or where it is. */
+  recover(t: Train) {
+    const at = t.lastStop;
+    if (at && this.net.segs.has(at.seg))
+      this.place(t, at.seg, Math.min(at.s, this.net.geom.get(at.seg)!.length), at.dir);
+    t.damaged = false;
+    t.tripped = false;
+    t.speed = 0;
+    t.airBrake = 1;
+    t.passedStop = false;
+    this.plan(t, false);
+    t.duty?.startLeg(this.time, this.legTime(t));
+  }
+
+  /** Running time a timetable allows from here to the next stop along the planned route, or null with no route. */
+  legTime(t: Train): number | null {
+    if (!t.route.length) return null;
+    let time = LEG_ALLOWANCE;
+    for (const p of t.route) {
+      const g = this.net.geom.get(p.seg);
+      if (g) time += g.length / (Math.min(g.vmax, t.topSpeed) * LEG_PACE);
+    }
+    return time;
+  }
+
+  /** Metres from the head back to a node under the train, or null if the node isn't under it. */
+  private nodeBehind(t: Train, node: number) {
+    const net = this.net;
+    const head = t.trail[t.trail.length - 1];
+    let d = head.dir > 0 ? t.headS : net.geom.get(head.seg)!.length - t.headS;
+    for (let i = t.trail.length - 1; i >= 0; i--) {
+      const p = t.trail[i];
+      const seg = net.segs.get(p.seg)!;
+      if ((p.dir > 0 ? seg.a : seg.b) === node) return d <= t.length + STOP_SLACK ? d : null;
+      if (i > 0) d += net.geom.get(t.trail[i - 1].seg)!.length;
+    }
+    return null;
+  }
+
+  /** Counts a stop when the player's train stands within the platform it's due at. */
+  private checkStop(t: Train) {
+    const st = this.net.stations.find((s) => s.id === t.targetStation);
+    if (!st) return;
+    // A train that stopped short has the point still ahead of it: count that as a negative distance behind.
+    const ahead = this.walkAhead(t, st.length + t.length, ({ end, exit }) =>
+      exit.node === st.nodeId ? end : undefined,
+    );
+    const behind = this.nodeBehind(t, st.nodeId) ?? (ahead === null ? null : -ahead);
+    if (behind === null) {
+      if (t.passedStop) {
+        t.duty?.add(`Missed the stop at ${st.name}`, -PENALTY.missed);
+        this.onEvent({ kind: 'missed', train: t.id, text: `${t.name} missed the stop at ${st.name}` });
+        this.plan(t, true);
+        this.startLeg(t);
+      }
+      return;
+    }
+    // The mark puts the middle of the train at the middle of the platform. Positive means past it.
+    const offset = behind - t.length / 2;
+    const room = Math.max(0, (st.length - t.length) / 2) + STOP_SLACK;
+    if (Math.abs(offset) > room) {
+      if (t.speed < 0.15) {
+        const by = Math.round(Math.abs(offset) - room);
+        t.statusText =
+          offset < 0
+            ? `Draw forward ${by} m to stand in the platform`
+            : `${by} m past the platform: change ends and set back`;
+      }
+      return;
+    }
+    if (t.speed >= 0.15) return;
+    t.dwell = DWELL;
+    t.score.stops++;
+    const h = t.trail[t.trail.length - 1];
+    t.lastStop = { seg: h.seg, s: t.headS, dir: h.dir };
+    const points = t.duty?.stop(st.name, offset, this.time);
+    const scored = points === undefined ? '' : `: ${points} points`;
+    this.onEvent({ kind: 'stop', train: t.id, text: `Stopped at ${st.name}${scored}. Doors open` });
+  }
+
+  private depart(t: Train) {
+    t.dwell = 0;
+    this.plan(t, true);
+    this.startLeg(t);
+    const next = this.net.stations.find((s) => s.id === t.targetStation);
+    this.onEvent({
+      kind: 'depart',
+      train: t.id,
+      text: next ? `Doors closed. Next stop: ${next.name}` : 'Doors closed. No stop planned ahead',
+    });
+  }
+
+  /** Begins timing the run to the train's next stop. */
+  startLeg(t: Train) {
+    t.passedStop = false;
+    t.duty?.startLeg(this.time, this.legTime(t));
   }
 
   /**

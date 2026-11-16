@@ -48,6 +48,10 @@
           <option value="high">High graphics</option>
           <option value="low">Low graphics</option>
         </select>
+        <select id="rules" aria-label="Driving rules">
+          <option value="relaxed">Relaxed rules</option>
+          <option value="strict">Strict rules</option>
+        </select>
         <output id="fps"></output>
       </div>
       <input id="import-file" type="file" accept="application/json,.json" hidden />
@@ -144,6 +148,7 @@
           <button id="btn-reverse">Change ends</button>
           <button id="btn-camera">Chase view</button>
           <output id="lever-text"></output>
+          <button id="btn-recover" hidden>Recover train</button>
         </div>
       </div>
     </section>
@@ -194,6 +199,15 @@
       </form>
     </dialog>
 
+    <dialog id="dlg-duty" class="plate">
+      <form method="dialog">
+        <h2 id="duty-title">Run finished</h2>
+        <p id="duty-total"></p>
+        <ul id="duty-lines"></ul>
+        <menu><button value="ok">Close</button></menu>
+      </form>
+    </dialog>
+
     <dialog id="dlg-sound" class="plate">
       <form method="dialog">
         <h2>Sound</h2>
@@ -218,7 +232,7 @@
             <dt>Space</dt>
             <dd>Emergency brake while held</dd>
             <dt>P</dt>
-            <dd>Autopilot on or off</dd>
+            <dd>Autopilot on or off. Driving by hand scores your stops</dd>
             <dt>J</dt>
             <dd>Throw the next points ahead</dd>
             <dt>R</dt>
