@@ -39,6 +39,7 @@
       <div class="plate" id="menu-plate">
         <button id="btn-save">Save</button>
         <button id="btn-maps">Maps</button>
+        <button id="btn-overview" aria-pressed="false" title="Overview map (O)">Map</button>
         <button id="btn-export">Export</button>
         <button id="btn-import">Import</button>
         <button id="btn-new">New map</button>
@@ -161,6 +162,21 @@
 
     <div id="toasts" aria-live="polite"></div>
 
+    <section id="overview" class="plate" aria-label="Overview map" hidden>
+      <div class="overview-head">
+        <h2>Map</h2>
+        <span>Click a train to drive it. In the editor, click a place to go there. Scroll to zoom, drag to move.</span>
+        <button id="overview-close" aria-label="Close the map">Close</button>
+      </div>
+      <canvas width="720" height="720"></canvas>
+    </section>
+
+    <aside id="guide" class="plate" aria-live="polite" hidden>
+      <p class="guide-count"></p>
+      <p class="guide-text"></p>
+      <button class="guide-skip">Skip the guide</button>
+    </aside>
+
     <dialog id="dlg-new" class="plate">
       <form method="dialog">
         <h2>New map</h2>
@@ -245,6 +261,8 @@
             <dd>Drive the next train</dd>
             <dt>, and .</dt>
             <dd>Slow down or speed up the railway; the slowest is pause</dd>
+            <dt>O</dt>
+            <dd>Overview map, while driving or editing</dd>
             <dt>M</dt>
             <dd>Sound on or off; Sound in the menu sets levels</dd>
             <dt>E</dt>
@@ -270,7 +288,10 @@
             <dd>Undo; Ctrl+Y or Ctrl+Shift+Z to redo</dd>
           </dl>
         </div>
-        <menu><button value="ok">Close</button></menu>
+        <menu>
+          <button id="btn-guide" type="button">Show the getting started guide</button>
+          <button value="ok">Close</button>
+        </menu>
       </form>
     </dialog>
 
