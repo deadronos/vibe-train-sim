@@ -831,6 +831,9 @@ export class Editor {
   }
 
   private nodeColor = new THREE.Color();
+  private scratchFwd = new THREE.Vector3();
+  private scratchRight = new THREE.Vector3();
+  private scratchMove = new THREE.Vector3();
   private tmp = new THREE.Object3D();
 
   /** Node markers scale with distance so they stay clickable at any zoom. */
@@ -841,12 +844,11 @@ export class Editor {
     this.controls.update();
     const cam = g.camera;
     const panSpeed = 0.9 * this.controls.getDistance() * dt;
-    const fwd = new THREE.Vector3();
-    cam.getWorldDirection(fwd);
+    const fwd = cam.getWorldDirection(this.scratchFwd);
     fwd.y = 0;
     fwd.normalize();
-    const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
-    const move = new THREE.Vector3();
+    const right = this.scratchRight.set(-fwd.z, 0, fwd.x);
+    const move = this.scratchMove.set(0, 0, 0);
     if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) move.add(fwd);
     if (this.keys.has('KeyS') || this.keys.has('ArrowDown')) move.sub(fwd);
     if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) move.add(right);

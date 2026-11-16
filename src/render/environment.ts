@@ -170,7 +170,8 @@ export class Environment {
     const sunI = 4.0 * smoothstep(-0.1, 0.14, el) * (1 - this.cloudCover * 0.3);
     const dir = this.keyDir.copy(this.sunDir).lerp(this.moonDir, toMoon).normalize();
     this.sun.color
-      .copy(COLORS.sunLow.clone().lerp(COLORS.sunHigh, smoothstep(0.0, 0.42, el)))
+      .copy(COLORS.sunLow)
+      .lerp(COLORS.sunHigh, smoothstep(0.0, 0.42, el))
       .lerp(COLORS.moon, toMoon);
     this.sun.intensity = sunI * (1 - toMoon) + 1.15 * toMoon;
 
