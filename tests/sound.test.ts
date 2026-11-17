@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  computeAmbienceParams,
   computeTrainAudioParams,
   countJunctionBogieCrossings,
   crossedRailJoint,
   DEFAULT_SOUND,
   detectAirRelease,
   dopplerPitch,
+  type AmbienceInput,
   type TrainAudioInput,
 } from '../src/audio';
 import { parseSound } from '../src/persistence';
@@ -57,13 +59,13 @@ describe('sound settings', () => {
   });
 
   it('keeps saved values', () => {
-    const saved = { muted: true, volume: 0.3, engine: 0, rail: 0.5, horn: 1, squeal: false };
+    const saved = { muted: true, volume: 0.3, engine: 0, rail: 0.5, horn: 1, ambience: 0.6, squeal: false };
     expect(parseSound(saved)).toEqual(saved);
   });
 
-  it('defaults squeal to true when upgrading older saved sound settings', () => {
+  it('defaults squeal and ambience when upgrading older saved sound settings', () => {
     const legacy = { muted: true, volume: 0.3, engine: 0, rail: 0.5, horn: 1 };
-    expect(parseSound(legacy)).toEqual({ ...legacy, squeal: true });
+    expect(parseSound(legacy)).toEqual({ ...legacy, ambience: 1, squeal: true });
   });
 
   it('replaces only the values that are missing or out of range', () => {
@@ -156,5 +158,61 @@ describe('train audio synthesis model', () => {
     expect(tractiveLoad(train)).toBeGreaterThan(0);
     expect(crossedRailJoint(17.5, 18.2)).toBe(true);
     expect(crossedRailJoint(18.2, 18.2)).toBe(false);
+  });
+});
+
+const baseAmbience = (over: Partial<AmbienceInput> = {}): AmbienceInput => ({
+  preset: 'plains',
+  cameraY: 20,
+  groundY: 16,
+  nearWaterY: 16,
+  riverDist: 400,
+  night: 0,
+  cab: false,
+  ...over,
+});
+
+describe('world ambience model', () => {
+  it('increases wind with altitude and differs across landscapes', () => {
+    const lowPlains = computeAmbienceParams(baseAmbience({ preset: 'plains', cameraY: 18, groundY: 14 }));
+    const highAlpine = computeAmbienceParams(baseAmbience({ preset: 'alpine', cameraY: 180, groundY: 170 }));
+    const islands = computeAmbienceParams(baseAmbience({ preset: 'islands', cameraY: 14, groundY: 8 }));
+
+    expect(highAlpine.windGain).toBeGreaterThan(lowPlains.windGain * 2);
+    expect(highAlpine.windFreq).toBeGreaterThan(lowPlains.windFreq);
+    expect(islands.windGain).toBeGreaterThan(lowPlains.windGain);
+  });
+
+  it('activates river and coastal water sounds from WATER_LEVEL and river distance', () => {
+    const dry = computeAmbienceParams(baseAmbience({ riverDist: 300, groundY: 20, nearWaterY: 20 }));
+    const byRiver = computeAmbienceParams(baseAmbience({ riverDist: 18, cameraY: 10, groundY: -1, nearWaterY: -2 }));
+    const highAboveRiver = computeAmbienceParams(
+      baseAmbience({ riverDist: 18, cameraY: 90, groundY: -1, nearWaterY: -2 }),
+    );
+    const byCoast = computeAmbienceParams(
+      baseAmbience({ preset: 'islands', riverDist: 400, cameraY: 8, groundY: 2, nearWaterY: -3 }),
+    );
+
+    expect(dry.riverGain).toBe(0);
+    expect(dry.coastGain).toBe(0);
+    expect(byRiver.riverGain).toBeGreaterThan(0.03);
+    expect(highAboveRiver.riverGain).toBe(0);
+    expect(byCoast.coastGain).toBeGreaterThan(0.02);
+    expect(byCoast.riverGain).toBe(0);
+  });
+
+  it('crossfades day birds to night crickets and attenuates inside the cab', () => {
+    const day = computeAmbienceParams(baseAmbience({ preset: 'plains', night: 0 }));
+    const night = computeAmbienceParams(baseAmbience({ preset: 'plains', night: 1 }));
+    const desertDay = computeAmbienceParams(baseAmbience({ preset: 'desert', night: 0 }));
+    const cabDay = computeAmbienceParams(baseAmbience({ preset: 'plains', night: 0, cab: true }));
+
+    expect(day.birdLevel).toBeGreaterThan(0.01);
+    expect(day.cricketLevel).toBe(0);
+    expect(night.birdLevel).toBe(0);
+    expect(night.cricketLevel).toBeGreaterThan(0.01);
+    expect(desertDay.birdLevel).toBeLessThan(day.birdLevel);
+    expect(cabDay.windGain).toBeLessThan(day.windGain);
+    expect(cabDay.birdLevel).toBeLessThan(day.birdLevel);
   });
 });

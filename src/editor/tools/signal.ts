@@ -43,6 +43,7 @@ export const signalTool: EditorTool = {
       }
       host.net.markSignalDirty(node.id);
       host.net.version++;
+      host.playLeverSound?.('signal');
     });
   },
   hover(ctx: EditorContext, p: WorldPoint) {

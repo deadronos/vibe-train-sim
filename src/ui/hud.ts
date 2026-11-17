@@ -390,10 +390,24 @@ export class Hud {
     $<HTMLInputElement>('sound-on').onchange = (e) => g.setSound({ muted: !(e.target as HTMLInputElement).checked });
     $<HTMLInputElement>('sound-squeal').onchange = (e) =>
       g.setSound({ squeal: (e.target as HTMLInputElement).checked });
-    for (const k of ['volume', 'engine', 'rail', 'horn'] as const) {
+    for (const k of ['volume', 'engine', 'rail', 'horn', 'ambience'] as const) {
       const input = $<HTMLInputElement>(`sound-${k}`);
       input.oninput = () => g.setSound({ [k]: Number(input.value) });
     }
+    document.addEventListener('click', (e) => {
+      const btn = (e.target as HTMLElement | null)?.closest('button');
+      if (!btn || btn.disabled) return;
+      if (btn.id === 'btn-horn' || btn.id === 'btn-switch' || btn.dataset.throw) return;
+      g.audio.unlock();
+      g.audio.playUiClick();
+    });
+    document.addEventListener('change', (e) => {
+      const el = e.target as HTMLElement | null;
+      if (!el?.matches('select, input[type="checkbox"]')) return;
+      if ((el as HTMLInputElement).dataset.hold || (el as HTMLSelectElement).dataset.sigType) return;
+      g.audio.unlock();
+      g.audio.playUiClick();
+    });
     this.syncSound();
   }
 
@@ -404,7 +418,7 @@ export class Hud {
     $('btn-sound').textContent = s.muted ? 'Sound off' : 'Sound';
     $<HTMLInputElement>('sound-on').checked = !s.muted;
     $<HTMLInputElement>('sound-squeal').checked = s.squeal;
-    for (const k of ['volume', 'engine', 'rail', 'horn'] as const) {
+    for (const k of ['volume', 'engine', 'rail', 'horn', 'ambience'] as const) {
       $<HTMLInputElement>(`sound-${k}`).value = String(s[k]);
     }
     $('sound-wait').hidden = a.started;

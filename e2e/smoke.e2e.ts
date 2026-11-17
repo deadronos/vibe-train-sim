@@ -110,6 +110,7 @@ test('a train pans and shifts pitch while running in the editor', async ({ page 
   await page.locator('[data-tool="train"]').click();
   await page.evaluate(() => {
     const g = window.__game;
+    g.setSound({ ambience: 0 });
     const train = g.sim.trains[0];
     g.newWorld('plains', 1, false);
     const y = g.hf.height(0, 0) + 5;
@@ -137,11 +138,9 @@ test('a train pans and shifts pitch while running in the editor', async ({ page 
       sim.place(train, sim.head(train).seg, s, -1);
       train.speed = 24;
     }, distance);
-  await frames(page);
-  expect(await peak()).toBeLessThan(0.0001);
+  await expect.poll(peak).toBeLessThan(0.0001);
   await page.locator('#run-trains').check();
-  await frames(page, 6);
-  expect(await peak()).toBeLessThan(0.0001);
+  await expect.poll(peak).toBeLessThan(0.0001);
 
   await placeTrain(485);
   await expect
@@ -160,6 +159,49 @@ test('a train pans and shifts pitch while running in the editor', async ({ page 
     .toBe(true);
   await page.locator('#run-trains').uncheck();
   await expect.poll(peak).toBeLessThan(0.0001);
+});
+
+test('plays gentle world ambience when stopped and responds to ambience setting', async ({ page }) => {
+  await page.addInitScript(() => {
+    // oxlint-disable-next-line typescript/unbound-method -- Forward receiver with Reflect.apply.
+    const connect = AudioNode.prototype.connect;
+    AudioNode.prototype.connect = function (this: AudioNode, target: AudioNode | AudioParam, ...channels: number[]) {
+      if (target instanceof AudioDestinationNode) {
+        const analyser = this.context.createAnalyser();
+        Reflect.apply(connect, this, [analyser]);
+        const samples = new Float32Array(analyser.fftSize);
+        window.__readTrainAudio = () => {
+          analyser.getFloatTimeDomainData(samples);
+          const rms = Math.sqrt(samples.reduce((sum, sample) => sum + sample * sample, 0) / samples.length);
+          return { left: rms, right: rms, minPitch: 1, maxPitch: 1 };
+        };
+      }
+      return Reflect.apply(connect, this, [target, ...channels]);
+    };
+  });
+  await load(page);
+  await page.mouse.click(400, 300);
+  await page.evaluate(() => {
+    const g = window.__game;
+    g.setSound({ engine: 0, rail: 0, horn: 0, ambience: 1 });
+    g.setTrainSpeed(0);
+    g.env.hours = 12;
+    g.audio.playDoorChime('open', 1);
+    g.audio.playLeverClunk('points', 1);
+  });
+  await expect.poll(() => page.evaluate(() => window.__readTrainAudio!().left)).toBeGreaterThan(0.0005);
+
+  await page.locator('#btn-menu').click();
+  await page.locator('#btn-sound').click();
+  const ambSlider = page.locator('#sound-ambience');
+  await expect(ambSlider).toBeVisible();
+  await page.evaluate(() => {
+    const g = window.__game;
+    g.env.hours = 23.5;
+    g.setSound({ ambience: 0 });
+  });
+  await expect.poll(() => page.evaluate(() => window.__readTrainAudio!().left)).toBeLessThan(0.0002);
+  await page.locator('#dlg-sound button[value="ok"]').click();
 });
 
 test('pauses and fast-forwards the railway', async ({ page }) => {

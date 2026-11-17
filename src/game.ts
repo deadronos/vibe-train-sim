@@ -67,7 +67,7 @@ import { AssetLoadError, CONTEXT_LOST_TEXT, SAVE_RECOVERED_TEXT } from './startu
 import { showFatal } from './ui/fatal';
 import { Hud } from './ui/hud';
 import type { Preset } from './world/heightfield';
-import { Heightfield } from './world/heightfield';
+import { Heightfield, riverCenter, WORLD_SIZE } from './world/heightfield';
 import type { PlacedItem, SceneryExclusion } from './world/scenery';
 
 const TRAIN_SPEEDS = [0, 1, 2, 4, 8];
@@ -133,6 +133,8 @@ export class Game {
   private nearbyTrainSounds: NearbyTrainSound[] = [];
   private tmpJunctionDists: number[] = [];
   private tmpBogieOffsets: number[] = [];
+  private trainDwelling = new Set<number>();
+  private lastSignalAhead = { train: -1, key: '', aspect: '' };
   private tmpTrainOpts: TrainRenderOpts = {};
   private tmpAudioInput: TrainAudioInput = {
     speed: 0,
@@ -269,6 +271,20 @@ export class Game {
           }
         }
       }
+      if (
+        (e.kind === 'stop' || e.kind === 'arrive' || e.kind === 'depart') &&
+        this.trainSpeed > 0 &&
+        this.trainSpeed <= 2 &&
+        (!this.editing || this.editor?.runTrains)
+      ) {
+        const tr = this.sim.trains.find((x) => x.id === e.train);
+        if (tr) {
+          const h = this.sim.head(tr);
+          const d = this.camera.position.distanceTo(this.tmpAudioFocus.set(h.x, h.y, h.z));
+          const nearby = Math.max(0, 1 - d / 260);
+          if (nearby > 0.01) this.audio.playDoorChime(e.kind === 'depart' ? 'close' : 'open', nearby);
+        }
+      }
       this.hud.onSimEvent(e);
     };
     if (!this.terrain) this.terrain = new TerrainRenderer(this.scene, hf);
@@ -277,6 +293,8 @@ export class Game {
     this.trainsR.clear();
     this.particles.clear();
     this.audio.resetTrainTracking(0, 0, 0);
+    this.trainDwelling.clear();
+    this.lastSignalAhead.train = -1;
     this.scatter.placed = placed;
     this.scatter.exclusions = exclusions;
     net.dirty = new Set(net.segs.keys());
@@ -318,11 +336,20 @@ export class Game {
     });
   }
 
+  private syncAudioTracking() {
+    this.trainDwelling.clear();
+    for (const t of this.sim.trains) {
+      if (t.dwell > 0) this.trainDwelling.add(t.id);
+    }
+    this.lastSignalAhead.train = -1;
+  }
+
   applySave(data: SaveData, restoreTime: boolean) {
     // Build everything that can throw before the current world is replaced.
     const { hf, net } = buildWorld(data);
     this.installWorld(hf, net, [...data.placed], [...(data.exclusions ?? [])]);
     this.driven = restoreTrains(this.sim, data);
+    this.syncAudioTracking();
     this.hud.syncTrains();
     if (restoreTime) this.env.hours = data.hours;
     if (!this.driven && this.sim.trains.length) this.setDriven(this.sim.trains[0]);
@@ -521,6 +548,7 @@ export class Game {
     this.sim.strict = this.rules === 'strict';
     for (const t of sim.trains) t.duty = duties.get(t.id) ?? null;
     this.driven = driven;
+    this.syncAudioTracking();
     this.track.clear();
     this.particles.clear();
     net.dirty = new Set(net.segs.keys());
@@ -603,6 +631,10 @@ export class Game {
 
   toast(text: string, warn = false) {
     this.hud.toast(text, warn);
+  }
+
+  playLeverSound(kind: 'points' | 'signal') {
+    this.audio.playLeverClunk(kind);
   }
 
   syncEditor() {
@@ -753,6 +785,7 @@ export class Game {
     }
     this.net.throwSwitch(j.node, j.side);
     t.grants = [];
+    this.audio.playLeverClunk('points');
     this.hud.toast('Points thrown');
   }
 
@@ -922,10 +955,80 @@ export class Game {
 
     const pitch = !cab && driven && drivenPose ? this.trainSoundPitch(drivenPose, driven.speed) : 1;
     this.updateDrivenAudio(driven, trainsRunning, cab, pitch);
+    this.updateWorldAudio(listener, driven, trainsRunning, cab, dt);
     this.audio.updateWarning(
       dt,
       trainsRunning && !!driven && !driven.ai && !!driven.warning && !driven.warning.acknowledged,
     );
+  }
+
+  private updateWorldAudio(
+    listener: THREE.Vector3,
+    driven: Train | null,
+    trainsRunning: boolean,
+    cab: boolean,
+    dt: number,
+  ) {
+    const groundY = this.hf.height(listener.x, listener.z);
+    const nearWaterY = Math.min(
+      groundY,
+      this.hf.height(listener.x + 24, listener.z),
+      this.hf.height(listener.x - 24, listener.z),
+      this.hf.height(listener.x, listener.z + 24),
+      this.hf.height(listener.x, listener.z - 24),
+    );
+    const inWorld = Math.abs(listener.x) <= WORLD_SIZE / 2 && Math.abs(listener.z) <= WORLD_SIZE / 2;
+    const riverDist = inWorld ? Math.abs(listener.z - riverCenter(listener.x)) : Infinity;
+    this.audio.updateAmbience(
+      {
+        preset: this.hf.preset,
+        cameraY: listener.y,
+        groundY,
+        nearWaterY,
+        riverDist,
+        night: this.env.night,
+        cab,
+      },
+      dt,
+    );
+
+    // AI trains do not emit a 'depart' SimEvent, so watch dwell transitions for their closing door chime.
+    for (const tr of this.sim.trains) {
+      const dwelling = tr.dwell > 0;
+      const was = this.trainDwelling.has(tr.id);
+      if (dwelling) {
+        this.trainDwelling.add(tr.id);
+      } else if (was) {
+        this.trainDwelling.delete(tr.id);
+        if (tr.ai && trainsRunning && this.trainSpeed <= 2) {
+          const h = this.sim.head(tr);
+          const d = listener.distanceTo(this.tmpAudioFocus.set(h.x, h.y, h.z));
+          const nearby = Math.max(0, 1 - d / 260);
+          if (nearby > 0.01) this.audio.playDoorChime('close', nearby);
+        }
+      }
+    }
+
+    if (!driven) {
+      this.lastSignalAhead.train = -1;
+      return;
+    }
+    const sig = this.sim.signalAhead(driven);
+    const key = sig ? `${sig.node}:${sig.side}` : '';
+    const aspect = sig ? sig.aspect : '';
+    if (
+      trainsRunning &&
+      this.lastSignalAhead.train === driven.id &&
+      key &&
+      key === this.lastSignalAhead.key &&
+      aspect !== this.lastSignalAhead.aspect &&
+      sig!.dist < 600
+    ) {
+      this.audio.playLeverClunk('signal', 0.55);
+    }
+    this.lastSignalAhead.train = driven.id;
+    this.lastSignalAhead.key = key;
+    this.lastSignalAhead.aspect = aspect;
   }
 
   private updateDrivenAudio(t: Train | null, trainsRunning: boolean, cab: boolean, pitch: number) {

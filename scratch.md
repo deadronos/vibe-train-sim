@@ -1,6 +1,6 @@
 # Next issues
 
-Suggested order and batches for the remaining review issues, updated on 2026-11-17 (v0.2.1). 21 feature issues remain across 5 umbrellas (`#21`, `#32`, `#48`, `#54`, `#68`).
+Suggested order and batches for the remaining review issues, updated on 2026-11-17 (v0.4.2). 8 feature issues remain across 4 umbrellas (`#21`, `#32`, `#48`, `#68`).
 
 ## Completed batches (archive)
 
@@ -12,6 +12,7 @@ Suggested order and batches for the remaining review issues, updated on 2026-11-
 - **Batch 1 — Editor clarity, camera feel and adaptive quality:** [#39](https://github.com/deadronos/vibe-train-sim/issues/39), [#45](https://github.com/deadronos/vibe-train-sim/issues/45), and [#19](https://github.com/deadronos/vibe-train-sim/issues/19) (partial; physical low-end device measurements remain open on `#19`).
 - **Batch 2 — Rendering and edit scalability:** [#15](https://github.com/deadronos/vibe-train-sim/issues/15) (per-node prop rebuilds and station sign updates), [#16](https://github.com/deadronos/vibe-train-sim/issues/16) (incremental grading, spatial grid in `Network`, per-region scatter, brush-area track dirtying), [#17](https://github.com/deadronos/vibe-train-sim/issues/17) (chunk-merged track, shared network prop instancing, instanced bounds for culling), and [#18](https://github.com/deadronos/vibe-train-sim/issues/18) (terrain LODs with skirts, tree LOD1/LOD2 variants, shadow-frustum culling).
 - **Batch 3 — Bring trains and cabs to life (visuals + core sound):** [#26](https://github.com/deadronos/vibe-train-sim/issues/26) (instanced rotating wheelsets, body sway/roll/bounce, couplers/gangways, real spotlight + projected AI headlight cones), [#28](https://github.com/deadronos/vibe-train-sim/issues/28) (low-poly `cab_interior` with live dial/lever and reduced-motion-safe head sway), [#29](https://github.com/deadronos/vibe-train-sim/issues/29) (turnout switch blades, frogs, guard rails, blended ballast and smooth blade animation), [#27](https://github.com/deadronos/vibe-train-sim/issues/27) (pooled instanced diesel exhaust, brake sparks, desert dust and impact bursts respecting low quality), and [#51](https://github.com/deadronos/vibe-train-sim/issues/51) (pure Web Audio diesel notches/load/turbo whine, brake squeal/air release, tight-curve flange squeal, node-driven junction clatter, bridge resonance and impact sounds).
+- **Batch 4A — Directional & ambient audio:** [#52](https://github.com/deadronos/vibe-train-sim/issues/52) (camera-anchored `AudioListener`, distance-culled `PannerNode` passing-train voices, Doppler shift, and live editor audio in #105), and [#53](https://github.com/deadronos/vibe-train-sim/issues/53) (altitude wind, river/coast water, per-landscape day birds vs night crickets, point/signal lever clunks, station door chimes, and signal-box UI clicks; rain/thunder hooks deferred to `#30`).
 
 ---
 
@@ -19,12 +20,10 @@ Suggested order and batches for the remaining review issues, updated on 2026-11-
 
 - [#19](https://github.com/deadronos/vibe-train-sim/issues/19): **Finish adaptive quality and performance measurements** (`area: performance`, partly done in #81 and #95) — Physical low-end laptop and phone hardware measurements still tracked on `#19`.
 
-## Batch 4: World atmosphere, directional audio and shaders
+## Batch 4B–4C: World atmosphere and shaders
 
 Richer environments day and night once Batch 2 draw budgets and Batch 3 train effects are in place.
 
-- [#52](https://github.com/deadronos/vibe-train-sim/issues/52): **Positional sound and Doppler for other trains** (`area: audio`) — Camera-anchored `AudioListener`, distance-culled `PannerNode` sources for passing trains, Doppler shift, and live audio in the editor.
-- [#53](https://github.com/deadronos/vibe-train-sim/issues/53): **Ambience and small world sounds** (`area: audio`) — Synthesized altitude wind, river/coast water, day birds vs night crickets per preset, point/lever clicks, and station door chimes.
 - [#24](https://github.com/deadronos/vibe-train-sim/issues/24): **Water depth, shoreline and reflections** (`area: visuals`).
 - [#25](https://github.com/deadronos/vibe-train-sim/issues/25): **Terrain materials along track and shores** (`area: visuals`).
 - [#30](https://github.com/deadronos/vibe-train-sim/issues/30): **Weather: rain, snow, mist and moving cloud shadows** (`area: visuals`) — pairs with rain/thunder in [#53](https://github.com/deadronos/vibe-train-sim/issues/53).
