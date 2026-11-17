@@ -42,15 +42,15 @@ Do these before any large refactor. The follow-ups #5, #6 and #7 are still open.
 
 [#60](https://github.com/deadronos/vibe-train-sim/issues/60) landed in #84, #85 and #86, and [#42](https://github.com/deadronos/vibe-train-sim/issues/42) with the small-screen layouts after them. Real phones still need a try: emulated sizes don't show touch feel or performance.
 
+## Done after November batch
+
+- [#20](https://github.com/deadronos/vibe-train-sim/issues/20): allocation fixes (#80) verified with a before/after CDP heap sampling profile (`d4c64c3` vs `main`).
+- [#46](https://github.com/deadronos/vibe-train-sim/issues/46): keyboard and screen reader fixes (#82) plus axe-core, landmark, topbar-wrap and WCAG AA contrast fixes.
+- [#62](https://github.com/deadronos/vibe-train-sim/issues/62) and [#63](https://github.com/deadronos/vibe-train-sim/issues/63): signal types, route indicators, speed boards, train protection and interlocked diamond crossings landed in #88.
+
 ## Partly done
 
-- [#20](https://github.com/deadronos/vibe-train-sim/issues/20): the listed allocation sources are fixed (#80). Still needs an allocation profile before and after.
 - [#19](https://github.com/deadronos/vibe-train-sim/issues/19): quality applies live, Auto adapts to frame rate, and `?debug` shows a perf overlay (#81). Still needs measurements on a low-end laptop and a phone.
-- [#46](https://github.com/deadronos/vibe-train-sim/issues/46): keyboard and screen reader fixes are in (#82). Still needs an axe or Lighthouse audit and a contrast check.
-
-## 5. Next
-
-1. [#62](https://github.com/deadronos/vibe-train-sim/issues/62) and [#63](https://github.com/deadronos/vibe-train-sim/issues/63): more signal types and level crossings of lines, which build on the strict rules.
 
 ## Wait on these
 

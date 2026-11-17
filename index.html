@@ -6,18 +6,24 @@
     <title>Vibe Train Sim</title>
   </head>
   <body data-mode="drive">
-    <canvas
-      id="view"
-      role="img"
-      aria-label="3D view of the railway. The desk, train list and menus describe what it shows."
-    >
-      Vibe Train Sim needs a browser with WebGL 2 to show the railway.
-    </canvas>
+    <main id="stage">
+      <canvas
+        id="view"
+        role="img"
+        aria-label="3D view of the railway. The desk, train list and menus describe what it shows."
+      >
+        Vibe Train Sim needs a browser with WebGL 2 to show the railway.
+      </canvas>
 
-    <div id="loading">
-      <p>Vibe Train Sim</p>
-      <div class="track"><div id="loadbar"></div></div>
-    </div>
+      <div id="loading">
+        <p>Vibe Train Sim</p>
+        <div class="track"><div id="loadbar"></div></div>
+      </div>
+
+      <div id="toasts" aria-live="polite"></div>
+      <p id="drive-status" class="visually-hidden" aria-live="polite"></p>
+      <pre id="perf" hidden></pre>
+    </main>
 
     <!-- Top row: mode lever, clock, map menu -->
     <header id="topbar">
@@ -135,17 +141,17 @@
         </svg>
       </div>
 
-      <div class="desk-group" id="line-info" aria-label="Line ahead">
+      <section class="desk-group" id="line-info" aria-label="Line ahead">
         <div class="readout">
           <span id="limit-text"></span>
           <span id="next-limit-text"></span>
           <span id="grade-text"></span>
         </div>
-      </div>
+      </section>
 
       <div class="desk-group" id="controls">
         <div id="lever-wrap">
-          <label for="power-lever">Power</label>
+          <span aria-hidden="true">Power</span>
           <input
             id="power-lever"
             type="range"
@@ -156,7 +162,7 @@
             orient="vertical"
             aria-label="Power and brake lever"
           />
-          <label for="power-lever">Brake</label>
+          <span aria-hidden="true">Brake</span>
         </div>
         <div class="desk-buttons">
           <button id="btn-auto" aria-pressed="true">Autopilot</button>
@@ -173,14 +179,12 @@
     </section>
 
     <!-- Editor: the lever frame -->
-    <section id="frame" aria-label="Map editor tools" role="toolbar"></section>
+    <aside id="editor-bar" aria-label="Map editor">
+      <div id="frame" aria-label="Map editor tools" role="toolbar"></div>
+      <output id="status"></output>
+    </aside>
 
     <aside id="tool-panel" class="plate" aria-label="Tool options"></aside>
-    <output id="status"></output>
-
-    <div id="toasts" aria-live="polite"></div>
-    <p id="drive-status" class="visually-hidden" aria-live="polite"></p>
-    <pre id="perf" hidden></pre>
 
     <section id="overview" class="plate" aria-label="Overview map" hidden>
       <div class="overview-head">
