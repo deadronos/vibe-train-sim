@@ -2,7 +2,7 @@ import type { Tool } from '../editor/editor';
 // HTML interface: mode lever, clock, train register, driver's desk and the editor's lever frame.
 import type { Game } from '../game';
 import type { MapEntry } from '../mapLibrary';
-import type { Quality, Rules } from '../persistence';
+import type { Quality, Rules, ScenerySetting, ShadowSetting } from '../persistence';
 import type { Duty } from '../rail/duty';
 import { clock } from '../rail/duty';
 import type { Network } from '../rail/network';
@@ -161,9 +161,7 @@ export class Hud {
       this.guide.restart();
     };
     this.bindMaps();
-    const q = $<HTMLSelectElement>('quality');
-    q.value = g.quality;
-    q.onchange = () => g.setQuality(q.value as Quality);
+    this.bindGraphics();
     const rules = $<HTMLSelectElement>('rules');
     rules.value = g.rules;
     rules.onchange = () => {
@@ -359,6 +357,27 @@ export class Hud {
     };
     placeBelowTopbar();
     if (typeof ResizeObserver !== 'undefined') new ResizeObserver(placeBelowTopbar).observe(topbar);
+  }
+
+  private bindGraphics() {
+    const g = this.game;
+    const dlg = $<HTMLDialogElement>('dlg-graphics');
+    const q = $<HTMLSelectElement>('quality');
+    const sh = $<HTMLSelectElement>('shadows');
+    const sc = $<HTMLSelectElement>('scenery');
+    const sync = () => {
+      q.value = g.quality;
+      sh.value = g.shadows;
+      sc.value = g.scenery;
+    };
+    $('btn-graphics').onclick = () => {
+      sync();
+      dlg.showModal();
+    };
+    q.onchange = () => g.setQuality(q.value as Quality);
+    sh.onchange = () => g.setShadows(sh.value as ShadowSetting);
+    sc.onchange = () => g.setScenery(sc.value as ScenerySetting);
+    sync();
   }
 
   private bindSound() {

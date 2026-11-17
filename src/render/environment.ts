@@ -50,13 +50,27 @@ export class Environment {
   private tmp = new THREE.Vector3();
   private keyDir = new THREE.Vector3();
 
-  /** Changes the shadow map resolution in place; three.js allocates the new map on the next render. */
+  /** Changes the shadow map resolution in place, or disables shadow casting when size is 0. */
   setShadowSize(size: number) {
-    if (this.sun.shadow.mapSize.x === size && this.sun.shadow.map) return;
+    if (size <= 0) {
+      if (!this.sun.castShadow && !this.renderer.shadowMap.enabled) return;
+      this.sun.castShadow = false;
+      this.renderer.shadowMap.enabled = false;
+      this.renderer.shadowMap.needsUpdate = true;
+      return;
+    }
+    const wasOff = !this.renderer.shadowMap.enabled || !this.sun.castShadow;
+    this.sun.castShadow = true;
+    this.renderer.shadowMap.enabled = true;
+    if (this.sun.shadow.mapSize.x === size && this.sun.shadow.map) {
+      if (wasOff) this.renderer.shadowMap.needsUpdate = true;
+      return;
+    }
     this.sun.shadow.mapSize.set(size, size);
     this.sun.shadow.map?.dispose();
     this.sun.shadow.map = null;
     this.shadowTexelSnap = (SHADOW_SPAN * 2) / size;
+    this.renderer.shadowMap.needsUpdate = true;
   }
 
   constructor(
@@ -64,7 +78,7 @@ export class Environment {
     private renderer: THREE.WebGLRenderer,
     shadowSize: number,
   ) {
-    this.sky.scale.setScalar(16000);
+    this.sky.scale.setScalar(9000);
     this.sky.frustumCulled = false;
     scene.add(this.sky);
     const skyMat = this.sky.material;
@@ -98,7 +112,7 @@ export class Environment {
     this.stars = this.makeStars();
     scene.add(this.stars);
     this.moon = new THREE.Mesh(
-      new THREE.SphereGeometry(95, 24, 16),
+      new THREE.SphereGeometry(56, 24, 16),
       new THREE.MeshBasicMaterial({ color: new THREE.Color(2.6, 2.6, 2.4), fog: false }),
     );
     scene.add(this.moon);
@@ -114,9 +128,9 @@ export class Environment {
       const a = Math.random() * Math.PI * 2;
       const y = u * 0.98 + 0.02;
       const r = Math.sqrt(1 - y * y);
-      pos[i * 3] = Math.cos(a) * r * 7500;
-      pos[i * 3 + 1] = y * 7500;
-      pos[i * 3 + 2] = Math.sin(a) * r * 7500;
+      pos[i * 3] = Math.cos(a) * r * 4500;
+      pos[i * 3 + 1] = y * 4500;
+      pos[i * 3 + 2] = Math.sin(a) * r * 4500;
       const b = Math.pow(Math.random(), 3) * 2.2 + 0.25;
       const warm = Math.random();
       col[i * 3] = b * (0.85 + warm * 0.15);
@@ -207,7 +221,7 @@ export class Environment {
 
     (this.stars.material as THREE.PointsMaterial).opacity = this.night;
     this.stars.position.copy(this.tmp.set(focus.x, 0, focus.z));
-    this.moon.position.copy(this.moonDir).multiplyScalar(7300).add(this.stars.position);
+    this.moon.position.copy(this.moonDir).multiplyScalar(4350).add(this.stars.position);
     this.moon.visible = this.night > 0.02;
     this.sky.position.set(focus.x, 0, focus.z);
 
@@ -223,7 +237,7 @@ export class Environment {
       this.envCooldown = 0.35;
       this.lastEnvElevation = el;
       this.lastEnvCloud = this.cloudCover;
-      const rt = this.pmrem.fromScene(this.envScene, 0, 1, 20000);
+      const rt = this.pmrem.fromScene(this.envScene, 0, 1, 10000);
       this.scene.environment = rt.texture;
       this.envRT?.dispose();
       this.envRT = rt;

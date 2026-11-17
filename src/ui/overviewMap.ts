@@ -60,7 +60,13 @@ export class OverviewMap {
       this.terrainFor = null; // The ground may have been reshaped since the map was last open
       // Start centred on what the player is looking at.
       const t = this.game.driven;
-      const at = this.game.editing ? this.game.editor.controls.target : t ? this.game.sim.head(t) : null;
+      const at = this.game.editing
+        ? this.game.editor.controls.target
+        : this.game.rig.mode === 'free'
+          ? this.game.rig.freePos
+          : t
+            ? this.game.sim.head(t)
+            : null;
       if (at && this.zoom > 1) {
         this.cx = at.x;
         this.cz = at.z;

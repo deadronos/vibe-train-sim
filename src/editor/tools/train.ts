@@ -51,6 +51,6 @@ export const trainTool: EditorTool = {
     }
     ctx.showArrow(pt.x + pt.tx * 7, pt.y + 2, pt.z + pt.tz * 7, pt.tx, pt.tz);
     ctx.showHighlight(pt.x, pt.y + 0.5, pt.z, 4);
-    ctx.setStatus('The train will head the way the arrow points. Move to the other side of the track to turn it');
+    ctx.setStatus(`Click to place ${TRAIN_LABELS[ctx.trainKind]} train facing the arrow (move across track to flip)`);
   },
 };

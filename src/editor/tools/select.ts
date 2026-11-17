@@ -27,8 +27,8 @@ export class SelectTool implements EditorTool {
     ctx.refreshPanel();
   }
 
-  move(ctx: EditorContext, p: WorldPoint): boolean {
-    if (!this.dragging || ctx.selected === null) return false;
+  move(ctx: EditorContext, p: WorldPoint | null): boolean {
+    if (!this.dragging || ctx.selected === null || !p) return false;
     const net = ctx.host.net;
     const n = net.nodes.get(ctx.selected);
     if (!n) return false;
@@ -36,7 +36,7 @@ export class SelectTool implements EditorTool {
       ctx.host.pushUndo();
       this.dragMoved = true;
     }
-    net.moveNode(n.id, p.x, n.y, p.z);
+    net.moveNode(n.id, p.x, p.y, p.z);
     ctx.host.commitEdit();
     ctx.setStatus(net.problemAt(n.id) ?? 'Release to place the point here');
     ctx.refreshPanel();
@@ -53,7 +53,21 @@ export class SelectTool implements EditorTool {
   }
 
   hover(ctx: EditorContext, p: WorldPoint) {
-    const n = ctx.host.net.nearestNode(p.x, p.z, ANCHOR_NODE);
-    if (n) ctx.showHighlight(n.x, n.y + 0.5, n.z, 5);
+    const net = ctx.host.net;
+    const n = net.nearestNode(p.x, p.z, ANCHOR_NODE);
+    if (!n) {
+      ctx.setStatus('Click a track point to select it, or drag the ground to pan');
+      return;
+    }
+    ctx.showHighlight(n.x, n.y + 0.5, n.z, 5);
+    const st = net.stationAt(n.id);
+    const what = st
+      ? `Station ${st.name}`
+      : net.isJunction(n.id)
+        ? 'Junction'
+        : n.signals[1] || n.signals[-1]
+          ? 'Signal point'
+          : 'Track point';
+    ctx.setStatus(`${what} — click to select, drag to move`);
   }
 }

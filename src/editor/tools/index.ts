@@ -1,5 +1,5 @@
 import { bridgeTool } from './bridge';
-import { deleteTool } from './delete';
+import { DeleteTool } from './delete';
 import { sceneryTool } from './scenery';
 import { SelectTool } from './select';
 import { signalTool } from './signal';
@@ -19,6 +19,6 @@ export function createTools(): Record<Tool, EditorTool> {
     terrain: new TerrainTool(),
     scenery: sceneryTool,
     train: trainTool,
-    delete: deleteTool,
+    delete: new DeleteTool(),
   };
 }

@@ -1,17 +1,7 @@
 import type { SceneryType } from '../../world/scenery';
+import { SCENERY_LABEL } from '../../world/scenery';
 import { heading, labeledSelect, para } from './controls';
 import type { PanelFactory } from './panel';
-
-const SCENERY_LABEL: Record<SceneryType, string> = {
-  tree_pine: 'Pine tree',
-  tree_oak: 'Oak tree',
-  tree_birch: 'Birch tree',
-  rock_a: 'Small rock',
-  rock_b: 'Large rock',
-  house_a: 'Cottage',
-  house_b: 'Long house',
-  house_c: 'Town house',
-};
 
 export const sceneryPanel: PanelFactory = (container, g) => {
   const ed = g.editor;

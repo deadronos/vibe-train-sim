@@ -35,7 +35,7 @@ export class PerfOverlay {
       `${(info.render.triangles / 1000).toFixed(0)}k triangles`,
       `${info.memory.geometries} geometries, ${info.memory.textures} textures`,
       `pixel ratio ${g.renderer.getPixelRatio().toFixed(2)}`,
-      `quality ${quality}`,
+      `quality ${quality} (shadows ${g.shadows}, scenery ${g.scenery})`,
     ].join('\n');
   }
 }

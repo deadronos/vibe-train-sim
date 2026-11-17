@@ -1246,6 +1246,17 @@ dialog menu {
   display: none;
 }
 
+#box-select {
+  position: fixed;
+  z-index: 6;
+  border: 1.5px solid var(--brass);
+  background: rgba(199, 163, 80, 0.16);
+  pointer-events: none;
+}
+#box-select[hidden] {
+  display: none;
+}
+
 /* Read by screen readers, not shown. */
 .visually-hidden {
   position: absolute;

@@ -25,11 +25,11 @@ npm run dev
 - **Timetables** set each train's stops, arrival and departure times, and where it changes ends. Trains wait at a stop until its time on the clock, and a driver's score is due by the timetable. The same dialog changes a standing train's vehicles, and its service diagram plots every train's planned and actual stops against the clock
 - Take over any train to drive its service by hand: stop within each platform with the doors open, on time, and you score points. Speeding, passing red signals, missed stops and crashes cost points, and you get a summary with your best score for that landscape when you hand back to the autopilot
 - Relaxed or strict rules. Cab safety warnings alert you when approaching restrictive signals or steep speed drops (press Q or Acknowledge); under strict rules, unacknowledged warnings, overspeeding, and passing a red signal trigger emergency braking, and a hard hit or derailment damages the train until you recover it
-- Chase, cab and trackside cameras
+- Chase, cab (scroll wheel adjusts field of view), trackside, cinematic and free-fly cameras, with smooth transitions that respect reduced motion
 - An overview map (press O) of the whole railway, showing trains, stations, signal types and aspects, diamond crossings, and occupied sections. Click a train to drive it, or a place to go there in the editor
 - A short getting-started guide on first visit, which Help can show again
 - Synthesised engine, rail joint, cab warning and horn sounds, with saved volume levels for each, that go quiet in a hidden tab
-- Auto graphics lowers the resolution, then the effects, while frames run slow. High and low apply at once, without a reload
+- Graphics settings apply live without a reload: Auto quality adapts resolution and effects to frame rate, and Shadows and Scenery density can be set separately
 
 **Railway**
 
@@ -44,6 +44,7 @@ npm run dev
 - Place main, distant or calling-on signals, stations, scenery and trains. A new train faces the way the arrow shows, and can't be placed on top of another
 - Set a platform's length, switch signal types, and override section speed limits from the Select panel
 - Bridges appear where track runs high or crosses water; river crossings get a steel truss. You can force a bridge or an embankment per section
+- Editor hover highlights and names the exact item a click will affect; Remove can delete individual signals, generated trees/rocks, or box-select multiple items at once
 - Terrain brushes: raise, lower, smooth and flatten. The ground forms embankments and cuttings around track automatically
 - Undo and redo, browser saves, and JSON import and export. A damaged save is kept as a backup and a new map starts; a bad import leaves your map as it was
 - The map saves itself every minute and when you leave the page. **Maps** keeps named copies, and the last three maps replaced by a new map, an import or a load are kept as backups

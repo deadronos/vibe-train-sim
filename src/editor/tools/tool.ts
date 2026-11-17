@@ -4,13 +4,17 @@ import type { Dir, Network, SignalType } from '../../rail/network';
 import type { planCurve } from '../../rail/network';
 import type { Sim, Train } from '../../rail/sim';
 import type { Heightfield } from '../../world/heightfield';
-import type { PlacedItem, SceneryType } from '../../world/scenery';
+import type { PlacedItem, SceneryExclusion, SceneryType } from '../../world/scenery';
 import type { TrackPoint } from '../trackPlan';
 
 export type Tool = 'select' | 'track' | 'signal' | 'station' | 'bridge' | 'terrain' | 'scenery' | 'train' | 'delete';
 export type BrushMode = 'raise' | 'lower' | 'smooth' | 'flatten';
 export type TrainKind = 'passenger' | 'shuttle' | 'freight' | 'emptyFreight';
 export type WorldPoint = TrackPoint;
+export interface ScreenPoint {
+  x: number;
+  y: number;
+}
 
 /** Narrow view of Game that the editor and its tools are allowed to use. */
 export interface EditorHost {
@@ -22,12 +26,16 @@ export interface EditorHost {
   readonly hf: Heightfield;
   readonly sim: Sim;
   readonly driven: Train | null;
+  readonly placedScenery: readonly PlacedItem[];
+  readonly generatedScenery: readonly PlacedItem[];
   pushUndo(): void;
   commitEdit(opts?: { scenery?: boolean }): void;
   abandonEdit(): void;
   addPlacedScenery(item: PlacedItem): void;
   placedSceneryNear(x: number, z: number, radius: number): number;
   removePlacedScenery(index: number): void;
+  generatedSceneryNear(x: number, z: number, radius: number): PlacedItem | null;
+  addSceneryExclusion(ex: SceneryExclusion): void;
   addTrain(train: Train, seg: number, s: number, dir: Dir): Train | null;
   removeTrain(t: Train): void;
   toast(text: string, warn?: boolean): void;
@@ -62,6 +70,9 @@ export interface EditorContext {
   hideRing(): void;
   showRibbon(curve: ReturnType<typeof planCurve>, P: WorldPoint, Q: WorldPoint, ok: boolean): void;
   hideRibbon(): void;
+  showBox(x0: number, y0: number, x1: number, y1: number): void;
+  hideBox(): void;
+  project(x: number, y: number, z: number): { x: number; y: number; visible: boolean };
 }
 
 export interface EditorTool {
@@ -71,9 +82,9 @@ export interface EditorTool {
   enter?(ctx: EditorContext): void;
   leave?(ctx: EditorContext): void;
   cancel?(ctx: EditorContext): void;
-  down?(ctx: EditorContext, p: WorldPoint): void;
-  move?(ctx: EditorContext, p: WorldPoint): boolean | void;
-  up?(ctx: EditorContext): void;
+  down?(ctx: EditorContext, p: WorldPoint, screen?: ScreenPoint): void;
+  move?(ctx: EditorContext, p: WorldPoint | null, screen?: ScreenPoint): boolean | void;
+  up?(ctx: EditorContext, p: WorldPoint | null, screen?: ScreenPoint): void;
   hover?(ctx: EditorContext, p: WorldPoint): void;
   onHeightChange?(ctx: EditorContext): void;
 }

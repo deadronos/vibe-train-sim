@@ -19,7 +19,7 @@ Dependencies point downward only.
 - `src/saveData.ts` defines the save format and validates it.
 - `src/history.ts` holds the undo and redo stacks.
 - `src/driverInput.ts` holds held keys and the power lever, and binds the keyboard.
-- `src/world/scenery.ts` holds `SceneryType` and `PlacedItem`, shared between saves, the editor and `ScatterRenderer`.
+- `src/world/scenery.ts` holds `SceneryType`, `PlacedItem`, `SceneryExclusion`, and the per-cell deterministic `generateScenery()` pass, shared between saves, the editor and `ScatterRenderer`.
 - `src/editor/trackPlan.ts` holds pure track-planning geometry and anchor resolution without Three.js or DOM dependencies so unit tests can exercise it directly.
 
 The editor, interface (`src/ui/hud.ts` and per-tool panels in `src/ui/panels/`, which update controls in place to preserve focus) and `driverInput.ts` import `Game` as a type, while `game.ts` creates them. Editor tools talk to `Game` through `EditorHost` (`src/editor/tools/tool.ts`) and run edits through `Editor.edit()` so undo, commit and abandon happen in one place.
@@ -74,7 +74,7 @@ After an edit, call `Game.commitEdit()`, which regrades terrain and calls `Sim.s
 
 ## Saves
 
-`SaveData` in `src/saveData.ts` stores the preset and seed, sparse terrain edits, the network, placed scenery and each train's position. Terrain noise and geometry are regenerated on load.
+`SaveData` in `src/saveData.ts` stores the preset and seed, sparse terrain edits, the network, placed scenery, optional scenery `exclusions` for removed generated items, and each train's position. Terrain noise, procedural scenery and geometry are regenerated on load.
 
 `parseSave()` in the same file validates a whole save (types, ids that point to real nodes, allowed values) and returns the data or a reason. It must stay free of Three.js and the DOM so tests can run it. Browser saves and imports both go through it. If you add a field or enum value to `SaveData`, update `parseSave()` and its tests too.
 
