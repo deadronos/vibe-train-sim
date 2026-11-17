@@ -1,58 +1,58 @@
 # Next issues
 
-Suggested order for the review issues, written on 2026-11-04 and updated on 2026-11-16. Groups 1 to 4 and the cheap wins are done.
+Suggested order and batches for the remaining review issues, updated on 2026-11-17 (v0.2.1). 21 feature issues remain across 5 umbrellas (`#21`, `#32`, `#48`, `#54`, `#68`).
 
-## 1. Fix what can hurt a normal session (done)
+## Completed batches (archive)
 
-Do these first. Each is a contained bug, and most players could hit them.
+- **Code quality, modularity and tests ([#13](https://github.com/deadronos/vibe-train-sim/issues/13), closed):** [#3](https://github.com/deadronos/vibe-train-sim/issues/3)–[#12](https://github.com/deadronos/vibe-train-sim/issues/12) landed across #70, #72, #91 (`#5`, `#8`, `#12`) and #92 (`#6`, `#7`).
+- **Session fixes & map safety:** [#14](https://github.com/deadronos/vibe-train-sim/issues/14), [#22](https://github.com/deadronos/vibe-train-sim/issues/22), [#33](https://github.com/deadronos/vibe-train-sim/issues/33)–[#38](https://github.com/deadronos/vibe-train-sim/issues/38), [#43](https://github.com/deadronos/vibe-train-sim/issues/43).
+- **Driving & signalling gameplay:** [#40](https://github.com/deadronos/vibe-train-sim/issues/40), [#41](https://github.com/deadronos/vibe-train-sim/issues/41), [#44](https://github.com/deadronos/vibe-train-sim/issues/44), [#55](https://github.com/deadronos/vibe-train-sim/issues/55)–[#63](https://github.com/deadronos/vibe-train-sim/issues/63), [#66](https://github.com/deadronos/vibe-train-sim/issues/66), [#67](https://github.com/deadronos/vibe-train-sim/issues/67) (#73, #74, #78, #79, #84, #85, #86, #88).
+- **UI, accessibility, sound basics & allocation cleanup:** [#20](https://github.com/deadronos/vibe-train-sim/issues/20), [#42](https://github.com/deadronos/vibe-train-sim/issues/42), [#46](https://github.com/deadronos/vibe-train-sim/issues/46), [#47](https://github.com/deadronos/vibe-train-sim/issues/47), [#49](https://github.com/deadronos/vibe-train-sim/issues/49), [#50](https://github.com/deadronos/vibe-train-sim/issues/50) (#75, #80, #82, #87, #89).
 
-| Issue                                                        | Why now                                                                    | Size   |
-| ------------------------------------------------------------ | -------------------------------------------------------------------------- | ------ |
-| [#3](https://github.com/deadronos/vibe-train-sim/issues/3)   | A corrupt save stops the game from starting until site data is cleared     | Small  |
-| [#43](https://github.com/deadronos/vibe-train-sim/issues/43) | Same start-up code as #3: players without WebGL get an endless loading bar | Small  |
-| [#33](https://github.com/deadronos/vibe-train-sim/issues/33) | Space can turn off autopilot, and Tab blocks keyboard navigation           | Medium |
-| [#34](https://github.com/deadronos/vibe-train-sim/issues/34) | Any edit stops every train when "Keep trains moving while editing" is on   | Medium |
-| [#14](https://github.com/deadronos/vibe-train-sim/issues/14) | GPU memory grows with every prop rebuild                                   | Small  |
-| [#22](https://github.com/deadronos/vibe-train-sim/issues/22) | The scene is almost black after sunset, for part of every day              | Small  |
+---
 
-## 2. Add a safety net (done)
+## Batch 1: Editor clarity, camera feel and finishing adaptive quality
 
-Do these before any large refactor.
+Self-contained improvements to everyday usability and diagnostics.
 
-- [#9](https://github.com/deadronos/vibe-train-sim/issues/9): remove dead code. A quick warm-up that makes the next steps easier.
-- [#10](https://github.com/deadronos/vibe-train-sim/issues/10): test saves, undo and terrain grading.
-- [#11](https://github.com/deadronos/vibe-train-sim/issues/11): add a browser smoke test to CI. Nothing checks the running game automatically today.
-- [#4](https://github.com/deadronos/vibe-train-sim/issues/4): split `Game`, once the tests above are in. [#5](https://github.com/deadronos/vibe-train-sim/issues/5), [#6](https://github.com/deadronos/vibe-train-sim/issues/6), [#7](https://github.com/deadronos/vibe-train-sim/issues/7), [#8](https://github.com/deadronos/vibe-train-sim/issues/8) and [#12](https://github.com/deadronos/vibe-train-sim/issues/12) are done.
+- [#39](https://github.com/deadronos/vibe-train-sim/issues/39): **Show what an editor click will do before it happens** (`area: ui-ux`) — Ready now that editor tools are split (`#6`). Unify hover and click hit-tests, show the target name in status, allow single-signal delete and box select, grow the node marker buffer dynamically, and make generated scenery seeds stable with exclusion areas.
+- [#45](https://github.com/deadronos/vibe-train-sim/issues/45): **Free camera and smooth camera changes** (`area: ui-ux`) — Ease between camera positions (respecting reduced motion), add a free-fly camera while trains keep running, and let wheel adjust FOV in cab view.
+- [#19](https://github.com/deadronos/vibe-train-sim/issues/19): **Finish adaptive quality and performance measurements** (`area: performance`, partly done in #81) — Live switching, `Auto`, and `?debug` overlay are in; still needs low-end laptop and phone frame measurements, separate shadow/scenery controls, and checking `logarithmicDepthBuffer` vs tightened near/far planes.
 
-## Physics batch (done)
+## Batch 2: Rendering and edit scalability
 
-[#67](https://github.com/deadronos/vibe-train-sim/issues/67), [#57](https://github.com/deadronos/vibe-train-sim/issues/57), [#56](https://github.com/deadronos/vibe-train-sim/issues/56), [#61](https://github.com/deadronos/vibe-train-sim/issues/61) and [#66](https://github.com/deadronos/vibe-train-sim/issues/66) were done ahead of group 3. Rolling back, part of #56, waits for [#64](https://github.com/deadronos/vibe-train-sim/issues/64).
+Protects large player-built maps; measure each change with the `?debug` overlay.
 
-## 3. Make driving a game (done)
+- [#15](https://github.com/deadronos/vibe-train-sim/issues/15): **Rebuild only the props that changed** (`area: performance`) — Avoid bumping `net.version` on switch throws, track dirty nodes for props, and update station signs without full prop rebuilds.
+- [#16](https://github.com/deadronos/vibe-train-sim/issues/16): **Make map edits incremental** (`area: performance`) — Regrade and rebuild only affected terrain chunks, nearby track segments, and local scatter regions instead of the full map.
+- [#17](https://github.com/deadronos/vibe-train-sim/issues/17): **Reduce draw calls for track and scenery** (`area: performance`) — Merge track geometry into chunks by material, share lineside instancing across the network, and add bounds for bridge/platform frustum culling.
+- [#18](https://github.com/deadronos/vibe-train-sim/issues/18): **Level of detail for terrain and scenery** (`area: performance`) — Distance LODs for terrain chunks with skirts/stitching, low-poly/billboard tree variants in `build_assetpack.py`, and shadow-caster culling.
 
-[#44](https://github.com/deadronos/vibe-train-sim/issues/44), [#59](https://github.com/deadronos/vibe-train-sim/issues/59), [#58](https://github.com/deadronos/vibe-train-sim/issues/58), [#41](https://github.com/deadronos/vibe-train-sim/issues/41) and [#40](https://github.com/deadronos/vibe-train-sim/issues/40) landed in #74, #78 and #79.
+## Batch 3: Bring trains and cabs to life (visuals + core sound)
 
-## 4. Protect players' maps (done)
+High-visibility driving immersion that players see and hear every second.
 
-[#36](https://github.com/deadronos/vibe-train-sim/issues/36) landed in #76, and the editor bugs [#35](https://github.com/deadronos/vibe-train-sim/issues/35), [#37](https://github.com/deadronos/vibe-train-sim/issues/37) and [#38](https://github.com/deadronos/vibe-train-sim/issues/38) in #77.
+- [#26](https://github.com/deadronos/vibe-train-sim/issues/26): **Wheels, sway, lights and couplers** (`area: visuals`) — Rotating wheels, car body sway/rail-joint bounce, couplers/gangways between vehicles, and projected headlights on non-driven trains.
+- [#28](https://github.com/deadronos/vibe-train-sim/issues/28): **Cab interior for cab view** (`area: visuals`) — Model an original cab in `tools/blender/build_assetpack.py` with live dial/lever and subtle head movement (respecting reduced motion).
+- [#29](https://github.com/deadronos/vibe-train-sim/issues/29): **Junction switch blades and frog** (`area: visuals`) — Render movable switch blades, frog, guard rails, and blended ballast at turnouts so cab view shows the set route.
+- [#27](https://github.com/deadronos/vibe-train-sim/issues/27): **Exhaust, brake sparks and dust particles** (`area: visuals`) — Instanced particle system responding to diesel throttle, heavy braking, desert dust, and impacts (disabled on low quality).
+- [#51](https://github.com/deadronos/vibe-train-sim/issues/51): **Train sound responding to what the train is doing** (`area: audio`) — Keep synthesis in `src/audio.ts`: stepped diesel load/turbo whine, brake squeal and air release, tight-curve flange squeal, real-node junction clatter, bridge resonance, and collision impacts.
 
-## Cheap wins (done)
+## Batch 4: World atmosphere, directional audio and shaders
 
-[#49](https://github.com/deadronos/vibe-train-sim/issues/49), [#50](https://github.com/deadronos/vibe-train-sim/issues/50) and [#47](https://github.com/deadronos/vibe-train-sim/issues/47) landed in #75.
+Richer environments day and night once Batch 2 draw budgets and Batch 3 train effects are in place.
 
-[#60](https://github.com/deadronos/vibe-train-sim/issues/60) landed in #84, #85 and #86, and [#42](https://github.com/deadronos/vibe-train-sim/issues/42) with the small-screen layouts after them. Real phones still need a try: emulated sizes don't show touch feel or performance.
+- [#52](https://github.com/deadronos/vibe-train-sim/issues/52): **Positional sound and Doppler for other trains** (`area: audio`) — Camera-anchored `AudioListener`, distance-culled `PannerNode` sources for passing trains, Doppler shift, and live audio in the editor.
+- [#53](https://github.com/deadronos/vibe-train-sim/issues/53): **Ambience and small world sounds** (`area: audio`) — Synthesized altitude wind, river/coast water, day birds vs night crickets per preset, point/lever clicks, and station door chimes.
+- [#24](https://github.com/deadronos/vibe-train-sim/issues/24): **Water depth, shoreline and reflections** (`area: visuals`).
+- [#25](https://github.com/deadronos/vibe-train-sim/issues/25): **Terrain materials along track and shores** (`area: visuals`).
+- [#30](https://github.com/deadronos/vibe-train-sim/issues/30): **Weather: rain, snow, mist and moving cloud shadows** (`area: visuals`) — pairs with rain/thunder in [#53](https://github.com/deadronos/vibe-train-sim/issues/53).
+- [#31](https://github.com/deadronos/vibe-train-sim/issues/31): **Life in the landscape: wind, ground cover and settlements** (`area: visuals`).
+- [#23](https://github.com/deadronos/vibe-train-sim/issues/23): **Cascaded shadows and ambient occlusion** (`area: visuals`) — Measure GPU cost with `?debug` alongside `#18`/`#19`.
 
-## Done after November batch
+## Batch 5: Deep rail & track geometry (needs design notes first)
 
-- [#20](https://github.com/deadronos/vibe-train-sim/issues/20): allocation fixes (#80) verified with a before/after CDP heap sampling profile (`d4c64c3` vs `main`).
-- [#46](https://github.com/deadronos/vibe-train-sim/issues/46): keyboard and screen reader fixes (#82) plus axe-core, landmark, topbar-wrap and WCAG AA contrast fixes.
-- [#62](https://github.com/deadronos/vibe-train-sim/issues/62) and [#63](https://github.com/deadronos/vibe-train-sim/issues/63): signal types, route indicators, speed boards, train protection and interlocked diamond crossings landed in #88.
+Largest architectural changes to `src/rail/`; plan specs carefully before coding.
 
-## Partly done
-
-- [#19](https://github.com/deadronos/vibe-train-sim/issues/19): quality applies live, Auto adapts to frame rate, and `?debug` shows a perf overlay (#81). Still needs measurements on a low-end laptop and a phone.
-
-## Wait on these
-
-- **Large graphics work** ([#18](https://github.com/deadronos/vibe-train-sim/issues/18), [#23](https://github.com/deadronos/vibe-train-sim/issues/23)): measure first with the `?debug` overlay on slower hardware.
-- **Shunting** ([#64](https://github.com/deadronos/vibe-train-sim/issues/64)): this needs a design note first, because it changes how trains reverse.
+- [#65](https://github.com/deadronos/vibe-train-sim/issues/65): **Cant and transition curves** (`area: simulation`) — Per-sample cant, curve speed limits accounting for cant, smooth curvature transitions, and banked track/car roll.
+- [#64](https://github.com/deadronos/vibe-train-sim/issues/64): **Shunting: coupling, uncoupling and a reverser** (`area: simulation`) — Needs a design note for the trail/negative-speed model first; enables propelling moves, coupling/splitting, run-around loops, and siding freight duties.
