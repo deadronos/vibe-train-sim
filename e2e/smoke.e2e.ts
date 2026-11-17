@@ -263,6 +263,16 @@ test('remove tool previews target, deletes one signal, and box-selects multiple 
   });
   await page.locator('#mode-edit').click();
   await page.locator('[data-tool="delete"]').click();
+  // Wait for the smooth Drive -> Edit camera transition to finish before projecting screen coords.
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const g = window.__game;
+        const t = g.editor.controls.target;
+        return Math.hypot(g.camera.position.x - (t.x + 200), g.camera.position.z - (t.z + 330));
+      }),
+    )
+    .toBeLessThan(1);
   await frames(page);
 
   // Move pointer onto the side +1 signal post and verify hover status & single-signal removal.
