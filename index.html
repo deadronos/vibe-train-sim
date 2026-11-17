@@ -21,6 +21,7 @@
       </div>
 
       <div id="toasts" aria-live="polite"></div>
+      <div id="box-select" hidden></div>
       <p id="drive-status" class="visually-hidden" aria-live="polite"></p>
       <pre id="perf" hidden></pre>
     </main>
@@ -61,12 +62,8 @@
         <button id="btn-import">Import</button>
         <button id="btn-new">New map</button>
         <button id="btn-sound" aria-pressed="true">Sound</button>
+        <button id="btn-graphics">Graphics</button>
         <button id="btn-help" aria-label="Keyboard help">Help</button>
-        <select id="quality" aria-label="Graphics quality">
-          <option value="auto">Auto graphics</option>
-          <option value="high">High graphics</option>
-          <option value="low">Low graphics</option>
-        </select>
         <select id="rules" aria-label="Driving rules">
           <option value="relaxed">Relaxed rules</option>
           <option value="strict">Strict rules</option>
@@ -319,6 +316,39 @@
       </form>
     </dialog>
 
+    <dialog id="dlg-graphics" class="plate" aria-labelledby="dlg-graphics-title">
+      <form method="dialog">
+        <h2 id="dlg-graphics-title">Graphics</h2>
+        <label
+          >Preset
+          <select id="quality" aria-label="Graphics quality">
+            <option value="auto">Auto — adapts resolution and effects</option>
+            <option value="high">High — full effects and sharp pixel ratio</option>
+            <option value="low">Low — lighter effects for slow GPUs</option>
+          </select>
+        </label>
+        <label
+          >Shadows
+          <select id="shadows" aria-label="Shadow quality">
+            <option value="auto">Auto — follows graphics preset</option>
+            <option value="high">High (4096 px)</option>
+            <option value="low">Low (2048 px)</option>
+            <option value="off">Off</option>
+          </select>
+        </label>
+        <label
+          >Scenery density
+          <select id="scenery" aria-label="Scenery density">
+            <option value="auto">Auto — follows graphics preset</option>
+            <option value="high">High (100%)</option>
+            <option value="low">Low (40%)</option>
+            <option value="off">Off (placed items only)</option>
+          </select>
+        </label>
+        <menu><button value="ok">Close</button></menu>
+      </form>
+    </dialog>
+
     <dialog id="dlg-help" class="plate" aria-labelledby="dlg-help-title">
       <form method="dialog">
         <h2 id="dlg-help-title">Controls</h2>
@@ -341,7 +371,11 @@
               <dt>H</dt>
               <dd>Horn</dd>
               <dt>C</dt>
-              <dd>Change camera; drag to look around</dd>
+              <dd>Change camera (Chase, Cab, Trackside, Cinematic, Free); drag to look around</dd>
+              <dt>Wheel</dt>
+              <dd>Zoom camera, change field of view in Cab view, or move forward in Free view</dd>
+              <dt>WASD, Arrows</dt>
+              <dd>Fly around in Free view (hold Shift to move faster)</dd>
               <dt>N</dt>
               <dd>Drive the next train</dd>
               <dt>, and .</dt>
@@ -370,7 +404,7 @@
               <dt>Esc</dt>
               <dd>Stop laying track</dd>
               <dt>Delete</dt>
-              <dd>Remove the selected point</dd>
+              <dd>Remove the selected point (or drag a box with Remove to delete several items)</dd>
               <dt>Ctrl+Z</dt>
               <dd>Undo; Ctrl+Y or Ctrl+Shift+Z to redo</dd>
             </dl>

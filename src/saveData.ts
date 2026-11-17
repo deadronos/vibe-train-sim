@@ -4,7 +4,7 @@ import type { TrainState } from './rail/sim';
 import type { Car, CarType } from './rail/vehicles';
 import type { Preset } from './world/heightfield';
 import { RES } from './world/heightfield';
-import type { PlacedItem } from './world/scenery';
+import type { PlacedItem, SceneryExclusion } from './world/scenery';
 import { SCENERY_TYPES } from './world/scenery';
 
 export interface SaveData {
@@ -15,6 +15,8 @@ export interface SaveData {
   edits: number[];
   net: ReturnType<Network['toJSON']>;
   placed: PlacedItem[];
+  /** Saved areas where procedurally generated scenery is suppressed. Missing from older saves. */
+  exclusions?: SceneryExclusion[];
   hours: number;
   drivenId: number | null;
   trains: {
@@ -173,6 +175,21 @@ function check(d: Record<string, unknown>): SaveData {
     const o = obj(p, 'a scenery item is not an object');
     oneOf(o.type, SCENERY, 'a scenery item has an unknown type');
     for (const k of ['x', 'z', 'rot', 'scale']) num(o[k], `a scenery item has a bad ${k}`);
+  }
+  if (d.exclusions !== undefined) {
+    for (const ex of arr(d.exclusions, 'the removed scenery list is not a list')) {
+      const o = obj(ex, 'a removed scenery area is not an object');
+      if ('r' in o) {
+        for (const k of ['x', 'z']) num(o[k], 'a removed scenery area has a bad position');
+        if (num(o.r, 'a removed scenery area has a bad radius') <= 0) fail('a removed scenery area has a bad radius');
+      } else {
+        const minX = num(o.minX, 'a removed scenery area has a bad bound');
+        const minZ = num(o.minZ, 'a removed scenery area has a bad bound');
+        const maxX = num(o.maxX, 'a removed scenery area has a bad bound');
+        const maxZ = num(o.maxZ, 'a removed scenery area has a bad bound');
+        if (minX > maxX || minZ > maxZ) fail('a removed scenery area has inverted bounds');
+      }
+    }
   }
   num(d.hours, 'the time of day is not a number');
   const trainIds = new Set<number>();

@@ -6,16 +6,20 @@ import { Sim, Train } from './rail/sim';
 import type { SaveData } from './saveData';
 import { parseSave } from './saveData';
 import { Heightfield } from './world/heightfield';
-import type { PlacedItem } from './world/scenery';
+import type { PlacedItem, SceneryExclusion } from './world/scenery';
 
 /** auto starts at high and lowers resolution, then effects, while frames run slow. */
 export type Quality = 'auto' | 'high' | 'low';
+export type ShadowSetting = 'auto' | 'high' | 'low' | 'off';
+export type ScenerySetting = 'auto' | 'high' | 'low' | 'off';
 export type Rules = 'relaxed' | 'strict';
 
 export const SAVE_KEY = 'vibe-train-sim/map-v1';
 // A save that fails validation is moved here so nothing the player made is thrown away.
 const BACKUP_KEY = 'vibe-train-sim/map-v1-backup';
 const QUALITY_KEY = 'vibe-train-sim/quality';
+const SHADOWS_KEY = 'vibe-train-sim/shadows';
+const SCENERY_KEY = 'vibe-train-sim/scenery';
 const SOUND_KEY = 'vibe-train-sim/sound';
 const RULES_KEY = 'vibe-train-sim/rules';
 const BEST_PREFIX = 'vibe-train-sim/best/';
@@ -25,6 +29,7 @@ export interface WorldState {
   net: Network;
   sim: Sim;
   placed: PlacedItem[];
+  exclusions?: SceneryExclusion[];
   hours: number;
   drivenId: number | null;
 }
@@ -56,6 +61,7 @@ export function captureSave(w: WorldState): SaveData {
     edits: w.hf.exportEdits(),
     net: w.net.toJSON(),
     placed: w.placed,
+    ...(w.exclusions?.length ? { exclusions: w.exclusions } : {}),
     hours: w.hours,
     drivenId: w.drivenId,
     trains,
@@ -158,6 +164,40 @@ export function readQuality(): Quality {
 export function writeQuality(q: Quality) {
   try {
     localStorage.setItem(QUALITY_KEY, q);
+  } catch {
+    /* The choice simply lasts for this page only. */
+  }
+}
+
+export function readShadows(): ShadowSetting {
+  try {
+    const s = localStorage.getItem(SHADOWS_KEY);
+    return s === 'high' || s === 'low' || s === 'off' ? s : 'auto';
+  } catch {
+    return 'auto';
+  }
+}
+
+export function writeShadows(s: ShadowSetting) {
+  try {
+    localStorage.setItem(SHADOWS_KEY, s);
+  } catch {
+    /* The choice simply lasts for this page only. */
+  }
+}
+
+export function readScenery(): ScenerySetting {
+  try {
+    const s = localStorage.getItem(SCENERY_KEY);
+    return s === 'high' || s === 'low' || s === 'off' ? s : 'auto';
+  } catch {
+    return 'auto';
+  }
+}
+
+export function writeScenery(s: ScenerySetting) {
+  try {
+    localStorage.setItem(SCENERY_KEY, s);
   } catch {
     /* The choice simply lasts for this page only. */
   }

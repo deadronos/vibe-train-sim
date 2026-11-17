@@ -52,12 +52,27 @@ export class StationTool implements EditorTool {
   }
 
   hover(ctx: EditorContext, p: WorldPoint) {
-    const pt = trackPointFromMouse(ctx.host.net, p);
+    const { net } = ctx.host;
+    const pt = trackPointFromMouse(net, p);
     if (!pt) {
-      ctx.setStatus('Move close to a track');
+      ctx.setStatus('Move close to a track to place a station');
       return;
     }
-    ctx.showHighlight(pt.x, pt.y + 0.5, pt.z, 4);
-    ctx.setStatus('The platform is built on the side the mouse is on');
+    const node0 = net.nearestNode(pt.x, pt.z, 10);
+    const existing = node0 ? net.stationAt(node0.id) : undefined;
+    const hx = node0 ? node0.x : pt.x;
+    const hy = node0 ? node0.y : pt.y;
+    const hz = node0 ? node0.z : pt.z;
+    ctx.showHighlight(hx, hy + 0.5, hz, existing ? 5 : 4);
+    if (existing) {
+      ctx.setStatus(`${existing.name} is already at this point — move along the track to place another`);
+      return;
+    }
+    // Arrow points to the side of the track where the platform will be built.
+    const rx = node0 ? -node0.dz : -pt.tz;
+    const rz = node0 ? node0.dx : pt.tx;
+    const side = (p.x - hx) * rx + (p.z - hz) * rz >= 0 ? 1 : -1;
+    ctx.showArrow(hx + rx * side * 6, hy + 1.5, hz + rz * side * 6, rx * side, rz * side);
+    ctx.setStatus('Click to place a station (arrow shows platform side)');
   }
 }

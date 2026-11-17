@@ -12,7 +12,7 @@ import { Editor } from './editor/editor';
 import { History } from './history';
 import type { MapEntry } from './mapLibrary';
 import { browserStorage, MapLibrary } from './mapLibrary';
-import type { Quality, Rules } from './persistence';
+import type { Quality, Rules, ScenerySetting, ShadowSetting } from './persistence';
 import {
   backupStoredSave,
   buildWorld,
@@ -20,6 +20,8 @@ import {
   downloadMap,
   readQuality,
   readRules,
+  readScenery,
+  readShadows,
   recordBest,
   readSound,
   readSave,
@@ -28,6 +30,8 @@ import {
   SAVE_KEY,
   writeQuality,
   writeRules,
+  writeScenery,
+  writeShadows,
   writeSound,
   writeSave,
 } from './persistence';
@@ -61,7 +65,7 @@ import { showFatal } from './ui/fatal';
 import { Hud } from './ui/hud';
 import type { Preset } from './world/heightfield';
 import { Heightfield } from './world/heightfield';
-import type { PlacedItem } from './world/scenery';
+import type { PlacedItem, SceneryExclusion } from './world/scenery';
 
 const TRAIN_SPEEDS = [0, 1, 2, 4, 8];
 const AUTOSAVE_MS = 60_000;
@@ -76,7 +80,7 @@ const BACKUP_FAILED_TEXT =
 export class Game {
   renderer: THREE.WebGLRenderer;
   scene = new THREE.Scene();
-  camera = new THREE.PerspectiveCamera(58, 1, 0.4, 20000);
+  camera = new THREE.PerspectiveCamera(58, 1, 0.8, 10000);
   composer: EffectComposer;
   assets = new Assets();
   env!: Environment;
@@ -95,6 +99,9 @@ export class Game {
   driven: Train | null = null;
   editing = false;
   quality: Quality = readQuality();
+  shadows: ShadowSetting = readShadows();
+  scenery: ScenerySetting = readScenery();
+  private appliedSceneryDensity = -1;
   private bloom: UnrealBloomPass;
   /** Resolution share auto quality has settled on, from AUTO_MIN_SCALE to 1. */
   autoScale = 1;
@@ -113,6 +120,7 @@ export class Game {
   private fpsFrames = 0;
   fps = 60;
   private focus = new THREE.Vector3();
+  private tmpAudioFocus = new THREE.Vector3();
 
   constructor() {
     this.audio.settings = readSound();
@@ -121,7 +129,6 @@ export class Game {
       canvas,
       antialias: false,
       powerPreference: 'high-performance',
-      logarithmicDepthBuffer: true,
     });
     canvas.addEventListener('webglcontextlost', (e) => {
       e.preventDefault();
@@ -213,7 +220,7 @@ export class Game {
   }
 
   // ------------------------------------------------------------ world management
-  private installWorld(hf: Heightfield, net: Network, placed: PlacedItem[]) {
+  private installWorld(hf: Heightfield, net: Network, placed: PlacedItem[], exclusions: SceneryExclusion[] = []) {
     this.hf = hf;
     this.net = net;
     this.sim = new Sim(net);
@@ -229,6 +236,7 @@ export class Game {
     this.track.clear();
     this.trainsR.clear();
     this.scatter.placed = placed;
+    this.scatter.exclusions = exclusions;
     net.dirty = new Set(net.segs.keys());
     hf.grade(net);
     this.terrain.sync();
@@ -261,6 +269,7 @@ export class Game {
       net: this.net,
       sim: this.sim,
       placed: this.scatter.placed,
+      exclusions: this.scatter.exclusions,
       hours: this.env.hours,
       drivenId: this.driven?.id ?? null,
     });
@@ -269,7 +278,7 @@ export class Game {
   applySave(data: SaveData, restoreTime: boolean) {
     // Build everything that can throw before the current world is replaced.
     const { hf, net } = buildWorld(data);
-    this.installWorld(hf, net, [...data.placed]);
+    this.installWorld(hf, net, [...data.placed], [...(data.exclusions ?? [])]);
     this.driven = restoreTrains(this.sim, data);
     this.hud.syncTrains();
     if (restoreTime) this.env.hours = data.hours;
@@ -377,12 +386,24 @@ export class Game {
     this.applyQuality(true);
   }
 
+  setShadows(s: ShadowSetting) {
+    writeShadows(s);
+    this.shadows = s;
+    this.applyQuality(false);
+  }
+
+  setScenery(s: ScenerySetting) {
+    writeScenery(s);
+    this.scenery = s;
+    this.applyQuality(true);
+  }
+
   /** The effects in use: low under the low setting, or once auto has run out of resolution to give up. */
   private get lowEffects() {
     return this.quality === 'low' || (this.quality === 'auto' && this.autoLow);
   }
 
-  /** Applies the quality setting to the running renderer, so nothing needs a reload. */
+  /** Applies the quality, shadow and scenery settings to the running renderer without reloading. */
   private applyQuality(rebuildScenery: boolean) {
     const low = this.lowEffects;
     const cap = low ? 1 : 1.75;
@@ -395,9 +416,16 @@ export class Game {
       t.samples = samples;
       t.dispose(); // Reallocated with the new sample count on the next render
     }
-    this.env?.setShadowSize(low ? 2048 : 4096);
-    this.scatter?.setDensity(low ? 0.4 : 1);
-    if (rebuildScenery && this.hf) this.scatter.rebuild(this.hf, this.net);
+    const shadowMode = this.shadows === 'auto' ? (low ? 'low' : 'high') : this.shadows;
+    const shadowSize = shadowMode === 'off' ? 0 : shadowMode === 'low' ? 2048 : 4096;
+    this.env?.setShadowSize(shadowSize);
+
+    const sceneryMode = this.scenery === 'auto' ? (low ? 'low' : 'high') : this.scenery;
+    const density = sceneryMode === 'off' ? 0 : sceneryMode === 'low' ? 0.4 : 1;
+    const densityChanged = density !== this.appliedSceneryDensity;
+    this.appliedSceneryDensity = density;
+    this.scatter?.setDensity(density);
+    if (rebuildScenery && densityChanged && this.hf) this.scatter.rebuild(this.hf, this.net);
     this.resize();
   }
 
@@ -452,6 +480,7 @@ export class Game {
     this.track.clear();
     net.dirty = new Set(net.segs.keys());
     this.scatter.placed = [...d.placed];
+    this.scatter.exclusions = [...(d.exclusions ?? [])];
     this.props.invalidate();
     this.scatterTimer = 0.01;
     this.editor.selected = null;
@@ -479,6 +508,14 @@ export class Game {
     this.hud.syncTrains();
   }
 
+  get placedScenery(): readonly PlacedItem[] {
+    return this.scatter.placed;
+  }
+
+  get generatedScenery(): readonly PlacedItem[] {
+    return this.scatter.generated;
+  }
+
   addPlacedScenery(item: PlacedItem) {
     this.scatter.placed.push(item);
   }
@@ -489,6 +526,14 @@ export class Game {
 
   removePlacedScenery(index: number) {
     this.scatter.placed.splice(index, 1);
+  }
+
+  generatedSceneryNear(x: number, z: number, radius: number) {
+    return this.scatter.generatedNear(x, z, radius);
+  }
+
+  addSceneryExclusion(ex: SceneryExclusion) {
+    this.scatter.exclusions.push(ex);
   }
 
   /** Adds and places a train on track; returns any existing train blocking it if there is no room. */
@@ -590,9 +635,11 @@ export class Game {
     this.editing = editing;
     document.body.dataset.mode = editing ? 'edit' : 'drive';
     this.audio.horn(false);
+    this.rig.releaseKeys();
     if (editing) this.editor.enter();
     else {
       this.editor.leave();
+      this.rig.beginTransition();
       this.save(true);
     }
     this.hud.syncMode();
@@ -600,6 +647,7 @@ export class Game {
 
   // ------------------------------------------------------------ driving
   setDriven(t: Train | null) {
+    const changed = this.driven !== t && this.driven !== null && t !== null;
     if (this.driven && this.driven !== t && !this.driven.ai) {
       this.driven.ai = true;
       this.endDuty(this.driven);
@@ -607,6 +655,7 @@ export class Game {
     }
     this.driven = t;
     this.input.lever = 0;
+    if (changed && !this.editing && this.rig.mode !== 'free') this.rig.beginTransition();
     this.hud?.syncTrains();
   }
 
@@ -733,10 +782,9 @@ export class Game {
     if (this.editing) {
       this.editor.update(dt);
       this.focus.copy(this.editor.controls.target);
-    } else if (this.driven) {
+    } else if (this.driven || this.rig.mode === 'free') {
       this.rig.update(this.sim, this.driven, this.hf, dt);
-      const h = this.sim.head(this.driven);
-      this.focus.set(h.x, h.y, h.z);
+      this.focus.copy(this.rig.focus);
     }
     this.env.update(dt, this.focus, this.trainSpeed);
     this.assets.setNight(this.env.night);
@@ -747,7 +795,7 @@ export class Game {
     const t = this.driven;
     if (t) {
       const h = this.sim.head(t);
-      const d = this.camera.position.distanceTo(this.focus.set(h.x, h.y, h.z));
+      const d = this.camera.position.distanceTo(this.tmpAudioFocus.set(h.x, h.y, h.z));
       const quiet = this.editing || this.trainSpeed === 0;
       this.audio.update(dt, t.speed, t.throttle, quiet ? 0 : Math.max(0.05, 1 - d / 500));
       this.audio.updateWarning(dt, !quiet && !t.ai && !!t.warning && !t.warning.acknowledged);

@@ -5,6 +5,20 @@ import type { Train } from './rail/sim';
 
 // The first part of the lever's brake side is engine brake alone, and the rest adds the air brake.
 const ENGINE_BRAKE_RANGE = 0.25;
+const FREE_CAM_KEYS = new Set([
+  'KeyW',
+  'KeyS',
+  'KeyA',
+  'KeyD',
+  'ArrowUp',
+  'ArrowDown',
+  'ArrowLeft',
+  'ArrowRight',
+  'ShiftLeft',
+  'ShiftRight',
+  'PageUp',
+  'PageDown',
+]);
 
 export class DriverInput {
   /** Power lever: positive is throttle, negative is brake. */
@@ -57,7 +71,6 @@ export class DriverInput {
         g.setMode(!g.editing);
         return;
       }
-      this.press(e.code);
       if (e.code === 'Backquote' && !e.repeat) {
         g.hud.perf.toggle();
         return;
@@ -66,7 +79,13 @@ export class DriverInput {
         g.hud.map.toggle();
         return;
       }
-      if (g.editing || e.repeat) return;
+      if (g.editing) return;
+      if (g.rig.mode === 'free' && FREE_CAM_KEYS.has(e.code)) {
+        g.rig.press(e.code);
+        return;
+      }
+      this.press(e.code);
+      if (e.repeat) return;
       switch (e.code) {
         case 'KeyH':
           g.audio.horn(true);
@@ -106,11 +125,13 @@ export class DriverInput {
       // Browsers click a focused button on Space keyup, so stop that too.
       if (gameKeyAllowed(keyContext(e)) && activatesFocused(keyContext(e))) e.preventDefault();
       this.release(e.code);
+      g.rig.release(e.code);
       if (e.code === 'KeyH') g.audio.horn(false);
     });
     // A key released while another window had focus never sends keyup.
     const releaseAll = () => {
       this.releaseAll();
+      g.rig.releaseKeys();
       g.audio.horn(false);
       g.editor.releaseKeys();
     };

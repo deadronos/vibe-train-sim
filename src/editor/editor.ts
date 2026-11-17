@@ -4,15 +4,17 @@ import { MapControls } from 'three/addons/controls/MapControls.js';
 
 import { gameKey } from '../keyFilter';
 import type { planCurve, SignalType } from '../rail/network';
+import { DEFAULT_FOV, prefersReducedMotion } from '../render/cameraRig';
 import type { SceneryType } from '../world/scenery';
 import { createTools } from './tools';
 import type { BrushMode, EditorContext, EditorHost, EditorTool, Tool, TrainKind, WorldPoint } from './tools/tool';
 
 export type { BrushMode, EditorHost, Tool, TrainKind };
 
-const HANDLE_CAPACITY = 2048;
+const INITIAL_HANDLE_CAPACITY = 2048;
 /** How far apart, in CSS pixels, two taps still count as the same place. */
 const TAP_SLOP = 28;
+const ENTER_TRANSITION_SEC = 0.45;
 
 export class Editor implements EditorContext {
   tool: Tool = 'select';
@@ -39,18 +41,36 @@ export class Editor implements EditorContext {
   private ribbon: THREE.Mesh;
   private ribbonGood: THREE.MeshBasicMaterial;
   private ribbonBad: THREE.MeshBasicMaterial;
+  private handleGeo = new THREE.SphereGeometry(1, 12, 8);
+  private handleMat = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    depthTest: false,
+    transparent: true,
+    opacity: 0.95,
+    fog: false,
+  });
+  private handleCapacity = INITIAL_HANDLE_CAPACITY;
   private handles: THREE.InstancedMesh;
   private ring: THREE.LineLoop;
   private highlight: THREE.Mesh;
   private arrow: THREE.Mesh;
   private root = new THREE.Group();
+  private boxEl: HTMLElement | null;
   /** Where a touch tapped first: touch has no hover, so the first tap previews and a second tap there confirms. */
   private tapAt: { x: number; y: number } | null = null;
   private keys = new Set<string>();
 
+  private transT = 1;
+  private transFromPos = new THREE.Vector3();
+  private transFromQuat = new THREE.Quaternion();
+  private transFromFov = DEFAULT_FOV;
+  private transGoalPos = new THREE.Vector3();
+  private transGoalQuat = new THREE.Quaternion();
+
   constructor(host: EditorHost) {
     this.host = host;
     this.tools = createTools();
+    this.boxEl = document.getElementById('box-select');
     const dom = host.renderer.domElement;
     this.controls = new MapControls(host.camera, dom);
     this.controls.enabled = false;
@@ -82,11 +102,7 @@ export class Editor implements EditorContext {
     this.ribbon.renderOrder = 10;
     this.ribbon.visible = false;
 
-    this.handles = new THREE.InstancedMesh(
-      new THREE.SphereGeometry(1, 12, 8),
-      new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true, opacity: 0.95, fog: false }),
-      HANDLE_CAPACITY,
-    );
+    this.handles = new THREE.InstancedMesh(this.handleGeo, this.handleMat, this.handleCapacity);
     this.handles.renderOrder = 11;
     this.handles.frustumCulled = false;
 
@@ -121,9 +137,19 @@ export class Editor implements EditorContext {
     this.root.visible = false;
     host.scene.add(this.root);
 
-    dom.addEventListener('pointerdown', (e) => this.onDown(e));
+    dom.addEventListener('pointerdown', (e) => {
+      if (this.host.editing && this.transT < 1) this.finishTransition();
+      this.onDown(e);
+    });
     dom.addEventListener('pointermove', (e) => this.onMove(e));
-    dom.addEventListener('pointerup', () => this.onUp());
+    window.addEventListener('pointerup', (e) => this.onUp(e));
+    dom.addEventListener(
+      'wheel',
+      () => {
+        if (this.host.editing && this.transT < 1) this.finishTransition();
+      },
+      { passive: true },
+    );
     dom.addEventListener('contextmenu', (e) => e.preventDefault());
     window.addEventListener('keydown', (e) => {
       this.shift = e.shiftKey;
@@ -186,6 +212,36 @@ export class Editor implements EditorContext {
     this.ring.visible = false;
   }
 
+  showBox(x0: number, y0: number, x1: number, y1: number) {
+    if (!this.boxEl) return;
+    const l = Math.min(x0, x1);
+    const t = Math.min(y0, y1);
+    const w = Math.abs(x1 - x0);
+    const h = Math.abs(y1 - y0);
+    this.boxEl.hidden = false;
+    this.boxEl.style.left = `${l}px`;
+    this.boxEl.style.top = `${t}px`;
+    this.boxEl.style.width = `${w}px`;
+    this.boxEl.style.height = `${h}px`;
+  }
+
+  hideBox() {
+    if (this.boxEl) this.boxEl.hidden = true;
+  }
+
+  private projVec = new THREE.Vector3();
+
+  project(x: number, y: number, z: number): { x: number; y: number; visible: boolean } {
+    const r = this.host.renderer.domElement.getBoundingClientRect();
+    this.projVec.set(x, y, z).project(this.host.camera);
+    const visible = this.projVec.z >= -1 && this.projVec.z <= 1;
+    return {
+      x: r.left + (this.projVec.x * 0.5 + 0.5) * r.width,
+      y: r.top + (-this.projVec.y * 0.5 + 0.5) * r.height,
+      visible,
+    };
+  }
+
   showRibbon(curve: ReturnType<typeof planCurve>, P: WorldPoint, Q: WorldPoint, ok: boolean) {
     const n = curve.steps + 1;
     const pos = new Float32Array(n * 2 * 3);
@@ -229,6 +285,18 @@ export class Editor implements EditorContext {
     this.shift = false;
   }
 
+  private finishTransition() {
+    const cam = this.host.camera;
+    this.transT = 1;
+    cam.position.copy(this.transGoalPos);
+    cam.quaternion.copy(this.transGoalQuat);
+    if (cam.fov !== DEFAULT_FOV) {
+      cam.fov = DEFAULT_FOV;
+      cam.updateProjectionMatrix();
+    }
+    this.controls.update();
+  }
+
   enter() {
     this.root.visible = true;
     const h = this.host;
@@ -236,14 +304,34 @@ export class Editor implements EditorContext {
     // Rise up from the driving view to a planning view around the current position.
     const focus = h.driven ? h.sim.head(h.driven) : { x: 0, y: 20, z: 0 };
     this.controls.target.set(focus.x, focus.y, focus.z);
-    cam.position.set(focus.x + 200, focus.y + 300, focus.z + 330);
+    this.transGoalPos.set(focus.x + 200, focus.y + 300, focus.z + 330);
+    if (!prefersReducedMotion() && cam.position.lengthSq() > 0) {
+      this.transFromPos.copy(cam.position);
+      this.transFromQuat.copy(cam.quaternion);
+      this.transFromFov = cam.fov;
+      cam.position.copy(this.transGoalPos);
+      cam.lookAt(this.controls.target);
+      this.transGoalQuat.copy(cam.quaternion);
+      cam.position.copy(this.transFromPos);
+      cam.quaternion.copy(this.transFromQuat);
+      this.transT = 0;
+    } else {
+      cam.position.copy(this.transGoalPos);
+      if (cam.fov !== DEFAULT_FOV) {
+        cam.fov = DEFAULT_FOV;
+        cam.updateProjectionMatrix();
+      }
+      this.transT = 1;
+      this.controls.update();
+      this.transGoalQuat.copy(cam.quaternion);
+    }
     this.controls.enabled = true;
-    this.controls.update();
     this.setTool(this.tool);
   }
 
   /** Moves the planning view to look at a point, keeping the camera's angle and distance. */
   lookAt(x: number, z: number) {
+    this.transT = 1;
     const cam = this.host.camera;
     const t = this.controls.target;
     const y = this.host.hf.height(x, z);
@@ -253,8 +341,10 @@ export class Editor implements EditorContext {
   }
 
   leave() {
+    this.transT = 1;
     this.root.visible = false;
     this.controls.enabled = false;
+    this.hideBox();
     this.cancel();
     this.tools[this.tool].leave?.(this);
     this.selected = null;
@@ -269,6 +359,7 @@ export class Editor implements EditorContext {
     this.arrow.visible = false;
     this.highlight.visible = false;
     this.ring.visible = false;
+    this.hideBox();
     const active = this.tools[tool];
     // Left button pans only when the tool asks for it; every other tool owns the click.
     this.controls.mouseButtons = {
@@ -284,6 +375,7 @@ export class Editor implements EditorContext {
   cancel() {
     this.tools[this.tool].cancel?.(this);
     this.ribbon.visible = false;
+    this.hideBox();
     this.status = '';
   }
 
@@ -314,8 +406,12 @@ export class Editor implements EditorContext {
     if (!p) return;
     this.cursor = p;
     const active = this.tools[this.tool];
-    if (e.pointerType === 'touch' && active.tapToConfirm && !this.confirmTap(e, p)) return;
-    active.down?.(this, p);
+    if (e.pointerType === 'touch' && active.tapToConfirm) {
+      if (!this.confirmTap(e, p)) return;
+      active.down?.(this, p);
+      return;
+    }
+    active.down?.(this, p, { x: e.clientX, y: e.clientY });
   }
 
   /** True when this touch confirms the last one. Otherwise previews the tap and waits for a second one. */
@@ -336,19 +432,22 @@ export class Editor implements EditorContext {
     if (!this.host.editing) return;
     const p = this.pointer(e);
     this.cursor = p;
+    const active = this.tools[this.tool];
+    const screen = { x: e.clientX, y: e.clientY };
+    if (active.move?.(this, p, screen)) return;
     if (!p) {
-      this.ring.visible = false;
+      this.clearOverlays();
       return;
     }
-    const active = this.tools[this.tool];
-    if (active.move?.(this, p)) return;
     this.clearOverlays();
     active.hover?.(this, p);
   }
 
-  private onUp() {
+  private onUp(e: PointerEvent) {
     if (!this.host.editing) return;
-    this.tools[this.tool].up?.(this);
+    const active = this.tools[this.tool];
+    if (!active.up) return;
+    active.up(this, this.pointer(e), { x: e.clientX, y: e.clientY });
   }
 
   /** Undoes an edit that left a point breaking the track rules, and says why. Otherwise commits it. */
@@ -395,30 +494,59 @@ export class Editor implements EditorContext {
     if (!this.host.editing) return;
     const h = this.host;
     const net = h.net;
-    this.controls.update();
     const cam = h.camera;
-    const panSpeed = 0.9 * this.controls.getDistance() * dt;
-    const fwd = cam.getWorldDirection(this.scratchFwd);
-    fwd.y = 0;
-    fwd.normalize();
-    const right = this.scratchRight.set(-fwd.z, 0, fwd.x);
-    const move = this.scratchMove.set(0, 0, 0);
-    if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) move.add(fwd);
-    if (this.keys.has('KeyS') || this.keys.has('ArrowDown')) move.sub(fwd);
-    if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) move.add(right);
-    if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) move.sub(right);
-    if (move.lengthSq() > 0) {
-      move.normalize().multiplyScalar(panSpeed);
-      cam.position.add(move);
-      this.controls.target.add(move);
+
+    if (this.transT < 1) {
+      if (this.keys.size > 0) {
+        this.finishTransition();
+      } else {
+        this.transT = Math.min(1, this.transT + dt / ENTER_TRANSITION_SEC);
+        const e = 1 - (1 - this.transT) ** 3;
+        cam.position.lerpVectors(this.transFromPos, this.transGoalPos, e);
+        cam.quaternion.slerpQuaternions(this.transFromQuat, this.transGoalQuat, e);
+        const nextFov = this.transFromFov + (DEFAULT_FOV - this.transFromFov) * e;
+        if (Math.abs(cam.fov - nextFov) > 0.01) {
+          cam.fov = nextFov;
+          cam.updateProjectionMatrix();
+        }
+        if (this.transT >= 1) this.finishTransition();
+      }
+    } else {
+      this.controls.update();
+      const panSpeed = 0.9 * this.controls.getDistance() * dt;
+      const fwd = cam.getWorldDirection(this.scratchFwd);
+      fwd.y = 0;
+      fwd.normalize();
+      const right = this.scratchRight.set(-fwd.z, 0, fwd.x);
+      const move = this.scratchMove.set(0, 0, 0);
+      if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) move.add(fwd);
+      if (this.keys.has('KeyS') || this.keys.has('ArrowDown')) move.sub(fwd);
+      if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) move.add(right);
+      if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) move.sub(right);
+      if (move.lengthSq() > 0) {
+        move.normalize().multiplyScalar(panSpeed);
+        cam.position.add(move);
+        this.controls.target.add(move);
+      }
+      const ground = h.hf.height(cam.position.x, cam.position.z) + 4;
+      if (cam.position.y < ground) cam.position.y = ground;
     }
-    const ground = h.hf.height(cam.position.x, cam.position.z) + 4;
-    if (cam.position.y < ground) cam.position.y = ground;
+
+    if (net.nodes.size > this.handleCapacity) {
+      let nextCap = this.handleCapacity;
+      while (nextCap < net.nodes.size) nextCap *= 2;
+      this.handleCapacity = nextCap;
+      this.root.remove(this.handles);
+      this.handles.dispose();
+      this.handles = new THREE.InstancedMesh(this.handleGeo, this.handleMat, nextCap);
+      this.handles.renderOrder = 11;
+      this.handles.frustumCulled = false;
+      this.root.add(this.handles);
+    }
 
     let i = 0;
     const camPos = cam.position;
     for (const n of net.nodes.values()) {
-      if (i >= HANDLE_CAPACITY) break;
       const d = Math.hypot(n.x - camPos.x, n.y - camPos.y, n.z - camPos.z);
       const r = Math.max(1.1, d * 0.0042);
       this.tmp.position.set(n.x, n.y + 0.5, n.z);

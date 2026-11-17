@@ -28,9 +28,14 @@ export const bridgeTool: EditorTool = {
   },
   hover(ctx: EditorContext, p: WorldPoint) {
     const near = ctx.host.net.nearest(p.x, p.z, 16);
-    if (!near) return;
+    if (!near) {
+      ctx.setStatus('Move close to a track to change bridge or embankment');
+      return;
+    }
     const s = ctx.host.net.sample(near.seg, near.s);
+    const cur = ctx.host.net.segs.get(near.seg)!.bridge;
+    const next = BRIDGE_NEXT[cur];
     ctx.showHighlight(s.x, s.y + 0.5, s.z, 4);
-    ctx.setStatus(`This section: ${BRIDGE_STATUS[ctx.host.net.segs.get(near.seg)!.bridge]}. Click to change`);
+    ctx.setStatus(`Bridge: ${BRIDGE_STATUS[cur]} — click to set ${BRIDGE_STATUS[next]}`);
   },
 };

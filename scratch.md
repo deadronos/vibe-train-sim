@@ -15,9 +15,9 @@ Suggested order and batches for the remaining review issues, updated on 2026-11-
 
 Self-contained improvements to everyday usability and diagnostics.
 
-- [#39](https://github.com/deadronos/vibe-train-sim/issues/39): **Show what an editor click will do before it happens** (`area: ui-ux`) — Ready now that editor tools are split (`#6`). Unify hover and click hit-tests, show the target name in status, allow single-signal delete and box select, grow the node marker buffer dynamically, and make generated scenery seeds stable with exclusion areas.
-- [#45](https://github.com/deadronos/vibe-train-sim/issues/45): **Free camera and smooth camera changes** (`area: ui-ux`) — Ease between camera positions (respecting reduced motion), add a free-fly camera while trains keep running, and let wheel adjust FOV in cab view.
-- [#19](https://github.com/deadronos/vibe-train-sim/issues/19): **Finish adaptive quality and performance measurements** (`area: performance`, partly done in #81) — Live switching, `Auto`, and `?debug` overlay are in; still needs low-end laptop and phone frame measurements, separate shadow/scenery controls, and checking `logarithmicDepthBuffer` vs tightened near/far planes.
+- [#39](https://github.com/deadronos/vibe-train-sim/issues/39): **Show what an editor click will do before it happens** (`area: ui-ux`) — Unified hover/click hit-tests and status previews, single-signal delete, box-select removal, dynamic track-node handle buffer growth, and per-cell deterministic scenery seeds with saved exclusion zones.
+- [#45](https://github.com/deadronos/vibe-train-sim/issues/45): **Free camera and smooth camera changes** (`area: ui-ux`) — Smooth camera & mode transitions (respecting `prefers-reduced-motion`), cinematic and free-fly camera modes while trains keep running, and wheel FOV zoom in cab view.
+- [#19](https://github.com/deadronos/vibe-train-sim/issues/19): **Finish adaptive quality and performance measurements** (`area: performance`, partly done in #81) — Added live separate Shadows and Scenery density controls in the Graphics dialog, evaluated and switched off `logarithmicDepthBuffer` in favor of `near: 0.8, far: 10000`, and recorded local SwiftShader / Apple M4 Metal ANGLE + IBL measurements; physical low-end laptop and phone hardware measurements still tracked on `#19`.
 
 ## Batch 2: Rendering and edit scalability
 

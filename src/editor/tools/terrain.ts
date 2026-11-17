@@ -18,8 +18,8 @@ export class TerrainTool implements EditorTool {
     this.brushAt(ctx, p);
   }
 
-  move(ctx: EditorContext, p: WorldPoint): boolean {
-    if (this.brushing) this.brushAt(ctx, p);
+  move(ctx: EditorContext, p: WorldPoint | null): boolean {
+    if (this.brushing && p) this.brushAt(ctx, p);
     return false;
   }
 

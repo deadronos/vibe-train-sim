@@ -7,10 +7,14 @@ import {
   captureSave,
   readQuality,
   readSave,
+  readScenery,
+  readShadows,
   restoreEdit,
   restoreTrains,
   writeQuality,
   writeSave,
+  writeScenery,
+  writeShadows,
 } from '../src/persistence';
 import { buildDemoNetwork, populateDemoTrains, SHUTTLE } from '../src/rail/demoMap';
 import { Network } from '../src/rail/network';
@@ -380,11 +384,27 @@ describe('browser storage', () => {
     expect(() => writeSave(captureSave(world()))).toThrow('blocked');
   });
 
-  it('remembers the graphics quality, defaulting to auto', () => {
+  it('remembers the graphics quality, shadows and scenery settings, defaulting to auto', () => {
     expect(readQuality()).toBe('auto');
     writeQuality('low');
     expect(readQuality()).toBe('low');
     writeQuality('high');
     expect(readQuality()).toBe('high');
+
+    expect(readShadows()).toBe('auto');
+    writeShadows('off');
+    expect(readShadows()).toBe('off');
+    writeShadows('low');
+    expect(readShadows()).toBe('low');
+    store.set('vibe-train-sim/shadows', 'bogus');
+    expect(readShadows()).toBe('auto');
+
+    expect(readScenery()).toBe('auto');
+    writeScenery('off');
+    expect(readScenery()).toBe('off');
+    writeScenery('high');
+    expect(readScenery()).toBe('high');
+    store.set('vibe-train-sim/scenery', 'bogus');
+    expect(readScenery()).toBe('auto');
   });
 });

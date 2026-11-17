@@ -44,6 +44,10 @@ describe('parseSave', () => {
     sigNode.signals[side]!.type = 'shunt';
     d.net.segs[0].speedLimit = 18;
     d.trains[0].state!.restricted = true;
+    d.exclusions = [
+      { x: 10, z: 20, r: 1.5 },
+      { minX: -50, minZ: -50, maxX: 50, maxZ: 50 },
+    ];
     const r = parseSave(JSON.stringify(d));
     expect(r.ok).toBe(true);
   });
@@ -122,6 +126,10 @@ describe('parseSave', () => {
     ],
     ['segment speed limit', (d: SaveData) => (d.net.segs[0].speedLimit = 0)],
     ['restricted flag', (d: SaveData) => (d.trains[0].state!.restricted = 'yes' as never)],
+    ['exclusions not a list', (d: SaveData) => (d.exclusions = {} as never)],
+    ['exclusion bad radius', (d: SaveData) => (d.exclusions = [{ x: 1, z: 2, r: 0 }])],
+    ['exclusion bad bounds', (d: SaveData) => (d.exclusions = [{ minX: 10, minZ: 0, maxX: 5, maxZ: 5 }])],
+    ['exclusion missing fields', (d: SaveData) => (d.exclusions = [{ x: 1, z: 2 } as never])],
   ])('rejects a wrong %s', (_name, fn) => {
     const r = mutate(fn);
     expect(r).toEqual({ ok: false, reason: expect.stringMatching(/\S/) });

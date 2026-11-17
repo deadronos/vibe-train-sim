@@ -388,7 +388,7 @@ export class TrackRenderer {
       disposables.push(merged);
     };
     const crossings = net.crossingsOn(id).filter((c) => Math.abs(c.y1 - c.y2) <= DIAMOND_MAX_DY);
-    const sinkBallast = crossings.some((c) => c.seg2 === id) ? -0.006 : 0;
+    const sinkBallast = crossings.some((c) => c.seg2 === id) ? -0.014 : 0;
     addMerged(ballastGeos, this.mats.ballast, false, sinkBallast);
     addMerged(deckGeos, this.mats.deck, true);
     addMerged(girderGeos, this.mats.girder, true);
