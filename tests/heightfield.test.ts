@@ -132,10 +132,16 @@ describe('grading', () => {
       ref.base.set(hf.base);
       ref.grade(net);
 
+      let maxDiffH = 0;
+      let maxDiffW = 0;
       for (let k = 0; k < hf.h.length; k++) {
-        expect(Math.abs(hf.h[k] - ref.h[k])).toBeLessThan(0.002);
-        expect(Math.abs(hf.gradeWeight[k] - ref.gradeWeight[k])).toBeLessThan(0.01);
+        const dh = Math.abs(hf.h[k] - ref.h[k]);
+        const dw = Math.abs(hf.gradeWeight[k] - ref.gradeWeight[k]);
+        if (dh > maxDiffH) maxDiffH = dh;
+        if (dw > maxDiffW) maxDiffW = dw;
       }
+      expect(maxDiffH).toBeLessThan(0.002);
+      expect(maxDiffW).toBeLessThan(0.01);
     },
   );
 
