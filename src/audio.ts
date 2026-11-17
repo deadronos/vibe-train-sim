@@ -25,6 +25,41 @@ const MIN_CURVE_RADIUS = 55;
 const JOINT_SPACING = 18; // m between welded/jointed rail clicks
 const CAB_MASTER_CUTOFF = 1800; // Hz inside enclosed cab view
 const OPEN_MASTER_CUTOFF = 5200; // Hz exterior listening ceiling
+export const NEARBY_TRAIN_RANGE = 300; // m
+const NEARBY_VOICES = 3;
+const VOICE_FADE = 0.03;
+
+interface Point {
+  x: number;
+  y: number;
+  z: number;
+}
+
+export interface NearbyTrainSound {
+  train: object;
+  position: Point;
+  distance: number;
+  pitch: number;
+  speed: number;
+  throttle: number;
+  powerLoad: number;
+}
+
+/** Relative radial speed in m/s; cap the shift when the railway is fast-forwarded. */
+export function dopplerPitch(source: Point, sourceVelocity: Point, listener: Point, listenerVelocity: Point) {
+  const x = source.x - listener.x;
+  const y = source.y - listener.y;
+  const z = source.z - listener.z;
+  const distance = Math.hypot(x, y, z);
+  if (distance < 0.01) return 1;
+  const radial =
+    (x * (sourceVelocity.x - listenerVelocity.x) +
+      y * (sourceVelocity.y - listenerVelocity.y) +
+      z * (sourceVelocity.z - listenerVelocity.z)) /
+    distance;
+  const soundSpeed = 343;
+  return soundSpeed / (soundSpeed + Math.max(-65, Math.min(65, radial)));
+}
 
 export interface TrainAudioInput {
   speed: number;
@@ -60,25 +95,31 @@ export interface TrainAudioParams {
 
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
+function diesel(speed: number, throttle: number, powerLoad: number) {
+  const load = clamp01(powerLoad);
+  const notch = Math.round(clamp01(throttle) * 8);
+  const notchFrac = notch / 8;
+  return {
+    notch,
+    engineFreq: 36 + notch * 5.2 + load * 7 + Math.min(16, speed * 0.36),
+    engineCutoff: 165 + notch * 52 + load * 165,
+    engineGain: 0.05 + notchFrac * 0.115 + load * 0.065,
+  };
+}
+
+const rollingGain = (speed: number) => Math.min(0.19, speed * 0.0078);
+
 /** Pure mapping from train physics/track state to Web Audio synthesis parameters. */
 export function computeTrainAudioParams(input: TrainAudioInput): TrainAudioParams {
   const nearby = clamp01(input.nearby);
-  const throttle = clamp01(input.throttle);
   const load = clamp01(input.powerLoad);
   const speed = Math.max(0, input.speed);
-  const notch = Math.round(throttle * 8);
-  const notchFrac = notch / 8;
-
-  const engineFreq = 36 + notch * 5.2 + load * 7 + Math.min(16, speed * 0.36);
-  const subFreq = engineFreq * 0.5;
-  const engineCutoff = 165 + notch * 52 + load * 165;
-  const engineGain = (0.05 + notchFrac * 0.115 + load * 0.065) * nearby;
-
+  const { notch, engineFreq, engineCutoff, engineGain } = diesel(speed, input.throttle, input.powerLoad);
   const turboAmt = Math.max(0, (notch - 1.5) / 6.5);
   const turboFreq = 320 + notch * 68 + load * 90;
   const turboGain = turboAmt * (0.004 + load * 0.007) * nearby;
 
-  const rollGain = Math.min(0.19, speed * 0.0078) * nearby;
+  const rollGain = rollingGain(speed) * nearby;
   const bridgeGain = input.onBridge && speed > 1 ? Math.min(0.25, speed * 0.011) * nearby : 0;
 
   let flangeGain = 0;
@@ -108,9 +149,9 @@ export function computeTrainAudioParams(input: TrainAudioInput): TrainAudioParam
   return {
     notch,
     engineFreq,
-    subFreq,
+    subFreq: engineFreq * 0.5,
     engineCutoff,
-    engineGain,
+    engineGain: engineGain * nearby,
     turboFreq,
     turboGain,
     rollGain,
@@ -195,12 +236,89 @@ function makeDriveCurve(): Float32Array<ArrayBuffer> {
   return curve;
 }
 
+function spatialPanner(ctx: AudioContext, target: AudioNode) {
+  const panner = ctx.createPanner();
+  panner.panningModel = 'equalpower';
+  panner.rolloffFactor = 0;
+  panner.connect(target);
+  return panner;
+}
+
+function setPosition(node: AudioListener | PannerNode, position: Point, time: number) {
+  node.positionX.setValueAtTime(position.x, time);
+  node.positionY.setValueAtTime(position.y, time);
+  node.positionZ.setValueAtTime(position.z, time);
+}
+
+class NearbyVoice {
+  train: object | null = null;
+  reusableAt = Infinity;
+  private panner: PannerNode;
+  private engine: OscillatorNode;
+  private engineFilter: BiquadFilterNode;
+  private engineGain: GainNode;
+  private roll: AudioBufferSourceNode;
+  private rollGain: GainNode;
+
+  constructor(ctx: AudioContext, target: AudioNode, noise: AudioBuffer) {
+    this.panner = spatialPanner(ctx, target);
+    this.engine = ctx.createOscillator();
+    this.engine.type = 'sawtooth';
+    this.engineFilter = ctx.createBiquadFilter();
+    this.engineFilter.type = 'lowpass';
+    this.engineGain = ctx.createGain();
+    this.engineGain.gain.value = 0;
+    this.engine.connect(this.engineFilter);
+    this.engineFilter.connect(this.engineGain);
+    this.engineGain.connect(this.panner);
+    this.engine.start();
+
+    this.roll = ctx.createBufferSource();
+    this.roll.buffer = noise;
+    this.roll.loop = true;
+    const rollFilter = ctx.createBiquadFilter();
+    rollFilter.type = 'lowpass';
+    rollFilter.frequency.value = 280;
+    this.rollGain = ctx.createGain();
+    this.rollGain.gain.value = 0;
+    this.roll.connect(rollFilter);
+    rollFilter.connect(this.rollGain);
+    this.rollGain.connect(this.panner);
+    this.roll.start();
+  }
+
+  update(source: NearbyTrainSound, settings: SoundSettings, time: number) {
+    const { engineFreq, engineCutoff, engineGain } = diesel(source.speed, source.throttle, source.powerLoad);
+    const level = (1 - source.distance / NEARBY_TRAIN_RANGE) ** 2;
+    setPosition(this.panner, source.position, time);
+    this.engine.frequency.setTargetAtTime(engineFreq * source.pitch, time, VOICE_FADE);
+    this.engineFilter.frequency.setTargetAtTime(engineCutoff, time, VOICE_FADE);
+    this.roll.playbackRate.setTargetAtTime(source.pitch, time, VOICE_FADE);
+    this.engineGain.gain.setTargetAtTime(engineGain * level * 0.6 * settings.engine, time, VOICE_FADE);
+    this.rollGain.gain.setTargetAtTime(rollingGain(source.speed) * level * settings.rail, time, VOICE_FADE);
+    this.train = source.train;
+    this.reusableAt = Infinity;
+  }
+
+  fadeOut(time: number) {
+    if (this.train === null || this.reusableAt !== Infinity) return;
+    this.engineGain.gain.setTargetAtTime(0, time, VOICE_FADE);
+    this.rollGain.gain.setTargetAtTime(0, time, VOICE_FADE);
+    // Leave time for the old position to fall silent before moving the voice.
+    this.reusableAt = time + VOICE_FADE * 5;
+  }
+}
+
 export class SimAudio {
   private ctx: AudioContext | null = null;
   private master!: GainNode;
   private masterFilter!: BiquadFilterNode;
+  private trainPanner!: PannerNode;
+  private trainLevel!: GainNode;
+  private nearbyVoices: NearbyVoice[] = [];
   private engineBus!: GainNode;
   private railBus!: GainNode;
+  private impactBus!: GainNode;
   private squealBus!: GainNode;
   private hornBus!: GainNode;
 
@@ -212,6 +330,7 @@ export class SimAudio {
   private turboFilter!: BiquadFilterNode;
   private turboGain!: GainNode;
 
+  private roll!: AudioBufferSourceNode;
   private rollGain!: GainNode;
   private bridgeGain!: GainNode;
   private flangeFilter!: BiquadFilterNode;
@@ -237,6 +356,10 @@ export class SimAudio {
     return this.ctx !== null;
   }
 
+  get running() {
+    return this.ctx?.state === 'running';
+  }
+
   /** Browsers only allow audio after a user gesture. */
   unlock() {
     if (this.ctx) {
@@ -257,8 +380,11 @@ export class SimAudio {
       g.connect(target);
       return g;
     };
-    this.engineBus = bus();
-    this.railBus = bus();
+    this.trainLevel = bus();
+    this.trainPanner = spatialPanner(ctx, this.trainLevel);
+    this.engineBus = bus(this.trainPanner);
+    this.railBus = bus(this.trainPanner);
+    this.impactBus = bus();
     this.squealBus = bus(this.railBus);
     this.hornBus = bus();
     this.apply(true);
@@ -308,6 +434,7 @@ export class SimAudio {
     this.noise = ctx.createBuffer(1, len, ctx.sampleRate);
     fillPinkNoise(this.noise.getChannelData(0));
     const roll = ctx.createBufferSource();
+    this.roll = roll;
     roll.buffer = this.noise;
     roll.loop = true;
 
@@ -376,6 +503,7 @@ export class SimAudio {
     this.brakeSquealGain = brake.gain;
 
     roll.start();
+    for (let i = 0; i < NEARBY_VOICES; i++) this.nearbyVoices.push(new NearbyVoice(ctx, this.master, this.noise));
 
     this.hornGain = ctx.createGain();
     this.hornGain.gain.value = 0;
@@ -417,6 +545,7 @@ export class SimAudio {
     level(this.master, s.muted ? 0 : s.volume * MASTER);
     level(this.engineBus, s.engine);
     level(this.railBus, s.rail);
+    level(this.impactBus, s.rail);
     level(this.squealBus, s.squeal ? 1 : 0);
     level(this.hornBus, s.horn);
   }
@@ -532,7 +661,7 @@ export class SimAudio {
     tg.gain.setValueAtTime(0.45 * scale, t);
     tg.gain.exponentialRampToValueAtTime(0.001, t + 0.38);
     thud.connect(tg);
-    tg.connect(this.railBus);
+    tg.connect(this.impactBus);
     thud.start(t);
     thud.stop(t + 0.4);
 
@@ -546,7 +675,7 @@ export class SimAudio {
     ng.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
     src.connect(f);
     f.connect(ng);
-    ng.connect(this.railBus);
+    ng.connect(this.impactBus);
     src.start(t, Math.random());
     src.stop(t + 0.48);
   }
@@ -558,12 +687,47 @@ export class SimAudio {
     this.prevOdom = odom;
   }
 
+  /** The driving and editor cameras share one listener and one distance-ranked voice pool. */
+  updateSpatial(
+    position: Point,
+    forward: Point,
+    up: Point,
+    drivenPosition: Point,
+    nearby: readonly NearbyTrainSound[],
+  ) {
+    if (!this.ctx || this.ctx.state !== 'running') return;
+    const { listener, currentTime: time } = this.ctx;
+    setPosition(listener, position, time);
+    listener.forwardX.setValueAtTime(forward.x, time);
+    listener.forwardY.setValueAtTime(forward.y, time);
+    listener.forwardZ.setValueAtTime(forward.z, time);
+    listener.upX.setValueAtTime(up.x, time);
+    listener.upY.setValueAtTime(up.y, time);
+    listener.upZ.setValueAtTime(up.z, time);
+    setPosition(this.trainPanner, drivenPosition, time);
+
+    const count = Math.min(nearby.length, NEARBY_VOICES);
+    for (const voice of this.nearbyVoices) {
+      let index = 0;
+      while (index < count && nearby[index].train !== voice.train) index++;
+      if (index === count) voice.fadeOut(time);
+      else voice.update(nearby[index], this.settings, time);
+    }
+    for (let i = 0; i < count; i++) {
+      const source = nearby[i];
+      if (this.nearbyVoices.some((voice) => voice.train === source.train)) continue;
+      const free = this.nearbyVoices.find((voice) => voice.train === null || voice.reusableAt <= time);
+      free?.update(source, this.settings, time);
+    }
+  }
+
   /** Follows the driven train; volume drops with camera distance from it. Call with nearby 0 to fade out. */
   update(
     input: TrainAudioInput,
     curOdom: number,
     junctionNodeDists: readonly number[],
     bogieOffsets: readonly number[],
+    pitch = 1,
   ) {
     if (!this.ctx || this.ctx.state !== 'running') {
       this.prevSpeed = input.speed;
@@ -574,20 +738,23 @@ export class SimAudio {
 
     const p = computeTrainAudioParams(input);
     const t = this.ctx.currentTime;
+    // A centred equal-power panner reduces each channel by 3 dB relative to the original mono cab mix.
+    this.trainLevel.gain.setTargetAtTime(input.cab ? Math.SQRT2 : 1, t, BUS_FADE);
     this.masterFilter.frequency.setTargetAtTime(p.masterCutoff, t, 0.14);
-    this.engine.frequency.setTargetAtTime(p.engineFreq, t, 0.16);
-    this.engine2.frequency.setTargetAtTime(p.subFreq, t, 0.16);
+    this.engine.frequency.setTargetAtTime(p.engineFreq * pitch, t, 0.08);
+    this.engine2.frequency.setTargetAtTime(p.subFreq * pitch, t, 0.08);
     this.engineFilter.frequency.setTargetAtTime(p.engineCutoff, t, 0.16);
     this.engineGain.gain.setTargetAtTime(p.engineGain, t, 0.16);
-    this.turboOsc.frequency.setTargetAtTime(p.turboFreq, t, 0.2);
-    this.turboFilter.frequency.setTargetAtTime(p.turboFreq, t, 0.2);
+    this.turboOsc.frequency.setTargetAtTime(p.turboFreq * pitch, t, 0.08);
+    this.turboFilter.frequency.setTargetAtTime(p.turboFreq * pitch, t, 0.08);
     this.turboGain.gain.setTargetAtTime(p.turboGain, t, 0.2);
 
+    this.roll.playbackRate.setTargetAtTime(pitch, t, 0.08);
     this.rollGain.gain.setTargetAtTime(p.rollGain, t, 0.15);
     this.bridgeGain.gain.setTargetAtTime(p.bridgeGain, t, 0.12);
-    this.flangeFilter.frequency.setTargetAtTime(p.flangeFreq, t, 0.08);
+    this.flangeFilter.frequency.setTargetAtTime(p.flangeFreq * pitch, t, 0.08);
     this.flangeGain.gain.setTargetAtTime(p.flangeGain, t, 0.08);
-    this.brakeFilter.frequency.setTargetAtTime(p.brakeSquealFreq, t, 0.08);
+    this.brakeFilter.frequency.setTargetAtTime(p.brakeSquealFreq * pitch, t, 0.08);
     this.brakeSquealGain.gain.setTargetAtTime(p.brakeSquealGain, t, 0.08);
     this.brakeHissGain.gain.setTargetAtTime(p.brakeHissGain, t, 0.08);
 

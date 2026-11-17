@@ -9,6 +9,7 @@ import type { Preset } from '../src/world/heightfield';
 declare global {
   interface Window {
     __game: Game;
+    __readTrainAudio?: () => { left: number; right: number; minPitch: number; maxPitch: number };
   }
 }
 
@@ -68,6 +69,97 @@ test('trains move', async ({ page }) => {
       return Math.max(...now.map(([x, z], i) => Math.hypot(x - start[i][0], z - start[i][1])));
     })
     .toBeGreaterThan(1);
+});
+
+test('a train pans and shifts pitch while running in the editor', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.addInitScript(() => {
+    const rates: AudioParam[] = [];
+    // oxlint-disable-next-line typescript/unbound-method -- The wrapper forwards the original receiver with call.
+    const createBufferSource = AudioContext.prototype.createBufferSource;
+    AudioContext.prototype.createBufferSource = function (this: AudioContext) {
+      const source = createBufferSource.call(this);
+      rates.push(source.playbackRate);
+      return source;
+    };
+    // oxlint-disable-next-line typescript/unbound-method -- Each native call gets its receiver through Reflect.apply.
+    const connect = AudioNode.prototype.connect;
+    AudioNode.prototype.connect = function (this: AudioNode, target: AudioNode | AudioParam, ...channels: number[]) {
+      if (target instanceof AudioDestinationNode) {
+        const splitter = this.context.createChannelSplitter(2);
+        const meters = [this.context.createAnalyser(), this.context.createAnalyser()];
+        Reflect.apply(connect, this, [splitter]);
+        meters.forEach((meter, channel) => Reflect.apply(connect, splitter, [meter, channel, 0]));
+        const samples = new Float32Array(meters[0].fftSize);
+        const rms = (meter: AnalyserNode) => {
+          meter.getFloatTimeDomainData(samples);
+          return Math.sqrt(samples.reduce((sum, sample) => sum + sample * sample, 0) / samples.length);
+        };
+        window.__readTrainAudio = () => ({
+          left: rms(meters[0]),
+          right: rms(meters[1]),
+          minPitch: Math.min(...rates.map((rate) => rate.value)),
+          maxPitch: Math.max(...rates.map((rate) => rate.value)),
+        });
+      }
+      return Reflect.apply(connect, this, [target, ...channels]);
+    };
+  });
+  await load(page);
+  await page.locator('#mode-edit').click();
+  await page.locator('[data-tool="train"]').click();
+  await page.evaluate(() => {
+    const g = window.__game;
+    const train = g.sim.trains[0];
+    g.newWorld('plains', 1, false);
+    const y = g.hf.height(0, 0) + 5;
+    const a = g.net.addNode(-450, y, 0, 1, 0);
+    const b = g.net.addNode(450, y, 0, 1, 0);
+    const segment = g.net.addSegment(a.id, 1, b.id, -1);
+    g.commitEdit();
+    g.addTrain(train, segment.id, 820, -1);
+    train.ai = false;
+    train.speed = 24;
+    g.editor.controls.target.set(0, y, 0);
+    g.camera.position.set(0, y + 8, 35);
+    g.editor.controls.update();
+  });
+
+  const read = () => page.evaluate(() => window.__readTrainAudio!());
+  const peak = async () => {
+    const { left, right } = await read();
+    return Math.max(left, right);
+  };
+  const placeTrain = (distance: number) =>
+    page.evaluate((s) => {
+      const { sim } = window.__game;
+      const train = sim.trains[0];
+      sim.place(train, sim.head(train).seg, s, -1);
+      train.speed = 24;
+    }, distance);
+  await frames(page);
+  expect(await peak()).toBeLessThan(0.0001);
+  await page.locator('#run-trains').check();
+  await frames(page, 6);
+  expect(await peak()).toBeLessThan(0.0001);
+
+  await placeTrain(485);
+  await expect
+    .poll(async () => {
+      const { left, right, maxPitch } = await read();
+      return right > 0.001 && right > left * 1.5 && maxPitch > 1.02;
+    })
+    .toBe(true);
+
+  await placeTrain(375);
+  await expect
+    .poll(async () => {
+      const { left, right, minPitch } = await read();
+      return left > 0.001 && left > right * 1.5 && minPitch < 0.98;
+    })
+    .toBe(true);
+  await page.locator('#run-trains').uncheck();
+  await expect.poll(peak).toBeLessThan(0.0001);
 });
 
 test('pauses and fast-forwards the railway', async ({ page }) => {
