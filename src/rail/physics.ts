@@ -109,8 +109,31 @@ export function advanceTrain(
     t.trail.push({ seg: nxt, dir });
     t.headS = dir > 0 ? 0 : net.geom.get(nxt)!.length;
   }
-  if (!silent && ds > 0 && t.stopRemain >= 0) t.stopRemain = Math.max(0, t.stopRemain - (ds - rem));
+  if (!silent && ds > 0) {
+    const moved = ds - rem;
+    if (moved > 0) t.odometer += moved;
+    if (t.stopRemain >= 0) t.stopRemain = Math.max(0, t.stopRemain - moved);
+  }
   pruneTrail(net, t);
+}
+
+/** Normalized 0..1 tractive load on the train's locomotives at the current speed and throttle. */
+export function tractiveLoad(t: Train): number {
+  const cut = t.emergency || t.tripped || t.damaged || (!t.ai && t.dwell > 0);
+  if (cut || t.throttle <= 0 || t.speed >= t.topSpeed) return 0;
+  let maxTractive = 0;
+  let maxPower = 0;
+  for (const c of t.cars) {
+    const tr = VEHICLES[c.type].traction;
+    if (tr) {
+      maxTractive += tr.tractive;
+      maxPower += tr.power;
+    }
+  }
+  if (maxTractive <= 0 || maxPower <= 0) return 0;
+  const asked = t.tractiveForce(t.speed) * t.throttle;
+  const actual = t.slipping ? t.adhesionLimit * SLIP_GRIP : Math.min(asked, t.adhesionLimit);
+  return Math.min(1, Math.max(actual / maxTractive, (actual * t.speed) / maxPower));
 }
 
 export function stepPhysics(

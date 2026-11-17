@@ -11,6 +11,7 @@ export interface Prim {
 // glTF stores emission multiplied by strength, so the colours driven at night live here.
 const GLOW: Record<string, [number, number, number, number]> = {
   glow_window: [1.0, 0.62, 0.28, 1.05],
+  glow_cab: [1.0, 0.85, 0.55, 0.8],
   glow_headlight: [1.0, 0.93, 0.78, 6],
   glow_tail: [1.0, 0.03, 0.015, 5],
   glow_lamp: [1.0, 0.76, 0.42, 10],
@@ -19,6 +20,7 @@ const GLOW: Record<string, [number, number, number, number]> = {
 export class Assets {
   private roots = new Map<string, THREE.Object3D>();
   private prims = new Map<string, Prim[]>();
+  private ownPrims = new Map<string, Prim[]>();
   glowMats: { mat: THREE.MeshStandardMaterial; strength: number }[] = [];
 
   async load(url: string, onProgress?: (f: number) => void) {
@@ -74,6 +76,30 @@ export class Assets {
       out.push({ name: o.name, geometry: g, material: mesh.material as THREE.MeshStandardMaterial });
     });
     this.prims.set(name, out);
+    return out;
+  }
+
+  /** Local-space primitives belonging directly to a named asset or child sub-object (without sub-group children). */
+  ownPrimitives(rootName: string, nodeName?: string): Prim[] {
+    const key = nodeName ? `${rootName}:${nodeName}` : rootName;
+    const cached = this.ownPrims.get(key);
+    if (cached) return cached;
+    const root = this.roots.get(rootName);
+    if (!root) throw new Error(`Asset ${rootName} is missing from assetpack.glb`);
+    const target = nodeName ? root.getObjectByName(nodeName) : root;
+    if (!target) throw new Error(`Node ${nodeName} is missing from asset ${rootName}`);
+    const out: Prim[] = [];
+    if ((target as THREE.Mesh).isMesh) {
+      const m = target as THREE.Mesh;
+      out.push({ name: m.name, geometry: m.geometry, material: m.material as THREE.MeshStandardMaterial });
+    } else {
+      for (const child of target.children) {
+        const m = child as THREE.Mesh;
+        if (!m.isMesh) continue;
+        out.push({ name: m.name, geometry: m.geometry, material: m.material as THREE.MeshStandardMaterial });
+      }
+    }
+    this.ownPrims.set(key, out);
     return out;
   }
 

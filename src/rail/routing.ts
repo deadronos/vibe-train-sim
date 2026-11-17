@@ -241,3 +241,20 @@ export function nodeBehind(net: Network, t: Train, node: number) {
   }
   return null;
 }
+
+/** Fills `out` with distances (metres behind the head) to every junction node currently under the train. */
+export function collectJunctionDists(net: Network, t: Train, out: number[]) {
+  out.length = 0;
+  if (!t.trail.length) return;
+  const head = t.trail[t.trail.length - 1];
+  let d = head.dir > 0 ? t.headS : net.geom.get(head.seg)!.length - t.headS;
+  const maxD = t.length + 2;
+  for (let i = t.trail.length - 1; i >= 0; i--) {
+    const p = t.trail[i];
+    const seg = net.segs.get(p.seg)!;
+    const node = p.dir > 0 ? seg.a : seg.b;
+    if (d <= maxD && net.isJunction(node)) out.push(d);
+    if (d > maxD) break;
+    if (i > 0) d += net.geom.get(t.trail[i - 1].seg)!.length;
+  }
+}

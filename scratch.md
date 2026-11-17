@@ -11,22 +11,13 @@ Suggested order and batches for the remaining review issues, updated on 2026-11-
 
 - **Batch 1 — Editor clarity, camera feel and adaptive quality:** [#39](https://github.com/deadronos/vibe-train-sim/issues/39), [#45](https://github.com/deadronos/vibe-train-sim/issues/45), and [#19](https://github.com/deadronos/vibe-train-sim/issues/19) (partial; physical low-end device measurements remain open on `#19`).
 - **Batch 2 — Rendering and edit scalability:** [#15](https://github.com/deadronos/vibe-train-sim/issues/15) (per-node prop rebuilds and station sign updates), [#16](https://github.com/deadronos/vibe-train-sim/issues/16) (incremental grading, spatial grid in `Network`, per-region scatter, brush-area track dirtying), [#17](https://github.com/deadronos/vibe-train-sim/issues/17) (chunk-merged track, shared network prop instancing, instanced bounds for culling), and [#18](https://github.com/deadronos/vibe-train-sim/issues/18) (terrain LODs with skirts, tree LOD1/LOD2 variants, shadow-frustum culling).
+- **Batch 3 — Bring trains and cabs to life (visuals + core sound):** [#26](https://github.com/deadronos/vibe-train-sim/issues/26) (instanced rotating wheelsets, body sway/roll/bounce, couplers/gangways, real spotlight + projected AI headlight cones), [#28](https://github.com/deadronos/vibe-train-sim/issues/28) (low-poly `cab_interior` with live dial/lever and reduced-motion-safe head sway), [#29](https://github.com/deadronos/vibe-train-sim/issues/29) (turnout switch blades, frogs, guard rails, blended ballast and smooth blade animation), [#27](https://github.com/deadronos/vibe-train-sim/issues/27) (pooled instanced diesel exhaust, brake sparks, desert dust and impact bursts respecting low quality), and [#51](https://github.com/deadronos/vibe-train-sim/issues/51) (pure Web Audio diesel notches/load/turbo whine, brake squeal/air release, tight-curve flange squeal, node-driven junction clatter, bridge resonance and impact sounds).
 
 ---
 
 ## Batch 1 remaining item (tracked on #19)
 
 - [#19](https://github.com/deadronos/vibe-train-sim/issues/19): **Finish adaptive quality and performance measurements** (`area: performance`, partly done in #81 and #95) — Physical low-end laptop and phone hardware measurements still tracked on `#19`.
-
-## Batch 3: Bring trains and cabs to life (visuals + core sound)
-
-High-visibility driving immersion that players see and hear every second.
-
-- [#26](https://github.com/deadronos/vibe-train-sim/issues/26): **Wheels, sway, lights and couplers** (`area: visuals`) — Rotating wheels, car body sway/rail-joint bounce, couplers/gangways between vehicles, and projected headlights on non-driven trains.
-- [#28](https://github.com/deadronos/vibe-train-sim/issues/28): **Cab interior for cab view** (`area: visuals`) — Model an original cab in `tools/blender/build_assetpack.py` with live dial/lever and subtle head movement (respecting reduced motion).
-- [#29](https://github.com/deadronos/vibe-train-sim/issues/29): **Junction switch blades and frog** (`area: visuals`) — Render movable switch blades, frog, guard rails, and blended ballast at turnouts so cab view shows the set route.
-- [#27](https://github.com/deadronos/vibe-train-sim/issues/27): **Exhaust, brake sparks and dust particles** (`area: visuals`) — Instanced particle system responding to diesel throttle, heavy braking, desert dust, and impacts (disabled on low quality).
-- [#51](https://github.com/deadronos/vibe-train-sim/issues/51): **Train sound responding to what the train is doing** (`area: audio`) — Keep synthesis in `src/audio.ts`: stepped diesel load/turbo whine, brake squeal and air release, tight-curve flange squeal, real-node junction clatter, bridge resonance, and collision impacts.
 
 ## Batch 4: World atmosphere, directional audio and shaders
 

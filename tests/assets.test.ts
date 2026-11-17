@@ -43,6 +43,7 @@ describe('assetpack.glb contract', () => {
       'tree_birch_lod1',
       'tree_birch_lod2',
       'bogie',
+      'cab_interior',
       'pier',
       'abutment',
       'signal_mast',
@@ -74,9 +75,33 @@ describe('assetpack.glb contract', () => {
     }
   });
 
+  it('keeps separate wheelsets on bogie and animated controls on cab_interior', () => {
+    const collectChildren = (rootName: string) => {
+      const idx = rootIndices.find((i) => nodes[i]?.name === rootName);
+      expect(idx, `missing root "${rootName}"`).toBeDefined();
+      const seen = new Set<string>();
+      const visit = (i: number) => {
+        const n = nodes[i];
+        if (!n) return;
+        if (n.name) seen.add(n.name);
+        for (const c of n.children ?? []) visit(c);
+      };
+      visit(idx!);
+      return seen;
+    };
+
+    const bogieParts = collectChildren('bogie');
+    expect(bogieParts.has('wheelset_front')).toBe(true);
+    expect(bogieParts.has('wheelset_rear')).toBe(true);
+
+    const cabParts = collectChildren('cab_interior');
+    expect(cabParts.has('cab_dial_needle')).toBe(true);
+    expect(cabParts.has('cab_lever')).toBe(true);
+  });
+
   it('includes every glow_* night-lighting material', () => {
     const materials = new Set((glb.materials ?? []).map((m) => m.name).filter((n): n is string => Boolean(n)));
-    for (const mat of ['glow_window', 'glow_headlight', 'glow_tail', 'glow_lamp']) {
+    for (const mat of ['glow_window', 'glow_cab', 'glow_headlight', 'glow_tail', 'glow_lamp']) {
       expect(materials.has(mat), `missing material "${mat}"`).toBe(true);
     }
   });

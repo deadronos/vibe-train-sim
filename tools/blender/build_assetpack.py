@@ -53,6 +53,7 @@ M = dict(
     rust=mat("rust", (0.2, 0.075, 0.03), 0.85, 0.2),
     glass=mat("glass_dark", (0.012, 0.02, 0.025), 0.08, 0.6),
     win=mat("glow_window", (0.02, 0.03, 0.035), 0.12, 0.4, (1.0, 0.72, 0.38), 0.0),
+    cab_glow=mat("glow_cab", (0.88, 0.85, 0.76), 0.35, 0.0, (1.0, 0.85, 0.55), 0.0),
     head=mat("glow_headlight", (0.8, 0.8, 0.75), 0.15, 0.3, (1.0, 0.92, 0.75), 0.0),
     tail=mat("glow_tail", (0.25, 0.01, 0.01), 0.2, 0.0, (1.0, 0.02, 0.01), 0.0),
     lamp=mat("glow_lamp", (0.85, 0.82, 0.7), 0.3, 0.0, (1.0, 0.78, 0.45), 0.0),
@@ -160,16 +161,31 @@ def join(name, parts):
 
 
 # ---------------------------------------------------------------- rolling stock
+def wheelset(name, y_pos):
+    """Single axle + two flanged wheels with spoke lugs, origin at axle centre for X-axis spin."""
+    p = [cyl("axle", (-0.8, 0, 0), (0.8, 0, 0), 0.07, M["steel"], 8)]
+    for x in (-0.76, 0.76):
+        sx = -1 if x < 0 else 1
+        p.append(cyl("wheel", (x - 0.05, 0, 0), (x + 0.05, 0, 0), 0.46, M["bright"], 14))
+        p.append(cyl("flange", (x - sx * 0.055, 0, 0), (x - sx * 0.035, 0, 0), 0.505, M["bright"], 14))
+        p.append(cyl("hub", (x * 1.1 - 0.06, 0, 0), (x * 1.1 + 0.06, 0, 0), 0.16, M["steel"], 8))
+        # Outer radial lugs make wheel rotation clearly visible at speed.
+        p.append(box("lug_a", (x + sx * 0.052, 0, 0.25), (0.02, 0.09, 0.22), M["steel"]))
+        p.append(box("lug_b", (x + sx * 0.052, 0.22, -0.14), (0.02, 0.18, 0.09), M["steel"]))
+    ws = join(name, p)
+    ws.location = (0, y_pos, 0.46)
+    return ws
+
+
 def bogie():
     p = [box("frame", (0, 0, 0.62), (2.0, 2.55, 0.28), M["steel"], 0.03)]
-    for y in (-0.95, 0.95):
-        p.append(cyl("axle", (-0.8, y, 0.46), (0.8, y, 0.46), 0.07, M["steel"], 8))
-        for x in (-0.76, 0.76):
-            p.append(cyl("wheel", (x - 0.05, y, 0.46), (x + 0.05, y, 0.46), 0.46, M["bright"], 20))
-            p.append(cyl("hub", (x * 1.1 - 0.06, y, 0.46), (x * 1.1 + 0.06, y, 0.46), 0.16, M["steel"], 10))
     for x in (-1.04, 1.04):
         p.append(box("spring", (x, 0, 0.72), (0.14, 1.1, 0.26), M["rust"]))
-    return join("bogie", p)
+    body = join("bogie", p)
+    for name, y in (("wheelset_front", -0.95), ("wheelset_rear", 0.95)):
+        ws = wheelset(name, y)
+        ws.parent = body
+    return body
 
 
 def body_section(hw, z0, z1, roof_h):
@@ -299,11 +315,110 @@ def locomotive(name="loco_diesel", L=19.0, livery=None, stripe=None, fans=(-3.8,
     for y in fans:
         p.append(cyl("fan", (0, y, 3.98), (0, y, 4.1), 0.75, M["steel"], 20))
         p.append(cyl("fanhub", (0, y, 4.08), (0, y, 4.14), 0.2, M["bright"], 10))
+    exhaust_ys = (-1.6, 1.6) if L >= 18 else (1.8,)
+    for ey in exhaust_ys:
+        p.append(cyl("exhaust_base", (0, ey, 3.96), (0, ey, 4.16), 0.2, M["steel"], 12))
+        p.append(cyl("exhaust_lip", (0, ey, 4.14), (0, ey, 4.22), 0.16, M["black"], 12))
     p.append(box("deck", (0, 0, 1.08), (2.85, L - 0.4, 0.26), M["steel"]))
     p.append(box("fuel", (0, 0, 0.72), (2.2, 5.6, 0.62), M["steel"], 0.06))
     for y in (-L / 2 - 0.05, L / 2 + 0.05):
         p.append(box("pilot", (0, y * 0.985, 0.75), (2.5, 0.38, 0.65), stripe, 0.03, (0.95, 0.8)))
     return join(name, p)
+
+
+def cab_interior():
+    """Original driver cab shell with desk, window pillars and separate dial needle & power lever."""
+    # Eye sits at (0, -0.3, 3.05) in Blender coords (Three.js: (0, 3.05, +0.3)) looking toward -Y.
+    p = [
+        # Lower cab shell: floor and side waist panels below sill height (Z <= 2.38).
+        box("cab_floor", (0, 0.0, 1.62), (2.68, 2.8, 0.12), M["steel"]),
+        box("cab_front_wall", (0, -1.32, 2.04), (2.68, 0.14, 0.84), M["roof"]),
+        box("cab_rear_wall", (0, 1.32, 2.66), (2.68, 0.12, 2.08), M["roof"]),
+        box("cab_rear_door", (0, 1.24, 2.52), (0.78, 0.05, 1.72), M["steel"]),
+        # Slender windscreen A-pillars placed wide (+/-1.24) so forward track & signals stay clear.
+        box("pillar_l", (-1.24, -1.28, 3.04), (0.10, 0.11, 1.22), M["steel"]),
+        box("pillar_r", (1.24, -1.28, 3.04), (0.10, 0.11, 1.22), M["steel"]),
+        # Rear B-pillars and side waist sills; side windows remain open apertures.
+        box("b_pillar_l", (-1.26, 1.18, 3.02), (0.14, 0.22, 1.26), M["steel"]),
+        box("b_pillar_r", (1.26, 1.18, 3.02), (0.14, 0.22, 1.26), M["steel"]),
+        box("sill_l", (-1.27, 0.0, 2.02), (0.12, 2.64, 0.82), M["roof"]),
+        box("sill_r", (1.27, 0.0, 2.02), (0.12, 2.64, 0.82), M["roof"]),
+        # Roof canopy and front header visor above eye sightline (Z >= 3.60).
+        box("cab_roof", (0, 0.0, 3.68), (2.68, 2.76, 0.14), M["roof"]),
+        box("cab_visor", (0, -1.34, 3.62), (2.58, 0.18, 0.10), M["steel"]),
+        box("cab_brow", (0, -1.50, 2.34), (2.36, 0.26, 0.16), M["black"]),
+        # Driver's sloped control desk placed ~0.95-1.15 m ahead of eye (outside camera near plane).
+        box("desk_base", (0, -1.10, 2.10), (2.38, 0.52, 0.58), M["steel"], 0.02),
+        box("desk_top", (0, -1.10, 2.43), (2.36, 0.54, 0.10), M["black"], 0.015),
+        box("desk_trim", (0, -0.84, 2.43), (2.36, 0.04, 0.11), M["stripe"]),
+    ]
+    # Gauge cylinders share an identical normal direction n_vec so bezel, face, ticks & needle align cleanly.
+    n_vec = Vector((0.0, 0.08, 0.11)).normalized()
+    dial_tilt = math.atan2(n_vec.y, n_vec.z)
+    up_vec = Vector((0.0, -n_vec.z, n_vec.y)).normalized()  # 12 o'clock on the dial face
+    right_vec = Vector((-1.0, 0.0, 0.0))  # 3 o'clock seen by driver facing -Y
+
+    def add_gauge(gx, r_bezel, r_face):
+        center = Vector((gx, -1.03, 2.535))
+        bez = cyl("bezel", center - n_vec * 0.09, center, r_bezel, M["steel"], 20)
+        face = cyl("face", center - n_vec * 0.08, center + n_vec * 0.005, r_face, M["cab_glow"], 20)
+        for poly in face.data.polygons:
+            poly.use_smooth = False
+        p.extend([bez, face])
+        return center + n_vec * 0.005
+
+    dial_center = add_gauge(0.16, 0.112, 0.095)
+    add_gauge(0.42, 0.072, 0.058)
+
+    # Power / brake lever quadrant housing on the right side (-X in Blender facing -Y).
+    p.extend([
+        box("quadrant", (-0.28, -1.07, 2.49), (0.14, 0.34, 0.07), M["steel"], 0.01),
+        box("quadrant_slot", (-0.28, -1.07, 2.525), (0.035, 0.28, 0.015), M["black"]),
+        box("quadrant_fwd", (-0.28, -1.18, 2.525), (0.09, 0.04, 0.018), M["stripe"]),
+        box("quadrant_brk", (-0.28, -0.96, 2.525), (0.09, 0.04, 0.018), M["red"]),
+    ])
+
+    # Crisp tick marks around the speedometer dial face sitting 4 mm proud of dial_face.
+    rot_q = n_vec.to_track_quat('Z', 'Y')
+    for i in range(9):
+        ang = math.radians(-135 + i * (270 / 8))
+        radial = right_vec * math.sin(ang) + up_vec * math.cos(ang)
+        t_pos = dial_center + n_vec * 0.004 + radial * 0.076
+        tick = box("tick", (0, 0, 0), (0.011, 0.022, 0.005), M["black"])
+        for v in tick.data.vertices:
+            local = Vector((
+                v.co.x * math.cos(ang) - v.co.y * math.sin(ang),
+                v.co.x * math.sin(ang) + v.co.y * math.cos(ang),
+                v.co.z,
+            ))
+            v.co = t_pos + (rot_q @ local)
+        p.append(tick)
+
+    body = join("cab_interior", p)
+
+    # Child 1: speedometer dial pivot tilted to dial normal, holding the needle 10 mm proud of dial_face.
+    dial_pivot = bpy.data.objects.new("cab_dial_pivot", None)
+    bpy.context.collection.objects.link(dial_pivot)
+    dial_pivot.parent = body
+    dial_pivot.location = tuple(dial_center + n_vec * 0.010)
+    dial_pivot.rotation_euler = (-dial_tilt, 0, 0)
+
+    # Needle lies in local XY plane pointing along -Y (12 o'clock), spinning around local Z (dial normal).
+    needle = join("cab_dial_needle", [
+        box("needle_arm", (0, -0.034, 0), (0.012, 0.076, 0.006), M["red"]),
+        cyl("needle_cap", (0, 0, -0.003), (0, 0, 0.005), 0.016, M["steel"], 10),
+    ])
+    needle.parent = dial_pivot
+
+    # Child 2: power/brake lever pivoted inside the quadrant (X-axis rotation tilts forward/back).
+    lp = [
+        cyl("lever_arm", (0, 0, 0), (0, 0, 0.21), 0.014, M["bright"], 8),
+        cyl("lever_grip", (-0.06, 0, 0.21), (0.06, 0, 0.21), 0.022, M["black"], 10),
+    ]
+    lever = join("cab_lever", lp)
+    lever.parent = body
+    lever.location = (-0.28, -1.07, 2.48)
+    return body
 
 
 # ---------------------------------------------------------------- lineside
@@ -521,7 +636,7 @@ def broadleaf_lod2(name, leaf, scale=1.0):
 
 
 ASSETS = [
-    bogie, coach, wagon_box, wagon_tank, locomotive,
+    bogie, coach, wagon_box, wagon_tank, locomotive, cab_interior,
     lambda: locomotive("loco_freight", 22.0, M["freight"], M["freight_band"], (-6.2, -2.1, 2.1, 6.2)),
     lambda: locomotive("loco_light", 16.0, M["light"], M["livery2"], (0.0,)),
     signal, platform, lamp_post, shelter, station_building,
