@@ -91,7 +91,7 @@ npm run assets
 
 `npm run check` checks formatting and lint, runs the tests, then builds. `npm run test:smoke` runs the browser smoke test, which needs `npx playwright install chromium` once.
 
-`npm run assets` needs Blender at `/Applications/Blender.app`. Change the path in `package.json` if yours is elsewhere. The built `assetpack.glb` is included, so you only need Blender to change the models.
+`npm run assets` needs Blender. It checks the standard install path per platform, or you can pass `BLENDER=/path/to/blender npm run assets`. The built `assetpack.glb` is included, so you only need Blender to change the models.
 
 ## Known limits
 

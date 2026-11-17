@@ -18,8 +18,8 @@ import {
 } from '../rail/network';
 import { Train } from '../rail/sim';
 import type { Car } from '../rail/vehicles';
-import type { SceneryType } from '../render/scatter';
 import { WATER_LEVEL } from '../world/heightfield';
+import type { SceneryType } from '../world/scenery';
 
 export type Tool = 'select' | 'track' | 'signal' | 'station' | 'bridge' | 'terrain' | 'scenery' | 'train' | 'delete';
 export type BrushMode = 'raise' | 'lower' | 'smooth' | 'flatten';
@@ -676,7 +676,7 @@ export class Editor {
       return;
     }
     const node0 = g.net.nearestNode(pt.x, pt.z, 10);
-    if (node0 && g.net.stations.some((s) => s.nodeId === node0.id)) {
+    if (node0 && g.net.stationAt(node0.id)) {
       g.hud.toast('This point already has a station');
       return;
     }
@@ -770,7 +770,7 @@ export class Editor {
       return;
     }
     if (n) {
-      const st = net.stations.find((s) => s.nodeId === n.id);
+      const st = net.stationAt(n.id);
       if (st) {
         g.pushUndo();
         net.stations = net.stations.filter((s) => s !== st);
@@ -955,7 +955,7 @@ export class Editor {
             ? 0xf0a62b
             : n.signals[1] || n.signals[-1]
               ? 0xe5392c
-              : net.stations.some((s) => s.nodeId === n.id)
+              : net.stationAt(n.id)
                 ? 0x4fa6e0
                 : 0xb7c2bb;
       this.handles.setColorAt(i, this.nodeColor.set(color));

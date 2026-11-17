@@ -32,7 +32,7 @@ Exact versions are in `package.json` and `package-lock.json`. Use `npm` and comm
 
 Before the first `test:smoke` on a machine, run `npx playwright install chromium`.
 
-`npm run assets` expects Blender at `/Applications/Blender.app`. Check the preview render after changing models. It is ignored by git.
+`npm run assets` looks for Blender in the standard path for your platform, or uses `BLENDER=/path/to/blender npm run assets`. Check the preview render after changing models. It is ignored by git.
 
 ## Verifying a change
 
@@ -69,7 +69,7 @@ Add `?debug` to the URL, or press the `key, for an overlay with frame time, draw
 __game.env.timeScale = 0; // Stop the clock
 __game.env.hours = 21.5; // Jump to night
 __game.newWorld('desert', 3, true); // Load a landscape with the starter railway
-__game.sim.trains.map((t) => t.statusText);
+__game.sim.trains.map((t) => t.status);
 __game.setTrainSpeed(8); // Fast-forward the railway; 0 pauses it
 ```
 

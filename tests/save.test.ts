@@ -15,10 +15,10 @@ import {
 import { buildDemoNetwork, populateDemoTrains, SHUTTLE } from '../src/rail/demoMap';
 import { Network } from '../src/rail/network';
 import { Sim, Train } from '../src/rail/sim';
-import type { PlacedItem } from '../src/render/scatter';
 import type { SaveData } from '../src/saveData';
 import { parseSave } from '../src/saveData';
 import { Heightfield } from '../src/world/heightfield';
+import type { PlacedItem } from '../src/world/scenery';
 
 const SAVE_KEY = 'vibe-train-sim/map-v1';
 const BACKUP_KEY = 'vibe-train-sim/map-v1-backup';

@@ -5,25 +5,8 @@ import { fbm, mulberry } from '../core/noise';
 import type { Network } from '../rail/network';
 import type { Heightfield, Preset } from '../world/heightfield';
 import { WATER_LEVEL, WORLD_SIZE } from '../world/heightfield';
+import type { PlacedItem, SceneryType } from '../world/scenery';
 import type { Assets } from './assets';
-
-export type SceneryType =
-  | 'tree_pine'
-  | 'tree_oak'
-  | 'tree_birch'
-  | 'rock_a'
-  | 'rock_b'
-  | 'house_a'
-  | 'house_b'
-  | 'house_c';
-
-export interface PlacedItem {
-  type: SceneryType;
-  x: number;
-  z: number;
-  rot: number;
-  scale: number;
-}
 
 const REGIONS = 8;
 

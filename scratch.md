@@ -17,12 +17,12 @@ Do these first. Each is a contained bug, and most players could hit them.
 
 ## 2. Add a safety net (done)
 
-Do these before any large refactor. The follow-ups #5, #6 and #7 are still open.
+Do these before any large refactor. The follow-ups #6 and #7 are still open.
 
 - [#9](https://github.com/deadronos/vibe-train-sim/issues/9): remove dead code. A quick warm-up that makes the next steps easier.
 - [#10](https://github.com/deadronos/vibe-train-sim/issues/10): test saves, undo and terrain grading.
 - [#11](https://github.com/deadronos/vibe-train-sim/issues/11): add a browser smoke test to CI. Nothing checks the running game automatically today.
-- [#4](https://github.com/deadronos/vibe-train-sim/issues/4): split `Game`, once the tests above are in. [#5](https://github.com/deadronos/vibe-train-sim/issues/5), [#6](https://github.com/deadronos/vibe-train-sim/issues/6) and [#7](https://github.com/deadronos/vibe-train-sim/issues/7) can follow as needed.
+- [#4](https://github.com/deadronos/vibe-train-sim/issues/4): split `Game`, once the tests above are in. [#5](https://github.com/deadronos/vibe-train-sim/issues/5), [#8](https://github.com/deadronos/vibe-train-sim/issues/8) and [#12](https://github.com/deadronos/vibe-train-sim/issues/12) are done; [#6](https://github.com/deadronos/vibe-train-sim/issues/6) and [#7](https://github.com/deadronos/vibe-train-sim/issues/7) can follow as needed.
 
 ## Physics batch (done)
 

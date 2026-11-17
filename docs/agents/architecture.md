@@ -4,13 +4,14 @@
 
 Dependencies point downward only.
 
-| Layer      | Path                                   | Responsibility                                                 |
-| ---------- | -------------------------------------- | -------------------------------------------------------------- |
-| Interface  | `src/ui/`                              | HTML interface; reads game state and calls `Game` methods      |
-| Editor     | `src/editor/`                          | Turns pointer input into map edits                             |
-| Game       | `src/game.ts`                          | Owns the world, frame loop and modes, and coordinates the rest |
-| Rendering  | `src/render/`                          | Draws simulation and terrain state with Three.js               |
-| Simulation | `src/rail/`, `src/world/`, `src/core/` | Rail model, trains, heights and noise, with no Three.js or DOM |
+| Layer      | Path                                   | Responsibility                                                  |
+| ---------- | -------------------------------------- | --------------------------------------------------------------- |
+| Interface  | `src/ui/`                              | HTML interface; reads game state and calls `Game` methods       |
+| Editor     | `src/editor/`                          | Turns pointer input into map edits                              |
+| Game       | `src/game.ts`                          | Owns the world, frame loop and modes, and coordinates the rest  |
+| Audio      | `src/audio.ts`                         | Web Audio synthesis; driven by `Game`, `DriverInput` and `Hud`  |
+| Rendering  | `src/render/`                          | Draws simulation and terrain state with Three.js                |
+| Simulation | `src/rail/`, `src/world/`, `src/core/` | Rail model, trains, heights, scenery data and noise (no DOM/GL) |
 
 `src/main.ts` is the entry point and the only module that runs anything on import. Next to `Game`, and needing no WebGL so tests can use them:
 
@@ -18,10 +19,11 @@ Dependencies point downward only.
 - `src/saveData.ts` defines the save format and validates it.
 - `src/history.ts` holds the undo and redo stacks.
 - `src/driverInput.ts` holds held keys and the power lever, and binds the keyboard.
+- `src/world/scenery.ts` holds `SceneryType` and `PlacedItem`, shared between saves, the editor and `ScatterRenderer`.
 
 The editor, interface and `driverInput.ts` import `Game` as a type, while `game.ts` creates them.
 
-The simulation layer's isolation is a hard rule: it is what lets `tests/` run the whole railway headlessly.
+The simulation layer's isolation is a hard rule enforced by `.oxlintrc.json` (`no-restricted-imports` and `no-restricted-globals`): it is what lets `tests/` run the whole railway headlessly.
 
 ## Rail model
 
@@ -37,7 +39,7 @@ Defined in `src/rail/network.ts`.
 
 ## Simulation
 
-`src/rail/sim.ts` handles the following:
+`src/rail/sim.ts` is the entry point, split across `walk.ts` (shared forward track walker), `train.ts` (`Train` model, constants and `TrainStatus` codes formatted by `src/ui/hud.ts`), `routing.ts`, `interlocking.ts`, `physics.ts` and `driverAI.ts`:
 
 - **Interlocking** runs about every 0.15 seconds. It rebuilds occupancy, renews claims, and grants a signal to an approaching train only if that signal's block is free of other trains' claims and occupancy. Claims cover nodes (`nodeClaims`) and level crossings (`crossingClaims`), so converging and crossing routes conflict. Calling-on (`shunt`) signals allow entry into a block occupied by a stopped or same-direction train under `SHUNT_VMAX` (25 km/h, `Train.restricted`) while still rejecting opposing moves and conflicting crossings.
 - **Aspects and route indications:** `Sim.aspects` and `Sim.indications` track signal aspects, calling-on state, and facing-junction route direction (`left` / `right` / `straight`). Main signals show red when the block isn't free or the signal is held, yellow when the next stopping signal can't be entered, the line dead-ends, or the route diverges onto a slower turnout, otherwise green. Distant signals repeat the next main/shunt signal without blocking a section on their own.
@@ -48,7 +50,7 @@ Defined in `src/rail/network.ts`.
 - **Forces** come from the whole train. Gravity and curve resistance are averaged by mass over each car. Pulling force is limited by adhesion on the locomotives' weight: above it a manual train slips and loses grip, while the AI stops at the limit. Trains stop at speed 0, so they can't roll back until #64 settles reversing.
 - **Brakes:** `t.brake` is the demand and `t.airBrake` is what is applied. It chases the demand over `brakeLag`, which grows with train length, and releases more slowly. Friction fades with speed. `t.dynamic` is the engine brake, which acts at once but fades at walking pace. `t.emergency` is stronger and faster, and cuts power.
 - **AI braking** plans from its own train's brakes, with less on a descent, and adds a holding brake to cancel gravity, or it would creep past red signals. Only a heavy train on a steep descent uses the emergency brake.
-- **Looking ahead:** `walkAhead()` follows the track ahead of a train along the route it would take, through the points as set. The desk's signal, station, junction and limit readouts all use it. `deskInfo()` predicts braking distance by stepping the train's own brake model forward at full brake, so the desk and the physics can't disagree.
+- **Looking ahead:** `walkTrack()` in `src/rail/walk.ts` follows track ahead along `pickSegment()` for interlocking blocks, route claims, AI braking limits, cab safety warnings and the desk's signal, station, junction and limit readouts. `deskInfo()` predicts braking distance by stepping the train's own brake model forward at full brake, so the desk and the physics can't disagree.
 - **Driving by hand:** `driveManual()` runs for a player train each step. It checks the limit, triggers cab safety warnings (`Train.warning`) for restrictive signals or speed drops with acknowledgement (`Sim.acknowledge()`, `Q` key), applies train protection under strict rules (`Sim.strict` — emergency brake for unacknowledged warnings, overspeeding, and SPADs), and counts a stop when the train stands still with its middle within the platform of the station it's due at. Then it holds the doors open for the dwell, with power cut and brakes held, and plans the next stop. Leaving the due station behind counts as a miss. A `Duty` (`src/rail/duty.ts`) on the train scores the run while the player drives, and lives only as long as the player is driving it, so it isn't saved. `damaged` is saved, since it stops the train moving, and `restricted` is saved in `TrainState`.
 - **Timetables:** a train's `schedule` lists station ids. `times` holds a departure in seconds of the day for each one, or null, `arrivals` an arrival the driver is due by, and `turns` whether it changes ends before leaving. `Sim.stops()` joins them. `Sim.setConsist()` changes a standing train's vehicles, keeping its head and timetable place. Each train keeps a `log` of its last 40 stops with clock times, for the service diagram in `src/ui/serviceDiagram.ts`. It isn't saved. `Game` copies the clock into `Sim.clock` every frame, and a train whose dwell is over waits until its stop's time (`holdForTimetable()`). `untilTime()` measures across midnight, treating anything more than 12 hours ahead as passed. The clock's time-lapse settings run the sky faster than the trains, so trains only keep time with the clock on Real.
 - **AI** plans a route to the next timetabled station, reversing only when no forward route exists. A waiting train backs away only for a true deadlock, where the train holding its block is also stuck. The train with the higher id gives way, and a player-held signal never triggers this.

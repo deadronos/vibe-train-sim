@@ -3,10 +3,10 @@ import type { SoundSettings } from './audio';
 import { DEFAULT_SOUND } from './audio';
 import { Network } from './rail/network';
 import { Sim, Train } from './rail/sim';
-import type { PlacedItem } from './render/scatter';
 import type { SaveData } from './saveData';
 import { parseSave } from './saveData';
 import { Heightfield } from './world/heightfield';
+import type { PlacedItem } from './world/scenery';
 
 /** auto starts at high and lowers resolution, then effects, while frames run slow. */
 export type Quality = 'auto' | 'high' | 'low';
