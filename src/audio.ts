@@ -7,14 +7,24 @@ export interface SoundSettings {
   engine: number;
   rail: number;
   horn: number;
+  squeal: boolean;
 }
 
-export const DEFAULT_SOUND: SoundSettings = { muted: false, volume: 0.8, engine: 1, rail: 1, horn: 1 };
+export const DEFAULT_SOUND: SoundSettings = {
+  muted: false,
+  volume: 0.8,
+  engine: 1,
+  rail: 1,
+  horn: 1,
+  squeal: true,
+};
 const MASTER = 0.56; // Full volume; the default setting gives the 0.45 the mix was tuned at
 const BUS_FADE = 0.05; // Seconds; settings changes glide rather than click
-const CURVE_SQUEAL_RADIUS = 220; // m; curves tighter than this produce flange squeal
+const CURVE_SQUEAL_RADIUS = 140; // m; only sharp curves and turnouts produce flange rub
 const MIN_CURVE_RADIUS = 55;
 const JOINT_SPACING = 18; // m between welded/jointed rail clicks
+const CAB_MASTER_CUTOFF = 1800; // Hz inside enclosed cab view
+const OPEN_MASTER_CUTOFF = 5200; // Hz exterior listening ceiling
 
 export interface TrainAudioInput {
   speed: number;
@@ -27,6 +37,7 @@ export interface TrainAudioInput {
   minRadius: number;
   onBridge: boolean;
   nearby: number;
+  cab?: boolean;
 }
 
 export interface TrainAudioParams {
@@ -44,6 +55,7 @@ export interface TrainAudioParams {
   brakeSquealGain: number;
   brakeSquealFreq: number;
   brakeHissGain: number;
+  masterCutoff: number;
 }
 
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
@@ -57,39 +69,40 @@ export function computeTrainAudioParams(input: TrainAudioInput): TrainAudioParam
   const notch = Math.round(throttle * 8);
   const notchFrac = notch / 8;
 
-  const engineFreq = 38 + notch * 6.5 + load * 8 + Math.min(20, speed * 0.45);
+  const engineFreq = 36 + notch * 5.2 + load * 7 + Math.min(16, speed * 0.36);
   const subFreq = engineFreq * 0.5;
-  const engineCutoff = 210 + notch * 72 + load * 240;
-  const engineGain = (0.045 + notchFrac * 0.11 + load * 0.065) * nearby;
+  const engineCutoff = 165 + notch * 52 + load * 165;
+  const engineGain = (0.05 + notchFrac * 0.115 + load * 0.065) * nearby;
 
   const turboAmt = Math.max(0, (notch - 1.5) / 6.5);
-  const turboFreq = 620 + notch * 165 + load * 240;
-  const turboGain = turboAmt * (0.02 + load * 0.032) * nearby;
+  const turboFreq = 320 + notch * 68 + load * 90;
+  const turboGain = turboAmt * (0.004 + load * 0.007) * nearby;
 
-  const rollGain = Math.min(0.18, speed * 0.0075) * nearby;
-  const bridgeGain = input.onBridge && speed > 1 ? Math.min(0.24, speed * 0.011) * nearby : 0;
+  const rollGain = Math.min(0.19, speed * 0.0078) * nearby;
+  const bridgeGain = input.onBridge && speed > 1 ? Math.min(0.25, speed * 0.011) * nearby : 0;
 
   let flangeGain = 0;
-  let flangeFreq = 3100;
+  let flangeFreq = 1080;
   if (input.minRadius < CURVE_SQUEAL_RADIUS && speed > 2.0) {
     const tight = clamp01((CURVE_SQUEAL_RADIUS - input.minRadius) / (CURVE_SQUEAL_RADIUS - MIN_CURVE_RADIUS));
     const speedFactor = clamp01((speed - 2.0) / 10);
-    flangeGain = (0.025 + tight * 0.095) * speedFactor * nearby;
-    flangeFreq = 2950 + tight * 550 + Math.min(350, speed * 12);
+    // Bandpass pink noise needs slight compensation compared to rolling noise, while staying well below piercing levels.
+    flangeGain = (0.008 + tight * 0.024) * speedFactor * nearby;
+    flangeFreq = 1050 + tight * 260 + Math.min(140, speed * 5);
   }
 
   let brakeSquealGain = 0;
-  let brakeSquealFreq = 2250;
-  if (input.airBrake > 0.12 && speed > 0.25 && speed < 12) {
+  let brakeSquealFreq = 820;
+  if (input.airBrake > 0.12 && speed > 0.25 && speed < 11) {
     const low = clamp01((speed - 0.25) / 1.5);
-    const high = clamp01((12 - speed) / 6.5);
-    brakeSquealGain = Math.min(1, input.airBrake) * low * high * 0.085 * nearby;
-    brakeSquealFreq = 2150 + Math.min(1, speed / 12) * 550;
+    const high = clamp01((11 - speed) / 6);
+    brakeSquealGain = Math.min(1, input.airBrake) * low * high * 0.025 * nearby;
+    brakeSquealFreq = 780 + Math.min(1, speed / 11) * 320;
   }
 
   const brakeDelta = Math.abs(input.brakeDemand - input.airBrake);
   const brakeHissGain =
-    (brakeDelta > 0.02 || input.emergency ? Math.min(0.16, brakeDelta * 0.14 + (input.emergency ? 0.08 : 0)) : 0) *
+    (brakeDelta > 0.02 || input.emergency ? Math.min(0.085, brakeDelta * 0.08 + (input.emergency ? 0.04 : 0)) : 0) *
     nearby;
 
   return {
@@ -107,6 +120,7 @@ export function computeTrainAudioParams(input: TrainAudioInput): TrainAudioParam
     brakeSquealGain,
     brakeSquealFreq,
     brakeHissGain,
+    masterCutoff: input.cab ? CAB_MASTER_CUTOFF : OPEN_MASTER_CUTOFF,
   };
 }
 
@@ -148,11 +162,46 @@ export function crossedRailJoint(prevOdom: number, curOdom: number, spacing = JO
   return Math.floor(curOdom / spacing) > Math.floor(prevOdom / spacing);
 }
 
+/** Fills a loopable pink-filtered noise buffer (-3 dB/oct roll-off) so rail roll and air avoid white static hiss. */
+function fillPinkNoise(data: Float32Array) {
+  let b0 = 0;
+  let b1 = 0;
+  let b2 = 0;
+  let b3 = 0;
+  let b4 = 0;
+  let b5 = 0;
+  let b6 = 0;
+  for (let i = 0; i < data.length; i++) {
+    const w = Math.random() * 2 - 1;
+    b0 = 0.99886 * b0 + w * 0.0555179;
+    b1 = 0.99332 * b1 + w * 0.0750759;
+    b2 = 0.969 * b2 + w * 0.153852;
+    b3 = 0.8665 * b3 + w * 0.3104856;
+    b4 = 0.55 * b4 + w * 0.5329522;
+    b5 = -0.7616 * b5 - w * 0.016898;
+    const pink = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + w * 0.5362) * 0.14;
+    b6 = w * 0.115926;
+    data[i] = Math.max(-1, Math.min(1, pink));
+  }
+}
+
+function makeDriveCurve(): Float32Array<ArrayBuffer> {
+  const n = 256;
+  const curve = new Float32Array(new ArrayBuffer(n * 4));
+  for (let i = 0; i < n; i++) {
+    const x = (i * 2) / (n - 1) - 1;
+    curve[i] = Math.tanh(1.7 * x);
+  }
+  return curve;
+}
+
 export class SimAudio {
   private ctx: AudioContext | null = null;
   private master!: GainNode;
+  private masterFilter!: BiquadFilterNode;
   private engineBus!: GainNode;
   private railBus!: GainNode;
+  private squealBus!: GainNode;
   private hornBus!: GainNode;
 
   private engine!: OscillatorNode;
@@ -160,14 +209,14 @@ export class SimAudio {
   private engineFilter!: BiquadFilterNode;
   private engineGain!: GainNode;
   private turboOsc!: OscillatorNode;
+  private turboFilter!: BiquadFilterNode;
   private turboGain!: GainNode;
 
   private rollGain!: GainNode;
   private bridgeGain!: GainNode;
-  private flangeOsc1!: OscillatorNode;
-  private flangeOsc2!: OscillatorNode;
+  private flangeFilter!: BiquadFilterNode;
   private flangeGain!: GainNode;
-  private brakeOsc!: OscillatorNode;
+  private brakeFilter!: BiquadFilterNode;
   private brakeSquealGain!: GainNode;
   private brakeHissGain!: GainNode;
 
@@ -197,14 +246,20 @@ export class SimAudio {
     const ctx = new AudioContext();
     this.ctx = ctx;
     this.master = ctx.createGain();
-    this.master.connect(ctx.destination);
-    const bus = () => {
+    this.masterFilter = ctx.createBiquadFilter();
+    this.masterFilter.type = 'lowpass';
+    this.masterFilter.frequency.value = OPEN_MASTER_CUTOFF;
+    this.masterFilter.Q.value = 0.65;
+    this.master.connect(this.masterFilter);
+    this.masterFilter.connect(ctx.destination);
+    const bus = (target: AudioNode = this.master) => {
       const g = ctx.createGain();
-      g.connect(this.master);
+      g.connect(target);
       return g;
     };
     this.engineBus = bus();
     this.railBus = bus();
+    this.squealBus = bus(this.railBus);
     this.hornBus = bus();
     this.apply(true);
     // Frames stop in a hidden tab, so the last levels would otherwise drone on.
@@ -213,55 +268,63 @@ export class SimAudio {
       else void ctx.resume();
     });
 
-    // Diesel prime mover: dual oscillators through dynamic load-controlled lowpass + turbo whine.
+    // Diesel prime mover: warm soft-clipped dual oscillators + dynamic lowpass + filtered sine turbine purr.
+    const drive = ctx.createWaveShaper();
+    drive.curve = makeDriveCurve();
     this.engineFilter = ctx.createBiquadFilter();
     this.engineFilter.type = 'lowpass';
-    this.engineFilter.frequency.value = 280;
+    this.engineFilter.frequency.value = 210;
+    this.engineFilter.Q.value = 0.85;
     this.engineGain = ctx.createGain();
     this.engineGain.gain.value = 0;
     this.engine = ctx.createOscillator();
     this.engine.type = 'sawtooth';
     this.engine2 = ctx.createOscillator();
     this.engine2.type = 'square';
-    this.engine.connect(this.engineFilter);
-    this.engine2.connect(this.engineFilter);
+    this.engine.connect(drive);
+    this.engine2.connect(drive);
+    drive.connect(this.engineFilter);
     this.engineFilter.connect(this.engineGain);
     this.engineGain.connect(this.engineBus);
     this.engine.start();
     this.engine2.start();
 
     this.turboOsc = ctx.createOscillator();
-    this.turboOsc.type = 'triangle';
-    this.turboOsc.frequency.value = 800;
+    this.turboOsc.type = 'sine';
+    this.turboOsc.frequency.value = 420;
+    this.turboFilter = ctx.createBiquadFilter();
+    this.turboFilter.type = 'bandpass';
+    this.turboFilter.frequency.value = 500;
+    this.turboFilter.Q.value = 1.6;
     this.turboGain = ctx.createGain();
     this.turboGain.gain.value = 0;
-    this.turboOsc.connect(this.turboGain);
+    this.turboOsc.connect(this.turboFilter);
+    this.turboFilter.connect(this.turboGain);
     this.turboGain.connect(this.engineBus);
     this.turboOsc.start();
 
-    // Shared 2-second white-noise loop for rolling, bridge boom and brake hiss.
+    // Shared 2-second pink-noise loop for deep rolling rumble, bridge boom, brake hiss, and filtered rub squeals.
     const len = ctx.sampleRate * 2;
     this.noise = ctx.createBuffer(1, len, ctx.sampleRate);
-    const data = this.noise.getChannelData(0);
-    for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+    fillPinkNoise(this.noise.getChannelData(0));
     const roll = ctx.createBufferSource();
     roll.buffer = this.noise;
     roll.loop = true;
 
     const rollFilter = ctx.createBiquadFilter();
     rollFilter.type = 'lowpass';
-    rollFilter.frequency.value = 520;
+    rollFilter.frequency.value = 280;
     this.rollGain = ctx.createGain();
     this.rollGain.gain.value = 0;
     roll.connect(rollFilter);
     rollFilter.connect(this.rollGain);
     this.rollGain.connect(this.railBus);
 
-    // Hollow bridge deck resonance (resonant low-mid bandpass).
+    // Hollow bridge deck resonance (warm low-mid bandpass).
     const bridgeFilter = ctx.createBiquadFilter();
     bridgeFilter.type = 'bandpass';
-    bridgeFilter.frequency.value = 155;
-    bridgeFilter.Q.value = 4.2;
+    bridgeFilter.frequency.value = 125;
+    bridgeFilter.Q.value = 3.8;
     this.bridgeGain = ctx.createGain();
     this.bridgeGain.gain.value = 0;
     roll.connect(bridgeFilter);
@@ -271,55 +334,63 @@ export class SimAudio {
     // Pneumatic brake air hiss.
     const hissFilter = ctx.createBiquadFilter();
     hissFilter.type = 'bandpass';
-    hissFilter.frequency.value = 2600;
-    hissFilter.Q.value = 1.6;
+    hissFilter.frequency.value = 1150;
+    hissFilter.Q.value = 0.9;
     this.brakeHissGain = ctx.createGain();
     this.brakeHissGain.gain.value = 0;
     roll.connect(hissFilter);
     hissFilter.connect(this.brakeHissGain);
     this.brakeHissGain.connect(this.railBus);
+
+    // Narrow bandpass pink noise + slow stick-slip LFO modulation replaces harsh pure-sine squeals.
+    const modulatedBand = (freq: number, q: number, lfoHz: number) => {
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.value = freq;
+      filter.Q.value = q;
+      const flutter = ctx.createGain();
+      flutter.gain.value = 0.65;
+      const lfo = ctx.createOscillator();
+      lfo.type = 'sine';
+      lfo.frequency.value = lfoHz;
+      const lfoDepth = ctx.createGain();
+      lfoDepth.gain.value = 0.35;
+      lfo.connect(lfoDepth);
+      lfoDepth.connect(flutter.gain);
+      lfo.start();
+      const gain = ctx.createGain();
+      gain.gain.value = 0;
+      roll.connect(filter);
+      filter.connect(flutter);
+      flutter.connect(gain);
+      gain.connect(this.squealBus);
+      return { filter, gain };
+    };
+
+    const flange = modulatedBand(1080, 16, 5.4);
+    this.flangeFilter = flange.filter;
+    this.flangeGain = flange.gain;
+
+    const brake = modulatedBand(820, 14, 4.1);
+    this.brakeFilter = brake.filter;
+    this.brakeSquealGain = brake.gain;
+
     roll.start();
-
-    // Tight-curve wheel flange squeal (beating high-frequency sine pair).
-    this.flangeGain = ctx.createGain();
-    this.flangeGain.gain.value = 0;
-    this.flangeGain.connect(this.railBus);
-    this.flangeOsc1 = ctx.createOscillator();
-    this.flangeOsc1.type = 'sine';
-    this.flangeOsc1.frequency.value = 3100;
-    this.flangeOsc2 = ctx.createOscillator();
-    this.flangeOsc2.type = 'sine';
-    this.flangeOsc2.frequency.value = 3340;
-    const f1g = ctx.createGain();
-    f1g.gain.value = 0.55;
-    const f2g = ctx.createGain();
-    f2g.gain.value = 0.45;
-    this.flangeOsc1.connect(f1g);
-    this.flangeOsc2.connect(f2g);
-    f1g.connect(this.flangeGain);
-    f2g.connect(this.flangeGain);
-    this.flangeOsc1.start();
-    this.flangeOsc2.start();
-
-    // Low-speed brake shoe squeal.
-    this.brakeOsc = ctx.createOscillator();
-    this.brakeOsc.type = 'sine';
-    this.brakeOsc.frequency.value = 2250;
-    this.brakeSquealGain = ctx.createGain();
-    this.brakeSquealGain.gain.value = 0;
-    this.brakeOsc.connect(this.brakeSquealGain);
-    this.brakeSquealGain.connect(this.railBus);
-    this.brakeOsc.start();
 
     this.hornGain = ctx.createGain();
     this.hornGain.gain.value = 0;
-    this.hornGain.connect(this.hornBus);
-    for (const f of [311, 370, 466]) {
+    const hornFilter = ctx.createBiquadFilter();
+    hornFilter.type = 'lowpass';
+    hornFilter.frequency.value = 1050;
+    hornFilter.Q.value = 0.7;
+    this.hornGain.connect(hornFilter);
+    hornFilter.connect(this.hornBus);
+    for (const f of [277, 349, 415]) {
       const o = ctx.createOscillator();
       o.type = 'sawtooth';
       o.frequency.value = f;
       const g = ctx.createGain();
-      g.gain.value = 0.11;
+      g.gain.value = 0.12;
       o.connect(g);
       g.connect(this.hornGain);
       o.start();
@@ -346,6 +417,7 @@ export class SimAudio {
     level(this.master, s.muted ? 0 : s.volume * MASTER);
     level(this.engineBus, s.engine);
     level(this.railBus, s.rail);
+    level(this.squealBus, s.squeal ? 1 : 0);
     level(this.hornBus, s.horn);
   }
 
@@ -381,33 +453,34 @@ export class SimAudio {
     this.warnTimer -= dt;
     if (this.warnTimer <= 0) {
       this.warnTimer = 1.15;
-      this.beep(780, 0, 0.16, 0.24);
-      this.beep(585, 0.14, 0.22, 0.24);
+      this.beep(640, 0, 0.16, 0.16);
+      this.beep(480, 0.14, 0.22, 0.16);
     }
   }
 
   playTrip() {
-    this.beep(980, 0, 0.12, 0.28);
-    this.beep(740, 0.13, 0.12, 0.28);
-    this.beep(520, 0.26, 0.24, 0.28);
+    this.beep(720, 0, 0.12, 0.18);
+    this.beep(540, 0.13, 0.12, 0.18);
+    this.beep(400, 0.26, 0.24, 0.18);
   }
 
-  private clack(strength: number, delay: number, freq = 1300) {
+  private clack(strength: number, delay: number, freq = 680) {
     const ctx = this.ctx!;
     const src = ctx.createBufferSource();
     src.buffer = this.noise;
     const g = ctx.createGain();
     const t = ctx.currentTime + delay;
     g.gain.setValueAtTime(Math.max(0.002, strength), t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + 0.075);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.085);
     const f = ctx.createBiquadFilter();
     f.type = 'bandpass';
     f.frequency.value = freq;
+    f.Q.value = 1.4;
     src.connect(f);
     f.connect(g);
     g.connect(this.railBus);
     src.start(t, Math.random());
-    src.stop(t + 0.085);
+    src.stop(t + 0.095);
   }
 
   /** Pneumatic air-exhaust burst when halting or venting brakes. */
@@ -418,8 +491,8 @@ export class SimAudio {
     src.buffer = this.noise;
     const f = ctx.createBiquadFilter();
     f.type = 'bandpass';
-    f.frequency.value = 2100;
-    f.Q.value = 1.2;
+    f.frequency.value = 950;
+    f.Q.value = 0.9;
     const g = ctx.createGain();
     const t = ctx.currentTime;
     g.gain.setValueAtTime(0.001, t);
@@ -439,9 +512,9 @@ export class SimAudio {
     const s = Math.max(1, speed);
     const axleGap = Math.min(0.18, 1.9 / s);
     const amp = Math.min(0.28, 0.1 + s * 0.006) * nearby;
-    this.clack(amp, 0, 950);
-    this.clack(amp * 0.85, axleGap * 0.5, 1750);
-    this.clack(amp * 0.75, axleGap, 1050);
+    this.clack(amp, 0, 460);
+    this.clack(amp * 0.85, axleGap * 0.5, 820);
+    this.clack(amp * 0.75, axleGap, 540);
   }
 
   /** Heavy metallic impact + crunch on collision or buffer-stop hit. */
@@ -467,7 +540,7 @@ export class SimAudio {
     src.buffer = this.noise;
     const f = ctx.createBiquadFilter();
     f.type = 'lowpass';
-    f.frequency.value = 950;
+    f.frequency.value = 720;
     const ng = ctx.createGain();
     ng.gain.setValueAtTime(0.38 * scale, t);
     ng.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
@@ -501,19 +574,20 @@ export class SimAudio {
 
     const p = computeTrainAudioParams(input);
     const t = this.ctx.currentTime;
+    this.masterFilter.frequency.setTargetAtTime(p.masterCutoff, t, 0.14);
     this.engine.frequency.setTargetAtTime(p.engineFreq, t, 0.16);
     this.engine2.frequency.setTargetAtTime(p.subFreq, t, 0.16);
     this.engineFilter.frequency.setTargetAtTime(p.engineCutoff, t, 0.16);
     this.engineGain.gain.setTargetAtTime(p.engineGain, t, 0.16);
     this.turboOsc.frequency.setTargetAtTime(p.turboFreq, t, 0.2);
+    this.turboFilter.frequency.setTargetAtTime(p.turboFreq, t, 0.2);
     this.turboGain.gain.setTargetAtTime(p.turboGain, t, 0.2);
 
     this.rollGain.gain.setTargetAtTime(p.rollGain, t, 0.15);
     this.bridgeGain.gain.setTargetAtTime(p.bridgeGain, t, 0.12);
-    this.flangeOsc1.frequency.setTargetAtTime(p.flangeFreq, t, 0.08);
-    this.flangeOsc2.frequency.setTargetAtTime(p.flangeFreq * 1.078, t, 0.08);
+    this.flangeFilter.frequency.setTargetAtTime(p.flangeFreq, t, 0.08);
     this.flangeGain.gain.setTargetAtTime(p.flangeGain, t, 0.08);
-    this.brakeOsc.frequency.setTargetAtTime(p.brakeSquealFreq, t, 0.08);
+    this.brakeFilter.frequency.setTargetAtTime(p.brakeSquealFreq, t, 0.08);
     this.brakeSquealGain.gain.setTargetAtTime(p.brakeSquealGain, t, 0.08);
     this.brakeHissGain.gain.setTargetAtTime(p.brakeHissGain, t, 0.08);
 
@@ -525,7 +599,7 @@ export class SimAudio {
         input.airBrake,
         input.brakeDemand,
       );
-      if (release) this.playAirRelease((release === 'stop' ? 0.18 : 0.13) * input.nearby);
+      if (release) this.playAirRelease((release === 'stop' ? 0.15 : 0.11) * input.nearby);
 
       const ds = curOdom - this.prevOdom;
       if (ds > 0 && ds < 20 && input.speed > 0.5) {

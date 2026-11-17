@@ -241,10 +241,17 @@ test('updates and persists separate shadow and scenery settings live', async ({ 
   expect(await page.evaluate(() => window.__game.scatter.generated.length)).toBe(0);
   await page.locator('#dlg-graphics button[value="ok"]').click();
 
+  await page.locator('#btn-menu').click();
+  await page.locator('#btn-sound').click();
+  await expect(page.locator('#dlg-sound')).toBeVisible();
+  await page.locator('#sound-squeal').uncheck();
+  await page.locator('#dlg-sound button[value="ok"]').click();
+
   await page.reload();
   await expect(page.locator('#loading')).toHaveClass(/gone/);
   expect(await page.evaluate(() => [window.__game.shadows, window.__game.scenery])).toEqual(['off', 'off']);
   expect(await page.evaluate(() => window.__game.renderer.shadowMap.enabled)).toBe(false);
+  expect(await page.evaluate(() => window.__game.audio.settings.squeal)).toBe(false);
 });
 
 test('remove tool previews target, deletes one signal, and box-selects multiple tracks', async ({ page }) => {

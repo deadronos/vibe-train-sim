@@ -219,6 +219,7 @@ export function parseSound(raw: unknown): SoundSettings {
   if (!raw || typeof raw !== 'object') return out;
   const r = raw as Record<string, unknown>;
   if (typeof r.muted === 'boolean') out.muted = r.muted;
+  if (typeof r.squeal === 'boolean') out.squeal = r.squeal;
   for (const k of ['volume', 'engine', 'rail', 'horn'] as const) {
     const v = r[k];
     if (typeof v === 'number' && v >= 0 && v <= 1) out[k] = v;

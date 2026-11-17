@@ -388,6 +388,8 @@ export class Hud {
       dlg.showModal();
     };
     $<HTMLInputElement>('sound-on').onchange = (e) => g.setSound({ muted: !(e.target as HTMLInputElement).checked });
+    $<HTMLInputElement>('sound-squeal').onchange = (e) =>
+      g.setSound({ squeal: (e.target as HTMLInputElement).checked });
     for (const k of ['volume', 'engine', 'rail', 'horn'] as const) {
       const input = $<HTMLInputElement>(`sound-${k}`);
       input.oninput = () => g.setSound({ [k]: Number(input.value) });
@@ -401,6 +403,7 @@ export class Hud {
     $('btn-sound').setAttribute('aria-pressed', String(!s.muted));
     $('btn-sound').textContent = s.muted ? 'Sound off' : 'Sound';
     $<HTMLInputElement>('sound-on').checked = !s.muted;
+    $<HTMLInputElement>('sound-squeal').checked = s.squeal;
     for (const k of ['volume', 'engine', 'rail', 'horn'] as const) {
       $<HTMLInputElement>(`sound-${k}`).value = String(s[k]);
     }
