@@ -28,7 +28,7 @@ npm run dev
 - Chase, cab (scroll wheel adjusts field of view), trackside, cinematic and free-fly cameras, with smooth transitions that respect reduced motion
 - An overview map (press O) of the whole railway, showing trains, stations, signal types and aspects, diamond crossings, and occupied sections. Click a train to drive it, or a place to go there in the editor
 - A short getting-started guide on first visit, which Help can show again
-- Synthesised engine, rail joint, bridge, junction, cab warning and horn sounds, with saved levels (including a curve/brake squeal toggle) that go quiet in a hidden tab
+- Synthesised engine, rail joint, bridge, junction, cab warning and horn sounds, with saved levels (including a curve/brake squeal toggle) that go quiet in a hidden tab. Nearby trains pass across the stereo field and change pitch as they go by, including while trains are running in the editor
 - Graphics settings apply live without a reload: Auto quality adapts resolution and effects to frame rate, and Shadows and Scenery density can be set separately
 
 **Railway**

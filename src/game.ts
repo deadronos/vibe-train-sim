@@ -5,9 +5,8 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 
-import type { SoundSettings } from './audio';
-import type { TrainAudioInput } from './audio';
-import { SimAudio } from './audio';
+import type { NearbyTrainSound, SoundSettings, TrainAudioInput } from './audio';
+import { dopplerPitch, NEARBY_TRAIN_RANGE, SimAudio } from './audio';
 import { DriverInput } from './driverInput';
 import { Editor } from './editor/editor';
 import { History } from './history';
@@ -126,6 +125,12 @@ export class Game {
   fps = 60;
   private focus = new THREE.Vector3();
   private tmpAudioFocus = new THREE.Vector3();
+  private lastListener = new THREE.Vector3();
+  private listenerVelocity = new THREE.Vector3();
+  private listenerForward = new THREE.Vector3();
+  private listenerUp = new THREE.Vector3();
+  private sourceVelocity = new THREE.Vector3();
+  private nearbyTrainSounds: NearbyTrainSound[] = [];
   private tmpJunctionDists: number[] = [];
   private tmpBogieOffsets: number[] = [];
   private tmpTrainOpts: TrainRenderOpts = {};
@@ -858,12 +863,76 @@ export class Game {
     this.particles.update(this.sim, this.hf, dt, simDt, this.env.night);
     this.terrain.update(this.elapsed);
 
-    const t = this.driven;
+    this.updateAudio(dt, simDt > 0);
+    this.hud.update();
+    this.renderer.info.reset();
+    this.composer.render();
+    this.hud.perf.update(this.renderer.info, dt);
+    this.adaptQuality(dt);
+  }
+
+  private trainSoundPitch(position: ReturnType<Sim['drawn']>, speed: number) {
+    const signedSpeed = position.dir * speed * this.trainSpeed;
+    this.sourceVelocity.set(position.tx, position.ty, position.tz).multiplyScalar(signedSpeed);
+    return dopplerPitch(position, this.sourceVelocity, this.camera.position, this.listenerVelocity);
+  }
+
+  private updateAudio(dt: number, trainsRunning: boolean) {
+    const listener = this.camera.position;
+    this.listenerVelocity.subVectors(listener, this.lastListener).multiplyScalar(dt > 0 ? 1 / dt : 0);
+    this.lastListener.copy(listener);
+    // Camera cuts and large zoom jumps are changes of viewpoint, with no physical listener velocity.
+    if (this.listenerVelocity.lengthSq() > 100 ** 2) this.listenerVelocity.set(0, 0, 0);
+
+    const driven = this.editing ? null : this.driven;
+    if (!this.audio.running) {
+      if (driven) this.audio.resetTrainTracking(driven.speed, driven.airBrake, driven.odometer);
+      return;
+    }
+    const cab = !!driven && this.rig.cabInteriorActive;
+    const drivenPose = driven && this.sim.drawn(driven, VEHICLES[driven.cars[0].type].length / 2);
+    this.nearbyTrainSounds.length = 0;
+    if (trainsRunning && !this.audio.muted) {
+      for (const train of this.sim.trains) {
+        if (train === driven) continue;
+        const position = this.sim.drawn(train, VEHICLES[train.cars[0].type].length / 2);
+        const distance = Math.hypot(position.x - listener.x, position.y - listener.y, position.z - listener.z);
+        if (distance >= NEARBY_TRAIN_RANGE) continue;
+        this.nearbyTrainSounds.push({
+          train,
+          position,
+          distance,
+          pitch: this.trainSoundPitch(position, train.speed),
+          speed: train.speed,
+          throttle: train.throttle,
+          powerLoad: tractiveLoad(train),
+        });
+      }
+      this.nearbyTrainSounds.sort((a, b) => a.distance - b.distance);
+    }
+    this.listenerForward.set(0, 0, -1).applyQuaternion(this.camera.quaternion);
+    this.listenerUp.set(0, 1, 0).applyQuaternion(this.camera.quaternion);
+    this.audio.updateSpatial(
+      listener,
+      this.listenerForward,
+      this.listenerUp,
+      !cab && drivenPose ? drivenPose : listener,
+      this.nearbyTrainSounds,
+    );
+
+    const pitch = !cab && driven && drivenPose ? this.trainSoundPitch(drivenPose, driven.speed) : 1;
+    this.updateDrivenAudio(driven, trainsRunning, cab, pitch);
+    this.audio.updateWarning(
+      dt,
+      trainsRunning && !!driven && !driven.ai && !!driven.warning && !driven.warning.acknowledged,
+    );
+  }
+
+  private updateDrivenAudio(t: Train | null, trainsRunning: boolean, cab: boolean, pitch: number) {
     if (t) {
       const h = this.sim.head(t);
       const d = this.camera.position.distanceTo(this.tmpAudioFocus.set(h.x, h.y, h.z));
-      const quiet = this.editing || this.trainSpeed === 0;
-      const nearby = quiet ? 0 : Math.max(0.05, 1 - d / 500);
+      const nearby = trainsRunning ? Math.max(0, 1 - d / 500) : 0;
       let minRadius = Infinity;
       for (let i = 0; i < t.trail.length; i++) {
         const g = this.net.geom.get(t.trail[i].seg);
@@ -889,9 +958,8 @@ export class Game {
       this.tmpAudioInput.minRadius = minRadius;
       this.tmpAudioInput.onBridge = onBridge;
       this.tmpAudioInput.nearby = nearby;
-      this.tmpAudioInput.cab = this.rig.cabInteriorActive;
-      this.audio.update(this.tmpAudioInput, t.odometer, this.tmpJunctionDists, this.tmpBogieOffsets);
-      this.audio.updateWarning(dt, !quiet && !t.ai && !!t.warning && !t.warning.acknowledged);
+      this.tmpAudioInput.cab = cab;
+      this.audio.update(this.tmpAudioInput, t.odometer, this.tmpJunctionDists, this.tmpBogieOffsets, pitch);
     } else {
       this.tmpAudioInput.speed = 0;
       this.tmpAudioInput.throttle = 0;
@@ -907,12 +975,6 @@ export class Game {
       this.tmpJunctionDists.length = 0;
       this.tmpBogieOffsets.length = 0;
       this.audio.update(this.tmpAudioInput, 0, this.tmpJunctionDists, this.tmpBogieOffsets);
-      this.audio.updateWarning(dt, false);
     }
-    this.hud.update();
-    this.renderer.info.reset();
-    this.composer.render();
-    this.hud.perf.update(this.renderer.info, dt);
-    this.adaptQuality(dt);
   }
 }

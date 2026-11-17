@@ -6,6 +6,7 @@ import {
   crossedRailJoint,
   DEFAULT_SOUND,
   detectAirRelease,
+  dopplerPitch,
   type TrainAudioInput,
 } from '../src/audio';
 import { parseSound } from '../src/persistence';
@@ -24,6 +25,29 @@ const baseInput = (over: Partial<TrainAudioInput> = {}): TrainAudioInput => ({
   onBridge: false,
   nearby: 1,
   ...over,
+});
+
+describe('train Doppler pitch', () => {
+  const listener = { x: 0, y: 0, z: 0 };
+  const velocity = { x: 25, y: 0, z: 0 };
+  const still = { x: 0, y: 0, z: 0 };
+
+  it('raises approaching pitch and lowers receding pitch', () => {
+    expect(dopplerPitch({ x: -40, y: 0, z: 5 }, velocity, listener, still)).toBeGreaterThan(1);
+    expect(dopplerPitch({ x: 40, y: 0, z: 5 }, velocity, listener, still)).toBeLessThan(1);
+  });
+
+  it('uses the camera velocity and the line from the camera to the train', () => {
+    const source = { x: 0, y: 0, z: 5 };
+    expect(dopplerPitch(source, velocity, listener, still)).toBe(1);
+    expect(dopplerPitch({ x: 5, y: 0, z: 5 }, velocity, listener, velocity)).toBe(1);
+    expect(dopplerPitch({ x: 5, y: 0, z: 5 }, still, listener, velocity)).toBeGreaterThan(1);
+  });
+
+  it('stays neutral at the listener and bounded during fast-forward', () => {
+    expect(dopplerPitch(listener, velocity, listener, still)).toBe(1);
+    expect(dopplerPitch({ x: -10, y: 0, z: 0 }, { ...velocity, x: 400 }, listener, still)).toBeLessThan(1.25);
+  });
 });
 
 describe('sound settings', () => {
