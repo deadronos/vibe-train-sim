@@ -177,7 +177,7 @@ export class Game {
     const bar = document.getElementById('loadbar') as HTMLElement;
     try {
       await this.assets.load(
-        `${import.meta.env.BASE_URL}assets/assetpack.glb`,
+        `${import.meta.env.BASE_URL}assets/assetpack.glb?v=${__ASSETPACK_HASH__}`,
         (f) => (bar.style.width = `${Math.round(f * 100)}%`),
       );
     } catch (err) {
