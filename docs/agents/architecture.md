@@ -94,4 +94,4 @@ If you change the format incompatibly, bump `v` and handle or reject older saves
 
 ## Assets
 
-`tools/blender/build_assetpack.py` writes `public/assets/assetpack.glb`, loaded by `src/render/assets.ts`. The contract between them is in [conventions.md](conventions.md#assets).
+`tools/blender/build_assetpack.py` writes `public/assets/assetpack.glb`, loaded by `src/render/assets.ts` with a build-time content hash query (`__ASSETPACK_HASH__` in `vite.config.ts`) so updated assets bypass stale browser caches. The contract between them is in [conventions.md](conventions.md#assets).
