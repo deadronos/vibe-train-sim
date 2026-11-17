@@ -74,6 +74,8 @@ export class Heightfield {
   /** Pristine noise, kept so saves only need to store the brush differences. */
   pristine = new Float32Array((RES + 1) * (RES + 1));
   h = new Float32Array((RES + 1) * (RES + 1));
+  /** Track and station grading weight (0..1) per grid cell, used to drive embankment/cutting materials. */
+  readonly gradeWeight = new Float32Array((RES + 1) * (RES + 1));
   private wBest = new Float32Array((RES + 1) * (RES + 1));
   private tBest = new Float32Array((RES + 1) * (RES + 1));
   /** Grid cell bounds touched since the renderer last updated, as [minI, minJ, maxI, maxJ]. */
@@ -97,6 +99,7 @@ export class Heightfield {
     this.gradedNet = null;
     this.gradedSegs.clear();
     this.gradedStations.clear();
+    this.gradeWeight.fill(0);
     this.gradeDirty = [0, 0, RES, RES];
   }
 
@@ -407,10 +410,12 @@ export class Heightfield {
     for (let j = rj0; j <= rj1; j++) {
       for (let i = ri0; i <= ri1; i++) {
         const k = j * s + i;
-        const v = this.base[k] + (t[k] - this.base[k]) * w[k];
-        const nv = w[k] > 0 ? v : this.base[k];
-        if (Math.abs(nv - this.h[k]) > 0.001) {
+        const gw = w[k];
+        const v = this.base[k] + (t[k] - this.base[k]) * gw;
+        const nv = gw > 0 ? v : this.base[k];
+        if (Math.abs(nv - this.h[k]) > 0.001 || Math.abs(gw - this.gradeWeight[k]) > 0.005) {
           this.h[k] = nv;
+          this.gradeWeight[k] = gw;
           changed = true;
           if (i < minI) minI = i;
           if (i > maxI) maxI = i;

@@ -51,7 +51,7 @@ npm run dev
 
 **World**
 
-- Alpine, plains, desert and island landscapes, each from a seed
+- Alpine, plains, desert and island landscapes, each from a seed, with ballast-graded embankments, noise-blended shores and depth-tinted water with shoreline foam, river flow and reflections
 - Day and night cycle with atmospheric sky, clouds, stars, moon and image-based lighting
 - Sun shadows, bloom, lit windows, platform lamps and a train headlight
 

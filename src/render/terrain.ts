@@ -1,8 +1,9 @@
-// Chunked terrain mesh with distance LODs, edge skirts, shadow culling and procedural shading, plus water.
+// Chunked terrain mesh with distance LODs, edge skirts, shadow culling, grading-aware shading, and water.
 import * as THREE from 'three';
 
 import type { Heightfield, Preset } from '../world/heightfield';
 import { RES, WATER_LEVEL, WORLD_SIZE } from '../world/heightfield';
+import type { Environment } from './environment';
 
 export const TERRAIN_CHUNKS = 8;
 const CELLS = RES / TERRAIN_CHUNKS;
@@ -124,6 +125,9 @@ interface Palette {
   rock: number;
   sand: number;
   snow: number;
+  embankment: number;
+  waterShallow: number;
+  waterDeep: number;
   snowLine: number;
 }
 
@@ -135,6 +139,9 @@ const PALETTES: Record<Preset, Palette> = {
     rock: 0x6d6a65,
     sand: 0x8f8460,
     snow: 0xeef1f5,
+    embankment: 0x70685a,
+    waterShallow: 0x2d7a78,
+    waterDeep: 0x103344,
     snowLine: 215,
   },
   plains: {
@@ -144,6 +151,9 @@ const PALETTES: Record<Preset, Palette> = {
     rock: 0x77726a,
     sand: 0x9c9068,
     snow: 0xeef1f5,
+    embankment: 0x7a6d56,
+    waterShallow: 0x2f6d63,
+    waterDeep: 0x133845,
     snowLine: 9000,
   },
   desert: {
@@ -153,6 +163,9 @@ const PALETTES: Record<Preset, Palette> = {
     rock: 0x955c3a,
     sand: 0xd9b985,
     snow: 0xeef1f5,
+    embankment: 0xb58d60,
+    waterShallow: 0x457b70,
+    waterDeep: 0x17424b,
     snowLine: 9000,
   },
   islands: {
@@ -162,9 +175,22 @@ const PALETTES: Record<Preset, Palette> = {
     rock: 0x6e6b63,
     sand: 0xdcc998,
     snow: 0xeef1f5,
+    embankment: 0x766c58,
+    waterShallow: 0x2c9b92,
+    waterDeep: 0x0d3b54,
     snowLine: 9000,
   },
 };
+
+const NOISE_GLSL = `
+float h21(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
+  return mix(mix(h21(i), h21(i+vec2(1,0)), f.x), mix(h21(i+vec2(0,1)), h21(i+vec2(1,1)), f.x), f.y); }
+float fb(vec2 p){ float a = 0.5, s = 0.0; for(int i=0;i<4;i++){ s += a*vn(p); p = p*2.03+vec2(17.1,9.2); a *= 0.5; } return s; }
+`;
+
+const HEIGHT_MIN = -16;
+const HEIGHT_SPAN = 28;
 
 function makeNormalTexture() {
   const size = 256;
@@ -235,15 +261,80 @@ export class TerrainRenderer {
     uRock: { value: new THREE.Color() },
     uSand: { value: new THREE.Color() },
     uSnow: { value: new THREE.Color() },
+    uEmbankment: { value: new THREE.Color() },
     uSnowLine: { value: 200 },
   };
   private water: THREE.Mesh;
   private waterNormal: THREE.Texture;
+  private heightData: Uint8Array;
+  private heightTex: THREE.DataTexture;
+  private dummyTex: THREE.DataTexture;
+  private reflCam = new THREE.PerspectiveCamera();
+  private reflRT: THREE.WebGLRenderTarget | null = null;
+  private reflWidth = 640;
+  private reflHeight = 360;
+  private planarEnabled = false;
+  private reflPos = new THREE.Vector3();
+  private reflNormal = new THREE.Vector3(0, 1, 0);
+  private reflCamPos = new THREE.Vector3();
+  private reflRot = new THREE.Matrix4();
+  private reflLook = new THREE.Vector3();
+  private reflView = new THREE.Vector3();
+  private reflTarget = new THREE.Vector3();
+  private reflPlane = new THREE.Plane();
+  private reflClip = new THREE.Vector4();
+  private reflQ = new THREE.Vector4();
+  private savedViewport = new THREE.Vector4();
+  private savedScissor = new THREE.Vector4();
+  private waterUniforms: {
+    uTime: { value: number };
+    uHeightMap: { value: THREE.DataTexture };
+    uWaterNormal: { value: THREE.Texture };
+    uWaterShallow: { value: THREE.Color };
+    uWaterDeep: { value: THREE.Color };
+    uFoamColor: { value: THREE.Color };
+    uSkyHorizon: { value: THREE.Color };
+    uSkyZenith: { value: THREE.Color };
+    uSunDir: { value: THREE.Vector3 };
+    uSunColor: { value: THREE.Color };
+    uNight: { value: number };
+    uReflectionMap: { value: THREE.Texture };
+    uTextureMatrix: { value: THREE.Matrix4 };
+    uHasPlanar: { value: number };
+  };
 
   constructor(
-    scene: THREE.Scene,
+    private scene: THREE.Scene,
     private hf: Heightfield,
   ) {
+    this.heightData = new Uint8Array((RES + 1) * (RES + 1) * 4);
+    this.heightTex = new THREE.DataTexture(this.heightData, RES + 1, RES + 1, THREE.RGBAFormat);
+    this.heightTex.wrapS = this.heightTex.wrapT = THREE.ClampToEdgeWrapping;
+    this.heightTex.minFilter = THREE.LinearFilter;
+    this.heightTex.magFilter = THREE.LinearFilter;
+    this.heightTex.generateMipmaps = false;
+
+    this.dummyTex = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1, THREE.RGBAFormat);
+    this.dummyTex.needsUpdate = true;
+
+    this.waterNormal = makeNormalTexture();
+    this.waterUniforms = {
+      uTime: { value: 0 },
+      uHeightMap: { value: this.heightTex },
+      uWaterNormal: { value: this.waterNormal },
+      uWaterShallow: { value: new THREE.Color() },
+      uWaterDeep: { value: new THREE.Color() },
+      uFoamColor: { value: new THREE.Color(0xeaf4f7) },
+      uSkyHorizon: { value: new THREE.Color(0x9ab4c8) },
+      uSkyZenith: { value: new THREE.Color(0x4674a8) },
+      uSunDir: { value: new THREE.Vector3(0.4, 0.7, 0.3).normalize() },
+      uSunColor: { value: new THREE.Color(1, 0.95, 0.88) },
+      uNight: { value: 0 },
+      uReflectionMap: { value: this.dummyTex },
+      uTextureMatrix: { value: new THREE.Matrix4() },
+      uHasPlanar: { value: 0 },
+    };
+
     this.material = this.makeMaterial();
     this.setPalette(hf.preset);
     const indexAttrs = TERRAIN_LOD_STEPS.map((step) => new THREE.BufferAttribute(buildTerrainLodIndex(CELLS, step), 1));
@@ -259,6 +350,7 @@ export class TerrainRenderer {
           g.setIndex(indexAttrs[lodIdx]);
           g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(vertCount * 3), 3));
           g.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(vertCount * 3), 3));
+          g.setAttribute('aGrade', new THREE.BufferAttribute(new Float32Array(vertCount), 1));
           return g;
         });
         const mesh = new THREE.Mesh(lods[0], this.material);
@@ -284,20 +376,11 @@ export class TerrainRenderer {
     }
     scene.add(this.group);
 
-    this.waterNormal = makeNormalTexture();
-    this.waterNormal.repeat.set(1500, 1500);
-    const waterMat = new THREE.MeshStandardMaterial({
-      color: 0x174452,
-      roughness: 0.13,
-      metalness: 0.15,
-      normalMap: this.waterNormal,
-      normalScale: new THREE.Vector2(0.24, 0.24),
-      envMapIntensity: 2.2,
-    });
-    this.water = new THREE.Mesh(new THREE.PlaneGeometry(24000, 24000), waterMat);
+    this.water = new THREE.Mesh(new THREE.PlaneGeometry(24000, 24000), this.makeWaterMaterial());
     this.water.rotation.x = -Math.PI / 2;
     this.water.position.y = WATER_LEVEL;
     this.water.receiveShadow = true;
+    this.water.renderOrder = -1;
     scene.add(this.water);
   }
 
@@ -307,10 +390,13 @@ export class TerrainRenderer {
     mat.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, uniforms);
       shader.vertexShader = shader.vertexShader
-        .replace('#include <common>', '#include <common>\nvarying vec3 vWPos;\nvarying vec3 vWNorm;')
+        .replace(
+          '#include <common>',
+          '#include <common>\nattribute float aGrade;\nvarying vec3 vWPos;\nvarying vec3 vWNorm;\nvarying float vGrade;',
+        )
         .replace(
           '#include <begin_vertex>',
-          '#include <begin_vertex>\nvWPos = (modelMatrix * vec4(position, 1.0)).xyz;\nvWNorm = normal;',
+          '#include <begin_vertex>\nvWPos = (modelMatrix * vec4(position, 1.0)).xyz;\nvWNorm = normal;\nvGrade = aGrade;',
         );
       shader.fragmentShader = shader.fragmentShader
         .replace(
@@ -318,12 +404,10 @@ export class TerrainRenderer {
           `#include <common>
           varying vec3 vWPos;
           varying vec3 vWNorm;
-          uniform vec3 uGrass, uGrass2, uDirt, uRock, uSand, uSnow;
+          varying float vGrade;
+          uniform vec3 uGrass, uGrass2, uDirt, uRock, uSand, uSnow, uEmbankment;
           uniform float uSnowLine;
-          float h21(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
-          float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
-            return mix(mix(h21(i), h21(i+vec2(1,0)), f.x), mix(h21(i+vec2(0,1)), h21(i+vec2(1,1)), f.x), f.y); }
-          float fb(vec2 p){ float a = 0.5, s = 0.0; for(int i=0;i<4;i++){ s += a*vn(p); p = p*2.03+vec2(17.1,9.2); a *= 0.5; } return s; }
+          ${NOISE_GLSL}
           `,
         )
         .replace(
@@ -334,21 +418,40 @@ export class TerrainRenderer {
           float big = fb(vWPos.xz * 0.006);
           float mid = fb(vWPos.xz * 0.05);
           float fine = fb(vWPos.xz * 0.6);
-          vec3 c = mix(uGrass, uGrass2, smoothstep(0.32, 0.68, big + (mid-0.5)*0.35));
-          c *= 0.82 + 0.36 * fine;
-          c = mix(c, uDirt, smoothstep(0.52, 0.72, mid + (fine-0.5)*0.3) * 0.5);
-          // Exposed rock on steep ground.
-          float rock = smoothstep(0.11, 0.26, slope + (mid-0.5)*0.12);
+          float detail = fb(vWPos.xz * 3.6);
+          float camDist = length(cameraPosition - vWPos);
+          float detailFade = 1.0 - smoothstep(35.0, 210.0, camDist);
+
+          vec3 c = mix(uGrass, uGrass2, smoothstep(0.32, 0.68, big + (mid - 0.5) * 0.35));
+          c *= (0.82 + 0.36 * fine) * mix(1.0, 0.84 + 0.32 * detail, detailFade);
+          c = mix(c, uDirt, smoothstep(0.52, 0.72, mid + (fine - 0.5) * 0.3) * 0.5);
+
+          // Suppress natural cliff rock on track-graded embankments and cuttings.
+          float gradeOuter = smoothstep(0.08, 0.62, vGrade);
+          float gradeBed = smoothstep(0.66, 0.96, vGrade);
+          float rock = smoothstep(0.11, 0.26, slope + (mid - 0.5) * 0.12) * (1.0 - gradeOuter);
           vec3 rockC = uRock * (0.72 + 0.56 * fb(vWPos.xz * vec2(0.09, 0.35) + vWPos.y * 0.12));
           c = mix(c, rockC, rock);
-          // Beaches and riverbanks.
-          float shore = 1.0 - smoothstep(1.2, 4.2 + mid * 2.5, vWPos.y);
-          c = mix(c, uSand * (0.85 + 0.25 * fine), shore);
+
+          vec3 shoulderC = mix(uGrass2, uDirt, 0.42 + (mid - 0.5) * 0.25) * (0.88 + 0.24 * fine);
+          c = mix(c, shoulderC, gradeOuter * 0.55);
+          vec3 bedC = uEmbankment * (0.84 + 0.32 * fine) * mix(1.0, 0.78 + 0.44 * detail, detailFade);
+          c = mix(c, bedC, gradeBed);
+
+          // Noise-broken beaches and riverbanks on flatter shores, yielding to roadbeds.
+          float shoreNoise = (big - 0.5) * 3.8 + (mid - 0.5) * 2.4 + (fine - 0.5) * 1.1;
+          float flatMask = 1.0 - smoothstep(0.22, 0.48, slope);
+          float shore = (1.0 - smoothstep(-0.4, 4.8 + shoreNoise, vWPos.y)) * flatMask * (1.0 - smoothstep(0.42, 0.84, vGrade));
+          vec3 sandC = uSand * (0.86 + 0.24 * fine) * mix(1.0, 0.88 + 0.24 * detail, detailFade);
+          c = mix(c, sandC, shore);
+
           // Snow settles on the flatter high ground.
-          float snow = smoothstep(uSnowLine - 26.0, uSnowLine + 34.0, vWPos.y + (mid-0.5)*70.0) * (1.0 - smoothstep(0.26, 0.5, slope));
+          float snow = smoothstep(uSnowLine - 26.0, uSnowLine + 34.0, vWPos.y + (mid - 0.5) * 70.0) * (1.0 - smoothstep(0.26, 0.5, slope));
           c = mix(c, uSnow, snow);
-          // Wet and dark below the waterline.
-          c *= mix(0.55, 1.0, smoothstep(-2.0, 0.4, vWPos.y));
+
+          // Wet and dark near and below the waterline.
+          float wet = smoothstep(-1.4, 0.75 + fine * 0.35, vWPos.y);
+          c *= mix(0.54, 1.0, wet);
           diffuseColor.rgb = c;
           `,
         )
@@ -360,7 +463,120 @@ export class TerrainRenderer {
           float nx = fb((vWPos.xz + vec2(e, 0.0)) * 0.45);
           float nz = fb((vWPos.xz + vec2(0.0, e)) * 0.45);
           vec3 bump = vec3(n0 - nx, 0.0, n0 - nz) * 1.3;
+          if (detailFade > 0.01) {
+            float ed = 0.12;
+            float d0 = fb(vWPos.xz * 2.4);
+            float dx = fb((vWPos.xz + vec2(ed, 0.0)) * 2.4);
+            float dz = fb((vWPos.xz + vec2(0.0, ed)) * 2.4);
+            bump += vec3(d0 - dx, 0.0, d0 - dz) * (0.85 * detailFade);
+          }
           normal = normalize(normal + (viewMatrix * vec4(bump, 0.0)).xyz);
+          `,
+        );
+    };
+    return mat;
+  }
+
+  private makeWaterMaterial() {
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      roughness: 0.1,
+      metalness: 0.05,
+      transparent: true,
+      depthWrite: false,
+      envMapIntensity: 1.5,
+    });
+    const uniforms = this.waterUniforms;
+    const stride = `${RES + 1}.0`;
+    const halfWorld = (WORLD_SIZE / 2).toFixed(1);
+    const worldSize = WORLD_SIZE.toFixed(1);
+    const resStr = `${RES}.0`;
+    mat.onBeforeCompile = (shader) => {
+      Object.assign(shader.uniforms, uniforms);
+      shader.vertexShader = shader.vertexShader
+        .replace(
+          '#include <common>',
+          '#include <common>\nuniform mat4 uTextureMatrix;\nvarying vec3 vWPos;\nvarying vec4 vReflUv;',
+        )
+        .replace(
+          '#include <begin_vertex>',
+          '#include <begin_vertex>\nvec4 wPos4 = modelMatrix * vec4(position, 1.0);\nvWPos = wPos4.xyz;\nvReflUv = uTextureMatrix * wPos4;',
+        );
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          '#include <common>',
+          `#include <common>
+          varying vec3 vWPos;
+          varying vec4 vReflUv;
+          uniform float uTime, uNight, uHasPlanar;
+          uniform sampler2D uHeightMap, uWaterNormal, uReflectionMap;
+          uniform vec3 uWaterShallow, uWaterDeep, uFoamColor, uSkyHorizon, uSkyZenith, uSunDir, uSunColor;
+          ${NOISE_GLSL}
+          vec3 unpackWaterN(vec2 uv) {
+            vec3 n = texture2D(uWaterNormal, uv).xyz * 2.0 - 1.0;
+            return vec3(n.x, 0.0, n.y);
+          }
+          `,
+        )
+        .replace(
+          '#include <color_fragment>',
+          `#include <color_fragment>
+          vec2 hUv = clamp(((vWPos.xz + ${halfWorld}) / ${worldSize}) * (${resStr} / ${stride}) + (0.5 / ${stride}), vec2(0.5 / ${stride}), vec2((${resStr} + 0.5) / ${stride}));
+          float groundH = texture2D(uHeightMap, hUv).r * ${HEIGHT_SPAN.toFixed(1)} + (${HEIGHT_MIN.toFixed(1)});
+          float submerge = ${WATER_LEVEL.toFixed(1)} - groundH;
+          float edgeMask = smoothstep(-0.06, 0.22, submerge);
+          if (edgeMask <= 0.002) discard;
+          float depth = max(0.0, submerge);
+
+          float riverZ = 170.0 * sin(vWPos.x * 0.0021 + 1.1) + 70.0 * sin(vWPos.x * 0.0051);
+          float dzdx = 0.357 * cos(vWPos.x * 0.0021 + 1.1) + 0.357 * cos(vWPos.x * 0.0051);
+          float inWorld = (1.0 - smoothstep(1450.0, 1600.0, abs(vWPos.x))) * (1.0 - smoothstep(1450.0, 1600.0, abs(vWPos.z)));
+          float riverMask = inWorld * (1.0 - smoothstep(22.0, 105.0, abs(vWPos.z - riverZ)));
+          vec2 flowDir = normalize(vec2(1.0, dzdx));
+
+          float nFoam = vn(vWPos.xz * 0.32 + vec2(uTime * 0.12, -uTime * 0.08));
+          float wave = 0.5 + 0.5 * sin(depth * 11.0 - uTime * 2.1 + nFoam * 4.5);
+          float shoreBand = smoothstep(0.0, 0.14, depth) * (1.0 - smoothstep(0.18, 1.05, depth));
+          float foam = shoreBand * smoothstep(0.32, 0.78, wave * 0.65 + nFoam * 0.55) * 0.72 * mix(1.0, 0.45, uNight);
+
+          vec3 waterC = mix(uWaterShallow, uWaterDeep, smoothstep(0.0, 4.5, depth));
+          diffuseColor.rgb = mix(waterC, uFoamColor, foam);
+          diffuseColor.a = edgeMask * max(mix(0.38, 0.96, smoothstep(0.0, 3.2, depth)), foam * 0.85);
+          `,
+        )
+        .replace(
+          '#include <roughnessmap_fragment>',
+          `#include <roughnessmap_fragment>
+          roughnessFactor = mix(0.08, 0.72, foam);
+          `,
+        )
+        .replace(
+          '#include <normal_fragment_maps>',
+          `#include <normal_fragment_maps>
+          vec2 flowShift = flowDir * (-uTime * 0.055 * riverMask);
+          vec3 wn1 = unpackWaterN(vWPos.xz * 0.022 + flowShift + vec2(uTime * 0.016, uTime * 0.01));
+          vec3 wn2 = unpackWaterN(vWPos.xz * 0.053 + flowShift * 1.4 - vec2(uTime * 0.011, -uTime * 0.014));
+          vec3 wNorm = normalize(vec3(0.0, 1.0, 0.0) + (wn1 + wn2) * (0.19 * (1.0 - foam * 0.7)));
+          normal = normalize((viewMatrix * vec4(wNorm, 0.0)).xyz);
+          `,
+        )
+        .replace(
+          '#include <opaque_fragment>',
+          `vec3 V = normalize(cameraPosition - vWPos);
+          float ndv = clamp(dot(wNorm, V), 0.0, 1.0);
+          float fresnel = 0.04 + 0.96 * pow(1.0 - ndv, 4.5);
+          vec3 R = reflect(-V, wNorm);
+          vec3 skyRefl = mix(uSkyHorizon, uSkyZenith, pow(clamp(R.y, 0.0, 1.0), 0.55));
+          float sunSpec = pow(max(dot(R, uSunDir), 0.0), 180.0) * smoothstep(-0.02, 0.25, uSunDir.y);
+          skyRefl += uSunColor * sunSpec * 0.75;
+          vec3 reflColor = skyRefl;
+          if (uHasPlanar > 0.5 && vReflUv.w > 0.05) {
+            vec2 rUv = clamp(vReflUv.xy / vReflUv.w + wNorm.xz * (0.032 * (1.0 - foam)), vec2(0.002), vec2(0.998));
+            vec3 planar = texture2D(uReflectionMap, rUv).rgb;
+            reflColor = mix(skyRefl, planar, smoothstep(0.05, 0.35, vReflUv.w));
+          }
+          outgoingLight = mix(outgoingLight, reflColor, fresnel * (1.0 - foam * 0.85) * 0.82);
+          #include <opaque_fragment>
           `,
         );
     };
@@ -376,13 +592,150 @@ export class TerrainRenderer {
     u.uRock.value.set(p.rock);
     u.uSand.value.set(p.sand);
     u.uSnow.value.set(p.snow);
+    u.uEmbankment.value.set(p.embankment);
     u.uSnowLine.value = p.snowLine;
+    this.waterUniforms.uWaterShallow.value.set(p.waterShallow);
+    this.waterUniforms.uWaterDeep.value.set(p.waterDeep);
   }
 
   setField(hf: Heightfield) {
     this.hf = hf;
     this.setPalette(hf.preset);
     hf.dirty = [0, 0, RES, RES];
+  }
+
+  setPlanarReflections(enabled: boolean) {
+    this.planarEnabled = enabled;
+    if (!enabled) {
+      this.waterUniforms.uHasPlanar.value = 0;
+      this.waterUniforms.uReflectionMap.value = this.dummyTex;
+      this.reflRT?.dispose();
+      this.reflRT = null;
+    }
+  }
+
+  resize(width: number, height: number) {
+    const w = Math.min(768, Math.max(256, Math.round(width * 0.5)));
+    const h = Math.min(480, Math.max(240, Math.round(height * 0.5)));
+    if (w === this.reflWidth && h === this.reflHeight) return;
+    this.reflWidth = w;
+    this.reflHeight = h;
+    if (this.reflRT) {
+      this.reflRT.setSize(w, h);
+    }
+  }
+
+  private ensureReflectionTarget() {
+    if (!this.reflRT) {
+      this.reflRT = new THREE.WebGLRenderTarget(this.reflWidth, this.reflHeight, {
+        type: THREE.HalfFloatType,
+        minFilter: THREE.LinearFilter,
+        magFilter: THREE.LinearFilter,
+        samples: 0,
+      });
+    }
+    return this.reflRT;
+  }
+
+  /** Renders planar water reflection using a mirrored camera clipped at WATER_LEVEL. */
+  renderReflection(renderer: THREE.WebGLRenderer, camera: THREE.PerspectiveCamera) {
+    if (!this.planarEnabled) {
+      this.waterUniforms.uHasPlanar.value = 0;
+      return;
+    }
+    this.reflPos.set(0, WATER_LEVEL, 0);
+    this.reflCamPos.setFromMatrixPosition(camera.matrixWorld);
+    this.reflView.subVectors(this.reflPos, this.reflCamPos);
+    if (this.reflView.dot(this.reflNormal) >= -0.05) {
+      this.waterUniforms.uHasPlanar.value = 0;
+      return;
+    }
+
+    this.reflView.reflect(this.reflNormal).negate().add(this.reflPos);
+    this.reflRot.extractRotation(camera.matrixWorld);
+    this.reflLook.set(0, 0, -1).applyMatrix4(this.reflRot).add(this.reflCamPos);
+    this.reflTarget.subVectors(this.reflPos, this.reflLook).reflect(this.reflNormal).negate().add(this.reflPos);
+
+    const rc = this.reflCam;
+    rc.position.copy(this.reflView);
+    rc.up.set(0, 1, 0).applyMatrix4(this.reflRot).reflect(this.reflNormal);
+    rc.lookAt(this.reflTarget);
+    rc.fov = camera.fov;
+    rc.aspect = camera.aspect;
+    rc.near = camera.near;
+    rc.far = camera.far;
+    rc.updateMatrixWorld();
+    rc.matrixWorldInverse.copy(rc.matrixWorld).invert();
+    rc.projectionMatrix.copy(camera.projectionMatrix);
+    rc.projectionMatrix.elements[8] *= -1;
+    rc.projectionMatrix.elements[12] *= -1;
+
+    const texMat = this.waterUniforms.uTextureMatrix.value;
+    texMat
+      .set(0.5, 0, 0, 0.5, 0, 0.5, 0, 0.5, 0, 0, 0.5, 0.5, 0, 0, 0, 1)
+      .multiply(rc.projectionMatrix)
+      .multiply(rc.matrixWorldInverse);
+
+    // Oblique near-plane clipping prevents underwater terrain from bleeding into the reflection.
+    this.reflPlane.setFromNormalAndCoplanarPoint(this.reflNormal, this.reflPos).applyMatrix4(rc.matrixWorldInverse);
+    this.reflClip.set(
+      this.reflPlane.normal.x,
+      this.reflPlane.normal.y,
+      this.reflPlane.normal.z,
+      this.reflPlane.constant,
+    );
+    const pe = rc.projectionMatrix.elements;
+    const q = this.reflQ;
+    q.set(
+      (Math.sign(this.reflClip.x) + pe[8]) / pe[0],
+      (Math.sign(this.reflClip.y) + pe[9]) / pe[5],
+      -1,
+      (1 + pe[10]) / pe[14],
+    );
+    this.reflClip.multiplyScalar(2 / this.reflClip.dot(q));
+    pe[2] = this.reflClip.x;
+    pe[6] = this.reflClip.y;
+    pe[10] = this.reflClip.z + 1;
+    pe[14] = this.reflClip.w;
+
+    const rt = this.ensureReflectionTarget();
+    this.waterUniforms.uReflectionMap.value = rt.texture;
+    this.waterUniforms.uHasPlanar.value = 1;
+
+    const prevRT = renderer.getRenderTarget();
+    renderer.getViewport(this.savedViewport);
+    renderer.getScissor(this.savedScissor);
+    const prevScissorTest = renderer.getScissorTest();
+    const prevXr = renderer.xr.enabled;
+    const prevShadowAuto = renderer.shadowMap.autoUpdate;
+
+    // Swap terrain chunks down to coarse LOD2 during reflection to keep triangle budget lean.
+    for (let i = 0; i < this.chunks.length; i++) {
+      const c = this.chunks[i];
+      if (c.lod < 2) c.mesh.geometry = c.lods[2];
+    }
+    this.water.visible = false;
+    renderer.xr.enabled = false;
+    renderer.shadowMap.autoUpdate = false;
+    try {
+      renderer.setRenderTarget(rt);
+      renderer.setScissorTest(false);
+      renderer.setViewport(0, 0, this.reflWidth, this.reflHeight);
+      renderer.clear();
+      renderer.render(this.scene, rc);
+    } finally {
+      this.water.visible = true;
+      for (let i = 0; i < this.chunks.length; i++) {
+        const c = this.chunks[i];
+        if (c.lod < 2) c.mesh.geometry = c.lods[c.lod];
+      }
+      renderer.xr.enabled = prevXr;
+      renderer.shadowMap.autoUpdate = prevShadowAuto;
+      renderer.setRenderTarget(prevRT);
+      renderer.setViewport(this.savedViewport);
+      renderer.setScissor(this.savedScissor);
+      renderer.setScissorTest(prevScissorTest);
+    }
   }
 
   /** Rewrites the LOD geometries of chunks overlapping the field's dirty rectangle. */
@@ -394,6 +747,20 @@ export class TerrainRenderer {
     const cell = WORLD_SIZE / RES;
     const s = this.hf.stride;
     const h = this.hf.h;
+    const gw = this.hf.gradeWeight;
+
+    for (let gj = d[1]; gj <= d[3]; gj++) {
+      const row = gj * s;
+      for (let gi = d[0]; gi <= d[2]; gi++) {
+        const k = row + gi;
+        const normH = Math.max(0, Math.min(1, (h[k] - HEIGHT_MIN) / HEIGHT_SPAN));
+        const p = k * 4;
+        this.heightData[p] = Math.round(normH * 255);
+        this.heightData[p + 3] = 255;
+      }
+    }
+    this.heightTex.needsUpdate = true;
+
     // Normals sample one cell out, so neighbouring chunks need refreshing too.
     const minC = Math.max(0, Math.floor((d[0] - 1) / CELLS));
     const maxC = Math.min(TERRAIN_CHUNKS - 1, Math.floor((d[2] + 1) / CELLS));
@@ -411,12 +778,15 @@ export class TerrainRenderer {
           const g = chunk.lods[lodIdx];
           const pos = g.attributes.position as THREE.BufferAttribute;
           const nor = g.attributes.normal as THREE.BufferAttribute;
+          const grade = g.attributes.aGrade as THREE.BufferAttribute;
           for (let j = 0; j < n; j++) {
             for (let i = 0; i < n; i++) {
               const gi = cx * CELLS + i * step;
               const gj = cz * CELLS + j * step;
               const k = j * n + i;
-              pos.setXYZ(k, gi * cell - half, h[gj * s + gi], gj * cell - half);
+              const hk = gj * s + gi;
+              pos.setXYZ(k, gi * cell - half, h[hk], gj * cell - half);
+              grade.setX(k, gw[hk]);
               const l = h[gj * s + Math.max(0, gi - 1)];
               const r = h[gj * s + Math.min(RES, gi + 1)];
               const u = h[Math.max(0, gj - 1) * s + gi];
@@ -428,34 +798,20 @@ export class TerrainRenderer {
               nor.setXYZ(k, nx * il, ny * il, nz * il);
             }
           }
-          // Copy edge positions dropped downward and keep edge normals so skirt slivers match terrain lighting.
+          // Copy edge positions dropped downward and keep edge normals and grading weights on skirt slivers.
           const base = n * n;
-          for (let i = 0; i < n; i++) {
-            const top = i;
-            const sk = base + i;
+          const copySkirt = (top: number, sk: number) => {
             pos.setXYZ(sk, pos.getX(top), pos.getY(top) - drop, pos.getZ(top));
             nor.setXYZ(sk, nor.getX(top), nor.getY(top), nor.getZ(top));
-          }
-          for (let i = 0; i < n; i++) {
-            const top = m * n + i;
-            const sk = base + n + i;
-            pos.setXYZ(sk, pos.getX(top), pos.getY(top) - drop, pos.getZ(top));
-            nor.setXYZ(sk, nor.getX(top), nor.getY(top), nor.getZ(top));
-          }
-          for (let j = 0; j < n; j++) {
-            const top = j * n;
-            const sk = base + 2 * n + j;
-            pos.setXYZ(sk, pos.getX(top), pos.getY(top) - drop, pos.getZ(top));
-            nor.setXYZ(sk, nor.getX(top), nor.getY(top), nor.getZ(top));
-          }
-          for (let j = 0; j < n; j++) {
-            const top = j * n + m;
-            const sk = base + 3 * n + j;
-            pos.setXYZ(sk, pos.getX(top), pos.getY(top) - drop, pos.getZ(top));
-            nor.setXYZ(sk, nor.getX(top), nor.getY(top), nor.getZ(top));
-          }
+            grade.setX(sk, grade.getX(top));
+          };
+          for (let i = 0; i < n; i++) copySkirt(i, base + i);
+          for (let i = 0; i < n; i++) copySkirt(m * n + i, base + n + i);
+          for (let j = 0; j < n; j++) copySkirt(j * n, base + 2 * n + j);
+          for (let j = 0; j < n; j++) copySkirt(j * n + m, base + 3 * n + j);
           pos.needsUpdate = true;
           nor.needsUpdate = true;
+          grade.needsUpdate = true;
           g.computeBoundingBox();
           g.computeBoundingSphere();
         }
@@ -478,7 +834,13 @@ export class TerrainRenderer {
     }
   }
 
-  update(time: number) {
-    this.waterNormal.offset.set(time * 0.0035, time * 0.0022);
+  update(time: number, env?: Environment) {
+    this.waterUniforms.uTime.value = time;
+    if (!env) return;
+    this.waterUniforms.uNight.value = env.night;
+    this.waterUniforms.uSkyHorizon.value.copy((this.scene.fog as THREE.FogExp2).color);
+    this.waterUniforms.uSkyZenith.value.copy(env.hemi.color).multiplyScalar(0.55 + (1 - env.night) * 0.65);
+    this.waterUniforms.uSunDir.value.copy(env.sun.position).sub(env.sun.target.position).normalize();
+    this.waterUniforms.uSunColor.value.copy(env.sun.color).multiplyScalar(Math.min(2, env.sun.intensity * 0.45));
   }
 }
