@@ -39,6 +39,7 @@ export interface EditorHost {
   addTrain(train: Train, seg: number, s: number, dir: Dir): Train | null;
   removeTrain(t: Train): void;
   toast(text: string, warn?: boolean): void;
+  playLeverSound?(kind: 'points' | 'signal'): void;
   syncEditor(): void;
   syncTrains(): void;
 }

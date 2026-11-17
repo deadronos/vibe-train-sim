@@ -1,4 +1,6 @@
 // All sound is synthesised in Web Audio, so the project ships no audio files.
+import type { Preset } from './world/heightfield';
+import { WATER_LEVEL } from './world/heightfield';
 
 /** The player's sound choices. Levels run from 0 to 1. */
 export interface SoundSettings {
@@ -7,6 +9,7 @@ export interface SoundSettings {
   engine: number;
   rail: number;
   horn: number;
+  ambience: number;
   squeal: boolean;
 }
 
@@ -16,6 +19,7 @@ export const DEFAULT_SOUND: SoundSettings = {
   engine: 1,
   rail: 1,
   horn: 1,
+  ambience: 1,
   squeal: true,
 };
 const MASTER = 0.56; // Full volume; the default setting gives the 0.45 the mix was tuned at
@@ -203,6 +207,123 @@ export function crossedRailJoint(prevOdom: number, curOdom: number, spacing = JO
   return Math.floor(curOdom / spacing) > Math.floor(prevOdom / spacing);
 }
 
+export interface AmbienceInput {
+  preset: Preset;
+  cameraY: number;
+  groundY: number;
+  nearWaterY: number;
+  riverDist: number;
+  night: number;
+  cab: boolean;
+}
+
+export interface AmbienceParams {
+  windGain: number;
+  windFreq: number;
+  windQ: number;
+  riverGain: number;
+  coastGain: number;
+  birdLevel: number;
+  cricketLevel: number;
+}
+
+const AMBIENCE_PRESET: Record<
+  Preset,
+  {
+    windBase: number;
+    windAlt: number;
+    windFreq: number;
+    windSpan: number;
+    windQ: number;
+    riverWidth: number;
+    riverScale: number;
+    coastScale: number;
+    bird: number;
+    cricket: number;
+  }
+> = {
+  alpine: {
+    windBase: 0.018,
+    windAlt: 0.052,
+    windFreq: 360,
+    windSpan: 300,
+    windQ: 1.4,
+    riverWidth: 1,
+    riverScale: 0.055,
+    coastScale: 0.036,
+    bird: 0.022,
+    cricket: 0.014,
+  },
+  plains: {
+    windBase: 0.012,
+    windAlt: 0.028,
+    windFreq: 280,
+    windSpan: 180,
+    windQ: 1.1,
+    riverWidth: 1,
+    riverScale: 0.055,
+    coastScale: 0.036,
+    bird: 0.028,
+    cricket: 0.024,
+  },
+  desert: {
+    windBase: 0.015,
+    windAlt: 0.032,
+    windFreq: 240,
+    windSpan: 180,
+    windQ: 1.25,
+    riverWidth: 0.75,
+    riverScale: 0.032,
+    coastScale: 0.032,
+    bird: 0.015,
+    cricket: 0.018,
+  },
+  islands: {
+    windBase: 0.022,
+    windAlt: 0.03,
+    windFreq: 320,
+    windSpan: 200,
+    windQ: 1.2,
+    riverWidth: 1.4,
+    riverScale: 0.05,
+    coastScale: 0.052,
+    bird: 0.026,
+    cricket: 0.021,
+  },
+};
+
+/** Pure mapping from landscape, altitude, water proximity, and time of day to ambient synthesis levels. */
+export function computeAmbienceParams(input: AmbienceInput): AmbienceParams {
+  const cfg = AMBIENCE_PRESET[input.preset];
+  const night = clamp01(input.night);
+  const cabScale = input.cab ? 0.35 : 1;
+  const alt = clamp01((Math.max(0, input.cameraY) - 8) / 140);
+  const aboveGround = Math.max(0, input.cameraY - Math.max(input.groundY, WATER_LEVEL));
+  const groundProx = clamp01(1 - aboveGround / 110);
+  const waterFade = clamp01(1 - Math.max(0, input.cameraY - WATER_LEVEL) / 70);
+
+  const windGain = (cfg.windBase + alt * cfg.windAlt) * (0.88 + 0.12 * (1 - night)) * cabScale;
+  const windFreq = cfg.windFreq + alt * cfg.windSpan - 35 * night;
+
+  const riverNear = clamp01(1 - input.riverDist / (125 * cfg.riverWidth)) * waterFade;
+  const coastLevel = Math.min(input.groundY, input.nearWaterY);
+  const coastNear = clamp01((WATER_LEVEL + 4 - coastLevel) / 7) * waterFade;
+  const coastAmt = Math.max(0, coastNear - riverNear * 0.85);
+
+  const dayAmt = clamp01(1 - night * 1.4) * groundProx;
+  const nightAmt = clamp01((night - 0.25) / 0.65) * groundProx;
+
+  return {
+    windGain,
+    windFreq,
+    windQ: cfg.windQ,
+    riverGain: riverNear * cfg.riverScale * cabScale,
+    coastGain: coastAmt * cfg.coastScale * cabScale,
+    birdLevel: cfg.bird * dayAmt * cabScale,
+    cricketLevel: cfg.cricket * nightAmt * cabScale,
+  };
+}
+
 /** Fills a loopable pink-filtered noise buffer (-3 dB/oct roll-off) so rail roll and air avoid white static hiss. */
 function fillPinkNoise(data: Float32Array) {
   let b0 = 0;
@@ -321,6 +442,7 @@ export class SimAudio {
   private impactBus!: GainNode;
   private squealBus!: GainNode;
   private hornBus!: GainNode;
+  private ambienceBus!: GainNode;
 
   private engine!: OscillatorNode;
   private engine2!: OscillatorNode;
@@ -338,6 +460,13 @@ export class SimAudio {
   private brakeFilter!: BiquadFilterNode;
   private brakeSquealGain!: GainNode;
   private brakeHissGain!: GainNode;
+
+  private windFilter!: BiquadFilterNode;
+  private windGain!: GainNode;
+  private riverGain!: GainNode;
+  private coastGain!: GainNode;
+  private birdTimer = 1.2;
+  private cricketTimer = 0.6;
 
   private hornGain!: GainNode;
   private warnTimer = 0;
@@ -387,6 +516,7 @@ export class SimAudio {
     this.impactBus = bus();
     this.squealBus = bus(this.railBus);
     this.hornBus = bus();
+    this.ambienceBus = bus();
     this.apply(true);
     // Frames stop in a hidden tab, so the last levels would otherwise drone on.
     document.addEventListener('visibilitychange', () => {
@@ -429,8 +559,8 @@ export class SimAudio {
     this.turboGain.connect(this.engineBus);
     this.turboOsc.start();
 
-    // Shared 2-second pink-noise loop for deep rolling rumble, bridge boom, brake hiss, and filtered rub squeals.
-    const len = ctx.sampleRate * 2;
+    // Shared 4-second pink-noise loop for rolling rumble, bridge boom, brake hiss, squeals, and world ambience.
+    const len = ctx.sampleRate * 4;
     this.noise = ctx.createBuffer(1, len, ctx.sampleRate);
     fillPinkNoise(this.noise.getChannelData(0));
     const roll = ctx.createBufferSource();
@@ -505,6 +635,39 @@ export class SimAudio {
     roll.start();
     for (let i = 0; i < NEARBY_VOICES; i++) this.nearbyVoices.push(new NearbyVoice(ctx, this.master, this.noise));
 
+    const ambientBand = (offset: number, freq: number, q: number, lfoHz: number, lfoDepth: number) => {
+      const src = ctx.createBufferSource();
+      src.buffer = this.noise;
+      src.loop = true;
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.value = freq;
+      filter.Q.value = q;
+      const swell = ctx.createGain();
+      swell.gain.value = 1 - lfoDepth;
+      const lfo = ctx.createOscillator();
+      lfo.type = 'sine';
+      lfo.frequency.value = lfoHz;
+      const depth = ctx.createGain();
+      depth.gain.value = lfoDepth;
+      lfo.connect(depth);
+      depth.connect(swell.gain);
+      const gain = ctx.createGain();
+      gain.gain.value = 0;
+      src.connect(filter);
+      filter.connect(swell);
+      swell.connect(gain);
+      gain.connect(this.ambienceBus);
+      src.start(0, offset);
+      lfo.start();
+      return { filter, gain };
+    };
+    const wind = ambientBand(0.3, 340, 1.2, 0.19, 0.25);
+    this.windFilter = wind.filter;
+    this.windGain = wind.gain;
+    this.riverGain = ambientBand(1.3, 720, 1.1, 0.43, 0.14).gain;
+    this.coastGain = ambientBand(2.5, 310, 0.85, 0.16, 0.42).gain;
+
     this.hornGain = ctx.createGain();
     this.hornGain.gain.value = 0;
     const hornFilter = ctx.createBiquadFilter();
@@ -548,6 +711,7 @@ export class SimAudio {
     level(this.impactBus, s.rail);
     level(this.squealBus, s.squeal ? 1 : 0);
     level(this.hornBus, s.horn);
+    level(this.ambienceBus, s.ambience);
   }
 
   horn(on: boolean) {
@@ -678,6 +842,198 @@ export class SimAudio {
     ng.connect(this.impactBus);
     src.start(t, Math.random());
     src.stop(t + 0.48);
+  }
+
+  private noiseBurst(delay: number, duration: number, freq: number, q: number, peak: number, target: AudioNode) {
+    const ctx = this.ctx!;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    const f = ctx.createBiquadFilter();
+    f.type = 'bandpass';
+    f.frequency.value = freq;
+    f.Q.value = q;
+    const g = ctx.createGain();
+    const t = ctx.currentTime + delay;
+    g.gain.setValueAtTime(Math.max(0.001, peak), t);
+    g.gain.exponentialRampToValueAtTime(0.0005, t + duration);
+    src.connect(f);
+    f.connect(g);
+    g.connect(target);
+    src.start(t, Math.random() * 2);
+    src.stop(t + duration + 0.01);
+  }
+
+  /** Mechanical signal-box lever clunk for throwing points or changing/clearing signals. */
+  playLeverClunk(kind: 'points' | 'signal', strength = 1) {
+    const ctx = this.ctx;
+    if (!ctx || ctx.state !== 'running' || strength <= 0.01) return;
+    const s = Math.min(1, strength);
+    const t = ctx.currentTime;
+    const thud = ctx.createOscillator();
+    thud.type = 'triangle';
+    thud.frequency.setValueAtTime(kind === 'points' ? 145 : 175, t);
+    thud.frequency.exponentialRampToValueAtTime(52, t + 0.085);
+    const tg = ctx.createGain();
+    tg.gain.setValueAtTime(0.14 * s, t);
+    tg.gain.exponentialRampToValueAtTime(0.0008, t + 0.095);
+    thud.connect(tg);
+    tg.connect(this.master);
+    thud.start(t);
+    thud.stop(t + 0.11);
+
+    this.noiseBurst(0, 0.045, kind === 'points' ? 1180 : 1480, 2.4, 0.11 * s, this.master);
+    if (kind === 'points') this.noiseBurst(0.032, 0.05, 1620, 2.8, 0.09 * s, this.master);
+  }
+
+  /** Subtle signal-box switch/button click for interface feedback. */
+  playUiClick() {
+    const ctx = this.ctx;
+    if (!ctx || ctx.state !== 'running') return;
+    const t = ctx.currentTime;
+    const tick = ctx.createOscillator();
+    tick.type = 'triangle';
+    tick.frequency.setValueAtTime(240, t);
+    tick.frequency.exponentialRampToValueAtTime(95, t + 0.014);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.04, t);
+    g.gain.exponentialRampToValueAtTime(0.0008, t + 0.018);
+    tick.connect(g);
+    g.connect(this.master);
+    tick.start(t);
+    tick.stop(t + 0.022);
+    this.noiseBurst(0, 0.016, 1650, 2.1, 0.045, this.master);
+  }
+
+  /** Warm station/door chime on platform stop or departure, attenuated with camera distance. */
+  playDoorChime(kind: 'open' | 'close', nearby = 1) {
+    const ctx = this.ctx;
+    if (!ctx || ctx.state !== 'running' || nearby <= 0.01) return;
+    const notes = kind === 'open' ? [523.25, 659.25] : [659.25, 493.88];
+    const amp = 0.085 * Math.min(1, nearby);
+    notes.forEach((freq, i) => {
+      const t = ctx.currentTime + i * 0.135;
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      const overtone = ctx.createOscillator();
+      overtone.type = 'sine';
+      overtone.frequency.value = freq * 2;
+      const overGain = ctx.createGain();
+      overGain.gain.value = 0.2;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0008, t);
+      g.gain.linearRampToValueAtTime(amp, t + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0008, t + 0.34);
+      osc.connect(g);
+      overtone.connect(overGain);
+      overGain.connect(g);
+      g.connect(this.master);
+      osc.start(t);
+      overtone.start(t);
+      osc.stop(t + 0.36);
+      overtone.stop(t + 0.36);
+    });
+  }
+
+  private playBirdCall(preset: Preset, level: number) {
+    const ctx = this.ctx!;
+    const pan = ctx.createStereoPanner();
+    pan.pan.value = Math.random() * 1.4 - 0.7;
+    pan.connect(this.ambienceBus);
+    const chirp = (delay: number, f0: number, f1: number, dur: number, type: OscillatorType = 'sine', amp = 1) => {
+      const t = ctx.currentTime + delay;
+      const osc = ctx.createOscillator();
+      osc.type = type;
+      osc.frequency.setValueAtTime(f0, t);
+      osc.frequency.exponentialRampToValueAtTime(f1, t + dur);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0005, t);
+      g.gain.linearRampToValueAtTime(level * amp, t + Math.min(0.025, dur * 0.25));
+      g.gain.exponentialRampToValueAtTime(0.0005, t + dur);
+      osc.connect(g);
+      g.connect(pan);
+      osc.start(t);
+      osc.stop(t + dur + 0.02);
+    };
+    if (preset === 'alpine') {
+      const f = 2200 + Math.random() * 650;
+      chirp(0, f, f * 1.24, 0.11);
+      chirp(0.16, f * 1.15, f * 0.92, 0.14);
+    } else if (preset === 'desert') {
+      const f = 1400 + Math.random() * 450;
+      chirp(0, f, f * 0.8, 0.16);
+      if (Math.random() > 0.4) chirp(0.24, f * 1.06, f * 0.84, 0.14);
+    } else if (preset === 'islands' && Math.random() > 0.45) {
+      const f = 1450 + Math.random() * 350;
+      chirp(0, f, f * 0.68, 0.28, 'triangle', 0.65);
+    } else {
+      const f = 1850 + Math.random() * 750;
+      const count = 2 + Math.floor(Math.random() * 2);
+      for (let i = 0; i < count; i++) {
+        const base = f * (1 + (i % 2) * 0.12);
+        chirp(i * 0.12, base, base * (i % 2 === 0 ? 1.28 : 0.86), 0.09);
+      }
+    }
+  }
+
+  private playCricketChirp(preset: Preset, level: number) {
+    const ctx = this.ctx!;
+    const pan = ctx.createStereoPanner();
+    pan.pan.value = Math.random() * 1.5 - 0.75;
+    pan.connect(this.ambienceBus);
+    const freq =
+      preset === 'alpine'
+        ? 3800
+        : preset === 'desert'
+          ? 4650
+          : preset === 'islands'
+            ? 4350
+            : 4180 + Math.random() * 180;
+    const pulses = preset === 'alpine' ? 3 : 4;
+    for (let i = 0; i < pulses; i++) {
+      const t = ctx.currentTime + i * 0.042;
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0005, t);
+      g.gain.linearRampToValueAtTime(level * 0.55, t + 0.006);
+      g.gain.exponentialRampToValueAtTime(0.0005, t + 0.028);
+      osc.connect(g);
+      g.connect(pan);
+      osc.start(t);
+      osc.stop(t + 0.032);
+    }
+  }
+
+  /** Updates wind, river/coast water, and day birds vs night crickets from camera & landscape state. */
+  updateAmbience(input: AmbienceInput, dt: number) {
+    if (!this.ctx || this.ctx.state !== 'running') return;
+    const p = computeAmbienceParams(input);
+    const t = this.ctx.currentTime;
+    this.windFilter.frequency.setTargetAtTime(p.windFreq, t, 0.3);
+    this.windFilter.Q.setTargetAtTime(p.windQ, t, 0.3);
+    this.windGain.gain.setTargetAtTime(p.windGain, t, 0.3);
+    this.riverGain.gain.setTargetAtTime(p.riverGain, t, 0.3);
+    this.coastGain.gain.setTargetAtTime(p.coastGain, t, 0.3);
+
+    if (this.settings.muted || this.settings.ambience <= 0.01) return;
+
+    if (p.birdLevel > 0.001) {
+      this.birdTimer -= dt;
+      if (this.birdTimer <= 0) {
+        const span = input.preset === 'desert' ? [3.2, 2.8] : input.preset === 'alpine' ? [2.0, 2.2] : [1.3, 1.9];
+        this.birdTimer = span[0] + Math.random() * span[1];
+        this.playBirdCall(input.preset, p.birdLevel);
+      }
+    }
+    if (p.cricketLevel > 0.001) {
+      this.cricketTimer -= dt;
+      if (this.cricketTimer <= 0) {
+        this.cricketTimer = (input.preset === 'alpine' ? 1.5 : 0.85) + Math.random() * 1.1;
+        this.playCricketChirp(input.preset, p.cricketLevel);
+      }
+    }
   }
 
   /** Resets edge-triggered state when switching trains or stopping. */

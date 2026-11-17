@@ -135,6 +135,7 @@ export const selectPanel: PanelFactory = (container, g, sync) => {
               g.pushUndo();
               g.net.throwSwitch(n.id, side);
               g.sim.interlock();
+              g.audio.playLeverClunk('points');
               g.hud.toast('Points thrown');
             },
           },
@@ -178,6 +179,7 @@ export const selectPanel: PanelFactory = (container, g, sync) => {
           g.net.markSignalDirty(n.id);
           g.net.version++;
           g.commitEdit();
+          g.audio.playLeverClunk('signal');
           sync();
         },
       });
@@ -189,6 +191,7 @@ export const selectPanel: PanelFactory = (container, g, sync) => {
           g.pushUndo();
           sig.hold = checked;
           g.sim.interlock();
+          g.audio.playLeverClunk('signal');
         },
       });
       updaters.push(() => {
