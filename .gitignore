@@ -5,3 +5,4 @@ dist
 tools/blender/preview.png
 test-results
 playwright-report
+.claude/launch.json
