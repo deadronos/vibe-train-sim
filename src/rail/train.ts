@@ -177,6 +177,8 @@ export class Train {
   passedStop = false;
   /** Last known head position, used to re-seat the train when track under it is deleted. */
   lastPos: { x: number; z: number; hx: number; hz: number } | null = null;
+  /** Cumulative distance travelled in metres, used for wheel spin and joint/junction cues. Not saved. */
+  odometer = 0;
 
   constructor(id: number, name: string, cars: Car[]) {
     this.id = id;

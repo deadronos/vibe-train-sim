@@ -3,7 +3,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { buildDemoNetwork, populateDemoTrains } from '../src/rail/demoMap';
 import { Sim } from '../src/rail/sim';
-import { CAB_FOV_MAX, CAB_FOV_MIN, CAM_LABEL, CameraRig, clampCabFov, DEFAULT_FOV } from '../src/render/cameraRig';
+import {
+  CAB_FOV_MAX,
+  CAB_FOV_MIN,
+  CAB_PITCH_MAX,
+  CAB_PITCH_MIN,
+  CAB_YAW_MAX,
+  CAM_LABEL,
+  CameraRig,
+  clampCabFov,
+  DEFAULT_FOV,
+} from '../src/render/cameraRig';
 import { Heightfield } from '../src/world/heightfield';
 
 function makeDomStub() {
@@ -122,5 +132,31 @@ describe('CameraRig', () => {
     rig.update(sim, null, hf, 0.5);
     expect(cam.position.z).toBeGreaterThan(startZ + 20);
     rig.releaseKeys();
+  });
+
+  it('clamps cab look angles and exposes cabInteriorActive only inside cab mode', () => {
+    const { dom, rig } = makeRig(true);
+    const hf = new Heightfield('plains', 1);
+    const { net, stations } = buildDemoNetwork(hf);
+    const sim = new Sim(net);
+    populateDemoTrains(sim, stations);
+    const train = sim.trains[0];
+
+    expect(rig.cabInteriorActive).toBe(false);
+    rig.setMode('cab');
+    rig.update(sim, train, hf, 0.016);
+    expect(rig.cabInteriorActive).toBe(true);
+
+    dom.dispatch('pointerdown', { clientX: 500, clientY: 500, pointerId: 1 });
+    dom.dispatch('pointermove', { clientX: -5000, clientY: -5000 });
+    expect(rig.cabYaw).toBe(CAB_YAW_MAX);
+    expect(rig.cabPitch).toBe(CAB_PITCH_MAX);
+    dom.dispatch('pointermove', { clientX: 5000, clientY: 5000 });
+    expect(rig.cabYaw).toBe(-CAB_YAW_MAX);
+    expect(rig.cabPitch).toBe(CAB_PITCH_MIN);
+    dom.dispatch('pointerup', {});
+
+    rig.setMode('chase');
+    expect(rig.cabInteriorActive).toBe(false);
   });
 });

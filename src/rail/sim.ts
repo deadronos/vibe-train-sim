@@ -5,9 +5,18 @@ import type { InterlockState, Occupancy } from './interlocking';
 import { interlockNetwork } from './interlocking';
 import type { Dir, Network, Piece, Side, SignalType } from './network';
 import { LINE_VMAX, signalType } from './network';
-import { advanceTrain, brakingDistance, collectLimits, planBrake, stepPhysics, trainsTouch } from './physics';
+import {
+  advanceTrain,
+  brakingDistance,
+  collectLimits,
+  planBrake,
+  stepPhysics,
+  tractiveLoad,
+  trainsTouch,
+} from './physics';
 import {
   behind,
+  collectJunctionDists,
   departureWait,
   dueIn,
   findRoute,
@@ -44,7 +53,19 @@ import { VEHICLES } from './vehicles';
 import type { Aspect, NextSignal, SignalIndication, SignalRoute } from './walk';
 import { keyOf } from './walk';
 
-export { clockText, DAY, keyOf, SHUNT_VMAX, STEP, Train, untilTime, WARN_ACK_SECONDS };
+export {
+  clockText,
+  collectJunctionDists,
+  DAY,
+  GAP,
+  keyOf,
+  SHUNT_VMAX,
+  STEP,
+  tractiveLoad,
+  Train,
+  untilTime,
+  WARN_ACK_SECONDS,
+};
 export type {
   Aspect,
   DeskInfo,
@@ -277,6 +298,11 @@ export class Sim {
 
   head(t: Train) {
     return headPose(this.net, t);
+  }
+
+  /** Seconds behind the latest step that `drawn()` interpolates at. */
+  get drawnLag() {
+    return STEP - this.unspent;
   }
 
   /** Like behind, for drawing: frames fall between steps, so trains are shown part of a step back to stay smooth. */

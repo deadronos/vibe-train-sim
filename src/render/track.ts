@@ -1,14 +1,18 @@
-// Builds rails, sleepers, ballast and bridges by sweeping profiles per segment and merging into world chunks.
+// Builds rails, sleepers, ballast, bridges, diamond crossings and animated junction turnouts.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
-import type { Network, SegGeom } from '../rail/network';
+import type { Network, RailNode, SegGeom, Side } from '../rail/network';
 import { DIAMOND_MAX_DY } from '../rail/network';
 import type { Heightfield } from '../world/heightfield';
 import { WATER_LEVEL, WORLD_SIZE } from '../world/heightfield';
 import type { Assets } from './assets';
+import { prefersReducedMotion } from './cameraRig';
 
 const CHUNKS = 8;
+const GAUGE_HALF = 0.7175;
+const GAUGE = GAUGE_HALF * 2;
+const BLADE_THROW_SPEED = 5.5; // 1/s -> ~0.18 s smooth point throw
 type Profile = [number, number][];
 
 const RAIL: Profile = [
@@ -51,11 +55,101 @@ const BOX = (cx: number, cy: number, w: number, h: number): Profile => [
 ];
 
 interface Frame {
+  s: number;
   x: number;
   y: number;
   z: number;
   rx: number;
   rz: number;
+}
+
+export interface JunctionBranch {
+  segId: number;
+  dir: 1 | -1;
+  latAtProbe: number;
+}
+
+export interface JunctionMetrics {
+  branches: JunctionBranch[];
+  sToe: number;
+  sHeel: number;
+  sJuncEnd: number;
+  frogs: { leftIdx: number; rightIdx: number; sFrog: number }[];
+}
+
+function sampleBranch(net: Network, node: RailNode, side: Side, segId: number, s: number) {
+  const g = net.geom.get(segId)!;
+  const dir = net.entryDir(segId, node.id, side);
+  const segS = dir > 0 ? Math.min(g.length, s) : Math.max(0, g.length - s);
+  const p = net.sample(segId, segS);
+  const sign = dir;
+  return {
+    x: p.x,
+    y: p.y,
+    z: p.z,
+    tx: p.tx * sign,
+    ty: p.ty * sign,
+    tz: p.tz * sign,
+    rx: -p.tz * sign,
+    rz: p.tx * sign,
+  };
+}
+
+/** Computes sorted left-to-right branches, switch heel/toe, frog distances, and junction trim length. */
+export function computeJunctionMetrics(net: Network, node: RailNode, side: Side): JunctionMetrics | null {
+  const opts = net.attached(node.id, side);
+  if (opts.length < 2) return null;
+  const fx = node.dx * side;
+  const fz = node.dz * side;
+  const rx = -fz;
+  const rz = fx;
+  let minLen = Infinity;
+  for (const id of opts) {
+    const g = net.geom.get(id);
+    if (!g) return null;
+    if (g.length < minLen) minLen = g.length;
+  }
+  const probeS = Math.min(18, minLen * 0.6);
+  const branches: JunctionBranch[] = opts.map((segId) => {
+    const p = sampleBranch(net, node, side, segId, probeS);
+    return {
+      segId,
+      dir: net.entryDir(segId, node.id, side),
+      latAtProbe: (p.x - node.x) * rx + (p.z - node.z) * rz,
+    };
+  });
+  branches.sort((a, b) => a.latAtProbe - b.latAtProbe);
+
+  const sToe = Math.min(0.45, minLen * 0.08);
+  let sHeel = 7.5;
+  let maxFrog = 12;
+  const frogs: { leftIdx: number; rightIdx: number; sFrog: number }[] = [];
+
+  for (let k = 0; k < branches.length - 1; k++) {
+    const bL = branches[k].segId;
+    const bR = branches[k + 1].segId;
+    let foundHeel = -1;
+    let foundFrog = -1;
+    const limit = Math.min(64, minLen - 1);
+    for (let s = 1; s <= limit; s += 0.5) {
+      const pL = sampleBranch(net, node, side, bL, s);
+      const pR = sampleBranch(net, node, side, bR, s);
+      const sep = (pR.x - pL.x) * rx + (pR.z - pL.z) * rz;
+      if (foundHeel < 0 && sep >= 0.24) foundHeel = s;
+      if (sep >= GAUGE) {
+        foundFrog = s;
+        break;
+      }
+    }
+    if (foundHeel > 0) sHeel = Math.min(sHeel, Math.max(4.5, Math.min(10.5, foundHeel)));
+    if (foundFrog > 0) {
+      frogs.push({ leftIdx: k, rightIdx: k + 1, sFrog: foundFrog });
+      if (foundFrog > maxFrog) maxFrog = foundFrog;
+    }
+  }
+  sHeel = Math.min(sHeel, minLen * 0.45);
+  const sJuncEnd = Math.min(minLen * 0.85, maxFrog + 3.5);
+  return { branches, sToe, sHeel, sJuncEnd, frogs };
 }
 
 /** Sweeps a closed profile along frames with hard-edged normals and returns a geometry. */
@@ -123,6 +217,189 @@ function sweep(frames: Frame[], profile: Profile, uvScale = 0.25): THREE.BufferG
   return g;
 }
 
+/** Sweeps a variable-width ballast apron bridging the outer left edge of framesL and outer right edge of framesR. */
+function sweepJunctionBallast(framesL: Frame[], framesR: Frame[], uvScale = 0.25): THREE.BufferGeometry {
+  const n = Math.min(framesL.length, framesR.length);
+  const quads = (n - 1) * 4;
+  const pos = new Float32Array(quads * 4 * 3);
+  const nor = new Float32Array(quads * 4 * 3);
+  const uv = new Float32Array(quads * 4 * 2);
+  const idx = new Uint32Array(quads * 6);
+  const pt = (f: Frame, lat: number, up: number): [number, number, number] => [
+    f.x + f.rx * lat,
+    f.y + up,
+    f.z + f.rz * lat,
+  ];
+  const ringAt = (i: number): [number, number, number][] => [
+    pt(framesL[i], -2.5, -0.74),
+    pt(framesR[i], 2.5, -0.74),
+    pt(framesR[i], 1.45, -0.23),
+    pt(framesL[i], -1.45, -0.23),
+  ];
+  const lats = [-2.5, 2.5, 1.45, -1.45];
+  let v = 0;
+  let w = 0;
+  let along = 0;
+  const e1 = new THREE.Vector3();
+  const e2 = new THREE.Vector3();
+  const norm = new THREE.Vector3();
+  for (let i = 0; i < n - 1; i++) {
+    const rA = ringAt(i);
+    const rB = ringAt(i + 1);
+    const stepLen = Math.hypot(framesL[i + 1].x - framesL[i].x, framesL[i + 1].z - framesL[i].z);
+    for (let k = 0; k < 4; k++) {
+      const k2 = (k + 1) % 4;
+      const c0 = rA[k];
+      const c1 = rA[k2];
+      const c2 = rB[k2];
+      const c3 = rB[k];
+      e1.set(c2[0] - c0[0], c2[1] - c0[1], c2[2] - c0[2]);
+      e2.set(c1[0] - c0[0], c1[1] - c0[1], c1[2] - c0[2]);
+      norm.crossVectors(e1, e2).normalize();
+      const corners = [c0, c1, c2, c3];
+      const clats = [lats[k], lats[k2], lats[k2], lats[k]];
+      for (let c = 0; c < 4; c++) {
+        pos[v * 3] = corners[c][0];
+        pos[v * 3 + 1] = corners[c][1];
+        pos[v * 3 + 2] = corners[c][2];
+        nor[v * 3] = norm.x;
+        nor[v * 3 + 1] = norm.y;
+        nor[v * 3 + 2] = norm.z;
+        uv[v * 2] = clats[c] * uvScale;
+        uv[v * 2 + 1] = (along + (c < 2 ? 0 : stepLen)) * uvScale;
+        v++;
+      }
+      const b = v - 4;
+      idx[w++] = b;
+      idx[w++] = b + 2;
+      idx[w++] = b + 1;
+      idx[w++] = b;
+      idx[w++] = b + 3;
+      idx[w++] = b + 2;
+    }
+    along += stepLen;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  g.setIndex(new THREE.BufferAttribute(idx, 1));
+  return g;
+}
+
+/** Slices a frame array to [sStart, sEnd], interpolating boundary frames so adjacent meshes meet cleanly. */
+function sliceFrames(frames: Frame[], sStart: number, sEnd: number): Frame[] {
+  if (sStart >= sEnd || frames.length < 2) return [];
+  const interp = (a: Frame, b: Frame, s: number): Frame => {
+    const t = Math.max(0, Math.min(1, (s - a.s) / (b.s - a.s || 1)));
+    const rx = a.rx + (b.rx - a.rx) * t;
+    const rz = a.rz + (b.rz - a.rz) * t;
+    const l = Math.hypot(rx, rz) || 1;
+    return {
+      s,
+      x: a.x + (b.x - a.x) * t,
+      y: a.y + (b.y - a.y) * t,
+      z: a.z + (b.z - a.z) * t,
+      rx: rx / l,
+      rz: rz / l,
+    };
+  };
+  const out: Frame[] = [];
+  for (let i = 0; i < frames.length; i++) {
+    const f = frames[i];
+    if (f.s >= sStart && f.s <= sEnd) {
+      if (out.length === 0 && f.s > sStart && i > 0) out.push(interp(frames[i - 1], f, sStart));
+      out.push(f);
+    } else if (out.length > 0 && f.s > sEnd) {
+      out.push(interp(frames[i - 1], f, sEnd));
+      break;
+    } else if (out.length === 0 && f.s > sEnd && i > 0) {
+      out.push(interp(frames[i - 1], f, sStart));
+      out.push(interp(frames[i - 1], f, sEnd));
+      break;
+    }
+  }
+  return out;
+}
+
+/** Tapered unit-length switch blade from Z=0 (heel) to Z=1 (tip), top at Y=0. */
+function makeBladeGeo(): THREE.BufferGeometry {
+  const w0 = 0.036;
+  const w1 = 0.008;
+  const y0 = -0.155;
+  const y1 = 0.0;
+  // 8 vertices forming a tapered rectangular prism along Z (0..1).
+  const pos = new Float32Array([
+    -w0,
+    y0,
+    0,
+    w0,
+    y0,
+    0,
+    w0,
+    y1,
+    0,
+    -w0,
+    y1,
+    0,
+    -w1,
+    y0,
+    1,
+    w1,
+    y0,
+    1,
+    w1,
+    y1,
+    1,
+    -w1,
+    y1,
+    1,
+  ]);
+  const indices = [
+    2,
+    3,
+    7,
+    2,
+    7,
+    6, // top
+    0,
+    1,
+    5,
+    0,
+    5,
+    4, // bottom
+    0,
+    4,
+    7,
+    0,
+    7,
+    3, // left
+    1,
+    2,
+    6,
+    1,
+    6,
+    5, // right
+    4,
+    5,
+    6,
+    4,
+    6,
+    7, // tip
+    0,
+    3,
+    2,
+    0,
+    2,
+    1, // heel
+  ];
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setIndex(indices);
+  g.computeVertexNormals();
+  return g;
+}
+
 function noiseTexture(base: [number, number, number], spread: number, size = 256) {
   const data = new Uint8Array(size * size * 4);
   for (let i = 0; i < size * size; i++) {
@@ -171,6 +448,16 @@ interface ChunkMesh {
   instanced: THREE.InstancedMesh[];
 }
 
+interface BladeDesc {
+  nodeId: number;
+  side: Side;
+  branchSegId: number;
+  heelPos: THREE.Vector3;
+  closedToe: THREE.Vector3;
+  openToe: THREE.Vector3;
+  closedAmt: number;
+}
+
 function chunkOfPoint(x: number, z: number): number {
   const half = WORLD_SIZE / 2;
   const cx = Math.max(0, Math.min(CHUNKS - 1, Math.floor(((x + half) / WORLD_SIZE) * CHUNKS)));
@@ -188,25 +475,36 @@ export class TrackRenderer {
   group = new THREE.Group();
   readonly stats = { segRebuilds: 0, chunkRebuilds: 0 };
   private crossingGroup = new THREE.Group();
+  private junctionGroup = new THREE.Group();
+  private bladeMesh: THREE.InstancedMesh | null = null;
+  private bladeCap = 0;
+  private blades: BladeDesc[] = [];
+  private bladesDirty = false;
   private lastCrossingVersion = -1;
+  private lastJunctionVersion = -1;
   private segCache = new Map<number, SegCache>();
   private chunkSegs = new Map<number, Set<number>>();
   private chunkMeshes = new Map<number, ChunkMesh>();
   private dirtyChunks = new Set<number>();
   private mats = MATS();
   private frogMat = new THREE.MeshStandardMaterial({ color: 0x2c3033, metalness: 0.85, roughness: 0.4 });
+  private bladeMat = new THREE.MeshStandardMaterial({ color: 0xadb0b4, metalness: 0.92, roughness: 0.28 });
   private sleeperGeo = new THREE.BoxGeometry(2.5, 0.14, 0.26);
   private crossTimberGeo = new THREE.BoxGeometry(3.2, 0.14, 0.28);
   private checkRailGeo = new THREE.BoxGeometry(0.055, 0.14, 4.4);
+  private juncGuardGeo = new THREE.BoxGeometry(0.055, 0.14, 3.6);
   private frogGeo = new THREE.BoxGeometry(0.26, 0.15, 0.52);
+  private juncFrogGeo = new THREE.BoxGeometry(0.22, 0.145, 1.15);
+  private bladeGeo = makeBladeGeo();
   private strutGeo = new THREE.BoxGeometry(0.16, 0.16, 1);
   private tmp = new THREE.Object3D();
+  private tmpTarget = new THREE.Vector3();
 
   constructor(
     scene: THREE.Scene,
     private assets: Assets,
   ) {
-    this.group.add(this.crossingGroup);
+    this.group.add(this.crossingGroup, this.junctionGroup);
     scene.add(this.group);
   }
 
@@ -216,7 +514,9 @@ export class TrackRenderer {
     this.chunkSegs.clear();
     this.dirtyChunks.clear();
     this.clearCrossings();
+    this.clearJunctions();
     this.lastCrossingVersion = -1;
+    this.lastJunctionVersion = -1;
   }
 
   private clearCrossings() {
@@ -224,6 +524,24 @@ export class TrackRenderer {
       this.crossingGroup.remove(child);
       if ((child as THREE.InstancedMesh).isInstancedMesh) (child as THREE.InstancedMesh).dispose();
     }
+  }
+
+  private clearJunctions() {
+    for (const child of [...this.junctionGroup.children]) {
+      this.junctionGroup.remove(child);
+      const mesh = child as THREE.Mesh;
+      if (mesh === this.bladeMesh) {
+        this.bladeMesh.dispose();
+        this.bladeMesh = null;
+        this.bladeCap = 0;
+      } else if ((child as THREE.InstancedMesh).isInstancedMesh) {
+        (child as THREE.InstancedMesh).dispose();
+      } else if (mesh.isMesh) {
+        mesh.geometry.dispose();
+      }
+    }
+    this.blades = [];
+    this.bladesDirty = false;
   }
 
   private removeSegCache(id: number) {
@@ -251,7 +569,7 @@ export class TrackRenderer {
     this.chunkMeshes.delete(cid);
   }
 
-  /** Rebuilds every segment flagged dirty on the network, merging dirty world chunks and crossings. */
+  /** Rebuilds every segment flagged dirty on the network, merging dirty world chunks, crossings and junctions. */
   sync(net: Network, hf: Heightfield) {
     const hadDirty = net.dirty.size > 0;
     for (const id of net.dirty) {
@@ -280,6 +598,75 @@ export class TrackRenderer {
       this.lastCrossingVersion = net.version;
       this.rebuildCrossings(net);
     }
+    if (hadDirty || this.lastJunctionVersion !== net.version) {
+      this.lastJunctionVersion = net.version;
+      this.rebuildJunctions(net, hf);
+    }
+  }
+
+  /** Smoothly animates junction switch blades whenever points are thrown. */
+  update(net: Network, dt: number) {
+    if (!this.blades.length || !this.bladeMesh) return;
+    const reduced = prefersReducedMotion();
+    let moved = false;
+    for (let i = 0; i < this.blades.length; i++) {
+      const b = this.blades[i];
+      const target = net.selected(b.nodeId, b.side) === b.branchSegId ? 1 : 0;
+      if (b.closedAmt !== target) {
+        if (reduced) {
+          b.closedAmt = target;
+        } else {
+          const step = dt * BLADE_THROW_SPEED;
+          if (b.closedAmt < target) b.closedAmt = Math.min(target, b.closedAmt + step);
+          else b.closedAmt = Math.max(target, b.closedAmt - step);
+        }
+        moved = true;
+      }
+    }
+    if (moved || this.bladesDirty) {
+      this.bladesDirty = false;
+      this.flushBlades();
+    }
+  }
+
+  private flushBlades() {
+    const count = this.blades.length;
+    if (count === 0) {
+      if (this.bladeMesh) {
+        this.bladeMesh.count = 0;
+        this.bladeMesh.visible = false;
+      }
+      return;
+    }
+    if (!this.bladeMesh || count > this.bladeCap) {
+      if (this.bladeMesh) {
+        this.junctionGroup.remove(this.bladeMesh);
+        this.bladeMesh.dispose();
+      }
+      let cap = Math.max(16, this.bladeCap || 16);
+      while (cap < count) cap *= 2;
+      this.bladeCap = cap;
+      this.bladeMesh = new THREE.InstancedMesh(this.bladeGeo, this.bladeMat, cap);
+      this.bladeMesh.castShadow = false;
+      this.bladeMesh.receiveShadow = true;
+      this.bladeMesh.frustumCulled = true;
+      this.junctionGroup.add(this.bladeMesh);
+    }
+    this.bladeMesh.visible = true;
+    this.bladeMesh.count = count;
+    const t = this.tmp;
+    for (let i = 0; i < count; i++) {
+      const b = this.blades[i];
+      this.tmpTarget.lerpVectors(b.openToe, b.closedToe, b.closedAmt);
+      t.position.copy(b.heelPos);
+      t.scale.set(1, 1, Math.max(0.5, b.heelPos.distanceTo(this.tmpTarget)));
+      t.lookAt(this.tmpTarget);
+      t.updateMatrix();
+      this.bladeMesh.setMatrixAt(i, t.matrix);
+    }
+    this.bladeMesh.instanceMatrix.needsUpdate = true;
+    this.bladeMesh.computeBoundingBox();
+    this.bladeMesh.computeBoundingSphere();
   }
 
   private rebuildChunk(cid: number) {
@@ -366,6 +753,176 @@ export class TrackRenderer {
     this.chunkMeshes.set(cid, { group, disposables, instanced });
   }
 
+  private rebuildJunctions(net: Network, hf: Heightfield) {
+    this.clearJunctions();
+    const ballastGeos: THREE.BufferGeometry[] = [];
+    const frogMats: THREE.Matrix4[] = [];
+    const guardMats: THREE.Matrix4[] = [];
+    const bearerMats: THREE.Matrix4[] = [];
+    const t = this.tmp;
+
+    for (const node of net.nodes.values()) {
+      for (const side of [1, -1] as Side[]) {
+        const m = computeJunctionMetrics(net, node, side);
+        if (!m) continue;
+        const { branches, sToe, sHeel, sJuncEnd, frogs } = m;
+        const bLeft = branches[0].segId;
+        const bRight = branches[branches.length - 1].segId;
+
+        // Blended single ballast apron from toe to sJuncEnd (skipped if junction sits on a bridge).
+        const onBridge = branches.some((br) => {
+          const seg = net.segs.get(br.segId)!;
+          return hf.isBridgeSample(seg, node.x, node.y, node.z);
+        });
+        if (!onBridge && sJuncEnd > 1) {
+          const steps = Math.max(4, Math.ceil(sJuncEnd / 1.25));
+          const framesL: Frame[] = [];
+          const framesR: Frame[] = [];
+          for (let i = 0; i <= steps; i++) {
+            const s = (i / steps) * sJuncEnd;
+            const pL = sampleBranch(net, node, side, bLeft, s);
+            const pR = sampleBranch(net, node, side, bRight, s);
+            framesL.push({ s, x: pL.x, y: pL.y, z: pL.z, rx: pL.rx, rz: pL.rz });
+            framesR.push({ s, x: pR.x, y: pR.y, z: pR.z, rx: pR.rx, rz: pR.rz });
+          }
+          ballastGeos.push(sweepJunctionBallast(framesL, framesR));
+        }
+
+        // Wide turnout bearers spanning from outer left to outer right rail across the turnout.
+        const count = Math.max(1, Math.floor(sJuncEnd / 0.72));
+        for (let k = 0; k < count; k++) {
+          const s = (k + 0.5) * 0.72;
+          if (s > sJuncEnd) break;
+          const pL = sampleBranch(net, node, side, bLeft, s);
+          const pR = sampleBranch(net, node, side, bRight, s);
+          const span = Math.hypot(pR.x - pL.x, pR.z - pL.z);
+          const bx = pL.tx + pR.tx;
+          const bz = pL.tz + pR.tz;
+          t.position.set((pL.x + pR.x) * 0.5, (pL.y + pR.y) * 0.5 - 0.23, (pL.z + pR.z) * 0.5);
+          t.rotation.set(0, Math.atan2(bx, bz), 0);
+          t.scale.set((span + 2.5) / 2.5, 1, 1);
+          t.updateMatrix();
+          bearerMats.push(t.matrix.clone());
+        }
+
+        // Frog casting and outer guard (check) rails at each rail crossing.
+        for (const f of frogs) {
+          const segL = branches[f.leftIdx].segId;
+          const segR = branches[f.rightIdx].segId;
+          const pL = sampleBranch(net, node, side, segL, f.sFrog);
+          const pR = sampleBranch(net, node, side, segR, f.sFrog);
+          // Frog sits where left branch's right rail (+0.7175) meets right branch's left rail (-0.7175).
+          const fx = (pL.x + pL.rx * GAUGE_HALF + pR.x - pR.rx * GAUGE_HALF) * 0.5;
+          const fy = (pL.y + pR.y) * 0.5 - 0.075;
+          const fz = (pL.z + pL.rz * GAUGE_HALF + pR.z - pR.rz * GAUGE_HALF) * 0.5;
+          const bYaw = Math.atan2(pL.tx + pR.tx, pL.tz + pR.tz);
+          t.position.set(fx, fy, fz);
+          t.rotation.set(0, bYaw, 0);
+          t.scale.set(1, 1, 1);
+          t.updateMatrix();
+          frogMats.push(t.matrix.clone());
+
+          // Guard rail on left branch's outer left rail and right branch's outer right rail.
+          for (const [p, lat] of [
+            [pL, -0.625],
+            [pR, 0.625],
+          ] as const) {
+            t.position.set(p.x + p.rx * lat, p.y - 0.072, p.z + p.rz * lat);
+            t.rotation.set(0, Math.atan2(p.tx, p.tz), 0);
+            t.scale.set(1, 1, 1);
+            t.updateMatrix();
+            guardMats.push(t.matrix.clone());
+          }
+        }
+
+        // Switch blades: each interior rail in [sToe, sHeel] pivots at its heel and throws at its toe.
+        const selected = net.selected(node.id, side);
+        const stockL = sampleBranch(net, node, side, bLeft, sToe);
+        const stockR = sampleBranch(net, node, side, bRight, sToe);
+        for (let k = 0; k < branches.length; k++) {
+          const br = branches[k];
+          const pHeel = sampleBranch(net, node, side, br.segId, sHeel);
+          const closed = selected === br.segId ? 1 : 0;
+          if (k > 0) {
+            // Left inner blade: heel on br's left rail; toe sits against leftmost stock rail when closed.
+            this.blades.push({
+              nodeId: node.id,
+              side,
+              branchSegId: br.segId,
+              heelPos: new THREE.Vector3(pHeel.x - pHeel.rx * GAUGE_HALF, pHeel.y, pHeel.z - pHeel.rz * GAUGE_HALF),
+              closedToe: new THREE.Vector3(
+                stockL.x - stockL.rx * (GAUGE_HALF - 0.045),
+                stockL.y,
+                stockL.z - stockL.rz * (GAUGE_HALF - 0.045),
+              ),
+              openToe: new THREE.Vector3(
+                stockL.x - stockL.rx * (GAUGE_HALF - 0.21),
+                stockL.y,
+                stockL.z - stockL.rz * (GAUGE_HALF - 0.21),
+              ),
+              closedAmt: closed,
+            });
+          }
+          if (k < branches.length - 1) {
+            // Right inner blade: heel on br's right rail; toe sits against rightmost stock rail when closed.
+            this.blades.push({
+              nodeId: node.id,
+              side,
+              branchSegId: br.segId,
+              heelPos: new THREE.Vector3(pHeel.x + pHeel.rx * GAUGE_HALF, pHeel.y, pHeel.z + pHeel.rz * GAUGE_HALF),
+              closedToe: new THREE.Vector3(
+                stockR.x + stockR.rx * (GAUGE_HALF - 0.045),
+                stockR.y,
+                stockR.z + stockR.rz * (GAUGE_HALF - 0.045),
+              ),
+              openToe: new THREE.Vector3(
+                stockR.x + stockR.rx * (GAUGE_HALF - 0.21),
+                stockR.y,
+                stockR.z + stockR.rz * (GAUGE_HALF - 0.21),
+              ),
+              closedAmt: closed,
+            });
+          }
+        }
+      }
+    }
+
+    if (ballastGeos.length) {
+      const merged = mergeList(ballastGeos);
+      for (const g of ballastGeos) g.dispose();
+      if (merged) {
+        merged.computeBoundingBox();
+        merged.computeBoundingSphere();
+        const mesh = new THREE.Mesh(merged, this.mats.ballast);
+        mesh.receiveShadow = true;
+        mesh.castShadow = false;
+        this.junctionGroup.add(mesh);
+      }
+    }
+
+    const emitInst = (
+      geo: THREE.BufferGeometry,
+      mat: THREE.Material,
+      list: THREE.Matrix4[],
+      receiveShadow: boolean,
+    ) => {
+      if (!list.length) return;
+      const inst = new THREE.InstancedMesh(geo, mat, list.length);
+      for (let i = 0; i < list.length; i++) inst.setMatrixAt(i, list[i]);
+      inst.instanceMatrix.needsUpdate = true;
+      inst.receiveShadow = receiveShadow;
+      inst.frustumCulled = true;
+      inst.computeBoundingBox();
+      inst.computeBoundingSphere();
+      this.junctionGroup.add(inst);
+    };
+    emitInst(this.juncFrogGeo, this.frogMat, frogMats, true);
+    emitInst(this.juncGuardGeo, this.mats.rail, guardMats, true);
+    emitInst(this.sleeperGeo, this.mats.sleeper, bearerMats, true);
+    this.bladesDirty = true;
+    this.flushBlades();
+  }
+
   private rebuildCrossings(net: Network) {
     this.clearCrossings();
     const diamonds = net.crossings.filter((c) => Math.abs(c.y1 - c.y2) <= DIAMOND_MAX_DY);
@@ -392,8 +949,8 @@ export class TrackRenderer {
       const bYaw = Math.atan2(bx, bz);
 
       if (Math.abs(denom) > 0.05) {
-        for (const lat1 of [-0.7175, 0.7175]) {
-          for (const lat2 of [-0.7175, 0.7175]) {
+        for (const lat1 of [-GAUGE_HALF, GAUGE_HALF]) {
+          for (const lat2 of [-GAUGE_HALF, GAUGE_HALF]) {
             const u = (lat2 - lat1 * nDot) / denom;
             t.position.set(c.x + lat1 * n1x + u * c.t1x, y - 0.08, c.z + lat1 * n1z + u * c.t1z);
             t.rotation.set(0, bYaw, 0);
@@ -440,11 +997,30 @@ export class TrackRenderer {
     emit(this.crossTimberGeo, this.mats.sleeper, timbers);
   }
 
+  private endJunctionTrim(net: Network, segId: number, nodeId: number, side: Side, atEndB: boolean) {
+    const node = net.nodes.get(nodeId)!;
+    const m = computeJunctionMetrics(net, node, side);
+    if (!m) return { juncTrim: 0, trimLeftRail: 0, trimRightRail: 0 };
+    const idx = m.branches.findIndex((b) => b.segId === segId);
+    if (idx < 0) return { juncTrim: 0, trimLeftRail: 0, trimRightRail: 0 };
+    const trimBranchLeft = idx > 0 ? m.sHeel : 0;
+    const trimBranchRight = idx < m.branches.length - 1 ? m.sHeel : 0;
+    // At end b (leaving b toward a), branch-left corresponds to segment +0.7175 (right of a->b).
+    return {
+      juncTrim: m.sJuncEnd,
+      trimLeftRail: atEndB ? trimBranchRight : trimBranchLeft,
+      trimRightRail: atEndB ? trimBranchLeft : trimBranchRight,
+    };
+  }
+
   private buildSegCache(net: Network, hf: Heightfield, id: number): SegCache {
     const seg = net.segs.get(id)!;
     const g = net.geom.get(id) as SegGeom;
     const mid = Math.floor(g.n / 2);
     const chunk = chunkOfPoint(g.pos[mid * 3], g.pos[mid * 3 + 2]);
+
+    const trimA = this.endJunctionTrim(net, id, seg.a, seg.sa, false);
+    const trimB = this.endJunctionTrim(net, id, seg.b, seg.sb, true);
 
     const stride = g.minRadius > 400 ? 2 : 1;
     const frames: Frame[] = [];
@@ -460,7 +1036,7 @@ export class TrackRenderer {
       const x = g.pos[i * 3];
       const y = g.pos[i * 3 + 1];
       const z = g.pos[i * 3 + 2];
-      frames.push({ x, y, z, rx: -tz / l, rz: tx / l });
+      frames.push({ s: i * g.step, x, y, z, rx: -tz / l, rz: tx / l });
       bridge.push(hf.isBridgeSample(seg, x, y, z));
       water.push(hf.baseAt(x, z) < WATER_LEVEL + 1.2);
     }
@@ -491,6 +1067,9 @@ export class TrackRenderer {
     const abutments: { f: Frame; flip: boolean }[] = [];
     const struts: [THREE.Vector3, THREE.Vector3][] = [];
 
+    const bStart = trimA.juncTrim;
+    const bEnd = g.length - trimB.juncTrim;
+
     let i = 0;
     while (i < frames.length) {
       let j = i;
@@ -500,7 +1079,11 @@ export class TrackRenderer {
       const run = frames.slice(i, end + 1);
       if (run.length >= 2) {
         if (!bridge[i]) {
-          ballastGeos.push(sweep(run, BALLAST));
+          const trimmed =
+            bStart > 0 || trimB.juncTrim > 0
+              ? sliceFrames(run, Math.max(run[0].s, bStart), Math.min(run[run.length - 1].s, bEnd))
+              : run;
+          if (trimmed.length >= 2) ballastGeos.push(sweep(trimmed, BALLAST));
         } else {
           deckGeos.push(sweep(run, DECK));
           const overWater = water.slice(i, end + 1).filter(Boolean).length > run.length * 0.2;
@@ -540,16 +1123,31 @@ export class TrackRenderer {
     const ballast = collapse(ballastGeos, sinkBallast);
     const deck = collapse(deckGeos);
     const girder = collapse(girderGeos);
-    const rail = collapse([
-      sweep(
-        frames,
-        RAIL.map(([a, b]) => [a - 0.7175, b]),
-      ),
-      sweep(
-        frames,
-        RAIL.map(([a, b]) => [a + 0.7175, b]),
-      ),
-    ]);
+
+    const leftFrames =
+      trimA.trimLeftRail > 0 || trimB.trimLeftRail > 0
+        ? sliceFrames(frames, trimA.trimLeftRail, g.length - trimB.trimLeftRail)
+        : frames;
+    const rightFrames =
+      trimA.trimRightRail > 0 || trimB.trimRightRail > 0
+        ? sliceFrames(frames, trimA.trimRightRail, g.length - trimB.trimRightRail)
+        : frames;
+    const railParts: THREE.BufferGeometry[] = [];
+    if (leftFrames.length >= 2)
+      railParts.push(
+        sweep(
+          leftFrames,
+          RAIL.map(([a, b]) => [a - GAUGE_HALF, b]),
+        ),
+      );
+    if (rightFrames.length >= 2)
+      railParts.push(
+        sweep(
+          rightFrames,
+          RAIL.map(([a, b]) => [a + GAUGE_HALF, b]),
+        ),
+      );
+    const rail = collapse(railParts);
 
     const t = this.tmp;
     const sleepers: THREE.Matrix4[] = [];
@@ -557,6 +1155,7 @@ export class TrackRenderer {
     const count = Math.max(1, Math.floor(g.length / spacing));
     for (let k = 0; k < count; k++) {
       const sAlong = (k + 0.5) * spacing;
+      if (sAlong < trimA.juncTrim || sAlong > g.length - trimB.juncTrim) continue;
       if (crossings.some((c) => Math.abs(sAlong - (c.seg1 === id ? c.s1 : c.s2)) < 2.2)) continue;
       const p = net.sample(id, sAlong);
       t.position.set(p.x, p.y - 0.23, p.z);

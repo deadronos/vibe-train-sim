@@ -18,6 +18,9 @@ const MODE_ORDER: CamMode[] = ['chase', 'cab', 'trackside', 'cinematic', 'free']
 export const DEFAULT_FOV = 58;
 export const CAB_FOV_MIN = 28;
 export const CAB_FOV_MAX = 85;
+export const CAB_YAW_MAX = 1.75;
+export const CAB_PITCH_MIN = -0.65;
+export const CAB_PITCH_MAX = 0.5;
 const TRANSITION_SEC = 0.45;
 
 export function clampCabFov(fov: number): number {
@@ -69,6 +72,12 @@ export class CameraRig {
   private goalQuat = new THREE.Quaternion();
   private lookMat = new THREE.Matrix4();
   private scratchDir = new THREE.Vector3();
+  private cabLatSmooth = 0;
+
+  /** True once the camera is inside or nearly inside cab view (for showing the cab interior shell). */
+  get cabInteriorActive(): boolean {
+    return this.mode === 'cab' && this.transT >= 0.55;
+  }
 
   constructor(
     private camera: THREE.PerspectiveCamera,
@@ -90,8 +99,8 @@ export class CameraRig {
       this.lastX = e.clientX;
       this.lastY = e.clientY;
       if (this.mode === 'cab') {
-        this.cabYaw -= dx;
-        this.cabPitch = Math.max(-0.7, Math.min(0.6, this.cabPitch - dy));
+        this.cabYaw = Math.max(-CAB_YAW_MAX, Math.min(CAB_YAW_MAX, this.cabYaw - dx));
+        this.cabPitch = Math.max(CAB_PITCH_MIN, Math.min(CAB_PITCH_MAX, this.cabPitch - dy));
       } else if (this.mode === 'free') {
         this.freeYaw -= dx;
         this.freePitch = Math.max(-1.45, Math.min(1.45, this.freePitch - dy));
@@ -245,7 +254,30 @@ export class CameraRig {
 
     if (this.mode === 'cab') {
       // Sits at the front of the leading vehicle, clear of its nose, whichever vehicle leads.
-      this.goalPos.set(head.x + fx * 0.3, head.y + 3.05, head.z + fz * 0.3);
+      let latOff = 0;
+      let bobOff = 0;
+      if (!reduced && t.speed > 0.2) {
+        const back = sim.drawn(t, 12);
+        const bx = back.tx * back.dir;
+        const bz = back.tz * back.dir;
+        const turn = bx * fz - bz * fx;
+        const speedNorm = Math.min(1, t.speed / 30);
+        const drawnOdom = t.odometer - t.speed * sim.drawnLag;
+        const targetLat =
+          Math.max(-0.04, Math.min(0.04, -turn * t.speed * t.speed * 0.0012)) +
+          Math.sin(drawnOdom * 0.38) * 0.014 * speedNorm;
+        this.cabLatSmooth += (targetLat - this.cabLatSmooth) * Math.min(1, dt * 8);
+        latOff = this.cabLatSmooth;
+        const jointPhase = Math.max(0, drawnOdom) % 18;
+        const jointBob =
+          jointPhase < 2.2 ? -0.02 * Math.exp(-jointPhase * 2.4) * Math.sin(jointPhase * 6.5) * speedNorm : 0;
+        bobOff = jointBob + Math.sin(drawnOdom * 1.9) * 0.004 * speedNorm;
+      } else {
+        this.cabLatSmooth = 0;
+      }
+      const rx = -fz;
+      const rz = fx;
+      this.goalPos.set(head.x + fx * 0.3 + rx * latOff, head.y + 3.05 + bobOff, head.z + fz * 0.3 + rz * latOff);
       const l = Math.hypot(fx, fz) || 1;
       const a = Math.atan2(fx / l, fz / l) + this.cabYaw;
       this.lookTarget.set(
@@ -328,6 +360,11 @@ export class CameraRig {
     this.lookMat.lookAt(this.goalPos, this.lookTarget, cam.up);
     this.goalQuat.setFromRotationMatrix(this.lookMat);
     const targetFov = this.mode === 'cab' ? this.cabFov : DEFAULT_FOV;
+    const targetNear = this.mode === 'cab' ? 0.3 : 0.8;
+    if (cam.near !== targetNear) {
+      cam.near = targetNear;
+      cam.updateProjectionMatrix();
+    }
     if (this.transT < 1) {
       this.transT = Math.min(1, this.transT + dt / this.transDuration);
       const e = 1 - (1 - this.transT) ** 3;

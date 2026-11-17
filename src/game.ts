@@ -6,6 +6,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 
 import type { SoundSettings } from './audio';
+import type { TrainAudioInput } from './audio';
 import { SimAudio } from './audio';
 import { DriverInput } from './driverInput';
 import { Editor } from './editor/editor';
@@ -49,14 +50,17 @@ export interface Timetable {
   arrivals: (number | null)[];
   turns: boolean[];
 }
-import { Sim } from './rail/sim';
+import { collectJunctionDists, GAP, Sim, tractiveLoad } from './rail/sim';
+import { VEHICLES } from './rail/vehicles';
 import { Assets } from './render/assets';
-import { CameraRig } from './render/cameraRig';
+import { CameraRig, prefersReducedMotion } from './render/cameraRig';
 import { Environment } from './render/environment';
+import { ParticleRenderer } from './render/particles';
 import { PropsRenderer } from './render/props';
 import { ScatterRenderer } from './render/scatter';
 import { TerrainRenderer } from './render/terrain';
 import { TrackRenderer } from './render/track';
+import type { TrainRenderOpts } from './render/trains';
 import { TrainRenderer } from './render/trains';
 import type { SaveData } from './saveData';
 import { parseSave } from './saveData';
@@ -92,6 +96,7 @@ export class Game {
   props!: PropsRenderer;
   scatter!: ScatterRenderer;
   trainsR!: TrainRenderer;
+  particles!: ParticleRenderer;
   rig: CameraRig;
   editor!: Editor;
   hud!: Hud;
@@ -121,6 +126,21 @@ export class Game {
   fps = 60;
   private focus = new THREE.Vector3();
   private tmpAudioFocus = new THREE.Vector3();
+  private tmpJunctionDists: number[] = [];
+  private tmpBogieOffsets: number[] = [];
+  private tmpTrainOpts: TrainRenderOpts = {};
+  private tmpAudioInput: TrainAudioInput = {
+    speed: 0,
+    throttle: 0,
+    powerLoad: 0,
+    airBrake: 0,
+    brakeDemand: 0,
+    dynamic: 0,
+    emergency: false,
+    minRadius: Infinity,
+    onBridge: false,
+    nearby: 0,
+  };
 
   constructor() {
     this.audio.settings = readSound();
@@ -169,6 +189,7 @@ export class Game {
     this.track = new TrackRenderer(this.scene, this.assets);
     this.props = new PropsRenderer(this.scene, this.assets);
     this.scatter = new ScatterRenderer(this.scene, this.assets);
+    this.particles = new ParticleRenderer(this.scene);
     this.applyQuality(false);
     this.trainsR = new TrainRenderer(this.scene, this.assets);
 
@@ -229,12 +250,27 @@ export class Game {
       if ((e.kind === 'protection' || (e.kind === 'spad' && this.sim.strict)) && e.train === this.driven?.id) {
         this.audio.playTrip();
       }
+      if (e.kind === 'collision' || e.kind === 'buffer' || e.kind === 'damage') {
+        const tr = this.sim.trains.find((x) => x.id === e.train);
+        if (tr) {
+          const h = this.sim.head(tr);
+          const d = this.camera.position.distanceTo(this.tmpAudioFocus.set(h.x, h.y, h.z));
+          const nearby = Math.max(0, 1 - d / 500);
+          const spd = Math.max(8, tr.speed);
+          this.particles.emitBurst(h.x, h.y, h.z, spd, this.env.night);
+          if (!this.editing && this.trainSpeed > 0 && nearby > 0.01) {
+            this.audio.playImpact(e.kind === 'buffer' ? 'buffer' : 'collision', spd, nearby);
+          }
+        }
+      }
       this.hud.onSimEvent(e);
     };
     if (!this.terrain) this.terrain = new TerrainRenderer(this.scene, hf);
     else this.terrain.setField(hf);
     this.track.clear();
     this.trainsR.clear();
+    this.particles.clear();
+    this.audio.resetTrainTracking(0, 0, 0);
     this.scatter.placed = placed;
     this.scatter.exclusions = exclusions;
     net.dirty = new Set(net.segs.keys());
@@ -426,6 +462,7 @@ export class Game {
     const densityChanged = density !== this.appliedSceneryDensity;
     this.appliedSceneryDensity = density;
     this.scatter?.setDensity(density);
+    this.particles?.setEnabled(!low);
     if (rebuildScenery && densityChanged && this.hf) this.scatter.rebuild(this.hf, this.net);
     this.resize();
   }
@@ -479,6 +516,7 @@ export class Game {
     for (const t of sim.trains) t.duty = duties.get(t.id) ?? null;
     this.driven = driven;
     this.track.clear();
+    this.particles.clear();
     net.dirty = new Set(net.segs.keys());
     this.scatter.placed = [...d.placed];
     this.scatter.exclusions = [...(d.exclusions ?? [])];
@@ -669,6 +707,7 @@ export class Game {
     }
     this.driven = t;
     this.input.lever = 0;
+    if (t) this.audio.resetTrainTracking(t.speed, t.airBrake, t.odometer);
     if (changed && !this.editing && this.rig.mode !== 'free') this.rig.beginTransition();
     this.hud?.syncTrains();
   }
@@ -774,8 +813,9 @@ export class Game {
 
     if (!this.editing && this.trainSpeed > 0) this.driveInput(dt);
     this.sim.clock = this.env.hours * 3600;
-    if (!this.editing || this.editor.runTrains) {
-      this.sim.update(dt * this.trainSpeed);
+    const simDt = !this.editing || this.editor.runTrains ? dt * this.trainSpeed : 0;
+    if (simDt > 0) {
+      this.sim.update(simDt);
     } else {
       this.interlockTimer += dt;
       if (this.interlockTimer > 0.3) {
@@ -786,12 +826,12 @@ export class Game {
 
     this.terrain.sync();
     this.track.sync(this.net, this.hf);
+    this.track.update(this.net, dt);
     this.props.sync(this.net);
     if (this.scatterTimer > 0) {
       this.scatterTimer -= dt;
       if (this.scatterTimer <= 0) this.scatter.sync(this.hf, this.net);
     }
-    this.trainsR.sync(this.sim);
 
     if (this.editing) {
       this.editor.update(dt);
@@ -800,13 +840,21 @@ export class Game {
       this.rig.update(this.sim, this.driven, this.hf, dt);
       this.focus.copy(this.rig.focus);
     }
+    this.tmpTrainOpts.cameraPos = this.camera.position;
+    this.tmpTrainOpts.driven = this.driven;
+    this.tmpTrainOpts.cabActive = !this.editing && this.rig.cabInteriorActive;
+    this.tmpTrainOpts.cabLever = this.input.lever;
+    this.tmpTrainOpts.night = this.env.night;
+    this.tmpTrainOpts.reducedMotion = prefersReducedMotion();
+    this.trainsR.sync(this.sim, this.tmpTrainOpts);
     this.env.update(dt, this.focus, this.trainSpeed);
     const shadowFrustum = this.env.sun.castShadow && this.renderer.shadowMap.enabled ? this.env.shadowFrustum : null;
     this.terrain.updateLOD(this.camera.position, shadowFrustum);
     this.scatter.updateLOD(this.camera.position, shadowFrustum, this.focus);
     this.assets.setNight(this.env.night);
     this.props.update(this.sim, this.camera, this.env.night);
-    this.trainsR.updateHeadlight(this.sim, this.driven, this.env.night);
+    this.trainsR.updateHeadlight(this.sim, this.driven, this.env.night, this.camera.position);
+    this.particles.update(this.sim, this.hf, dt, simDt, this.env.night);
     this.terrain.update(this.elapsed);
 
     const t = this.driven;
@@ -814,10 +862,48 @@ export class Game {
       const h = this.sim.head(t);
       const d = this.camera.position.distanceTo(this.tmpAudioFocus.set(h.x, h.y, h.z));
       const quiet = this.editing || this.trainSpeed === 0;
-      this.audio.update(dt, t.speed, t.throttle, quiet ? 0 : Math.max(0.05, 1 - d / 500));
+      const nearby = quiet ? 0 : Math.max(0.05, 1 - d / 500);
+      let minRadius = Infinity;
+      for (let i = 0; i < t.trail.length; i++) {
+        const g = this.net.geom.get(t.trail[i].seg);
+        if (g && g.minRadius < minRadius) minRadius = g.minRadius;
+      }
+      const headSeg = this.net.segs.get(h.seg);
+      const onBridge = headSeg ? this.hf.isBridgeSample(headSeg, h.x, h.y, h.z) : false;
+      collectJunctionDists(this.net, t, this.tmpJunctionDists);
+      this.tmpBogieOffsets.length = 0;
+      let off = 0;
+      for (let i = 0; i < t.cars.length; i++) {
+        const len = VEHICLES[t.cars[i].type].length;
+        this.tmpBogieOffsets.push(off + len * 0.18, off + len * 0.82);
+        off += len + GAP;
+      }
+      this.tmpAudioInput.speed = t.speed;
+      this.tmpAudioInput.throttle = t.throttle;
+      this.tmpAudioInput.powerLoad = tractiveLoad(t);
+      this.tmpAudioInput.airBrake = t.airBrake;
+      this.tmpAudioInput.brakeDemand = t.emergency ? 1.5 : t.brake;
+      this.tmpAudioInput.dynamic = t.dynamic;
+      this.tmpAudioInput.emergency = t.emergency;
+      this.tmpAudioInput.minRadius = minRadius;
+      this.tmpAudioInput.onBridge = onBridge;
+      this.tmpAudioInput.nearby = nearby;
+      this.audio.update(this.tmpAudioInput, t.odometer, this.tmpJunctionDists, this.tmpBogieOffsets);
       this.audio.updateWarning(dt, !quiet && !t.ai && !!t.warning && !t.warning.acknowledged);
     } else {
-      this.audio.update(dt, 0, 0, 0);
+      this.tmpAudioInput.speed = 0;
+      this.tmpAudioInput.throttle = 0;
+      this.tmpAudioInput.powerLoad = 0;
+      this.tmpAudioInput.airBrake = 0;
+      this.tmpAudioInput.brakeDemand = 0;
+      this.tmpAudioInput.dynamic = 0;
+      this.tmpAudioInput.emergency = false;
+      this.tmpAudioInput.minRadius = Infinity;
+      this.tmpAudioInput.onBridge = false;
+      this.tmpAudioInput.nearby = 0;
+      this.tmpJunctionDists.length = 0;
+      this.tmpBogieOffsets.length = 0;
+      this.audio.update(this.tmpAudioInput, 0, this.tmpJunctionDists, this.tmpBogieOffsets);
       this.audio.updateWarning(dt, false);
     }
     this.hud.update();
