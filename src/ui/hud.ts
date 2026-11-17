@@ -1,19 +1,20 @@
-import type { BrushMode, Tool } from '../editor/editor';
+import type { Tool } from '../editor/editor';
 // HTML interface: mode lever, clock, train register, driver's desk and the editor's lever frame.
 import type { Game } from '../game';
 import type { MapEntry } from '../mapLibrary';
 import type { Quality, Rules } from '../persistence';
 import type { Duty } from '../rail/duty';
 import { clock } from '../rail/duty';
-import type { Network, Side, SignalType } from '../rail/network';
-import { LINE_VMAX, signalType } from '../rail/network';
+import type { Network } from '../rail/network';
+import { LINE_VMAX } from '../rail/network';
 import type { DeskInfo, SimEvent, Train, TrainStatus } from '../rail/sim';
 import { clockText } from '../rail/sim';
 import { CAM_LABEL } from '../render/cameraRig';
 import type { Preset } from '../world/heightfield';
-import type { SceneryType } from '../world/scenery';
 import { Guide } from './guide';
 import { OverviewMap } from './overviewMap';
+import { buttonRow } from './panels/controls';
+import { PANELS, type EditorPanel } from './panels/index';
 import { PerfOverlay } from './perfOverlay';
 import { ServiceDiagram } from './serviceDiagram';
 import { TimetableDialog } from './timetableDialog';
@@ -39,17 +40,6 @@ const LEVERS: { tool: Tool; label: string; color: string }[] = [
   { tool: 'train', label: 'Train', color: '#7a3b7a' },
   { tool: 'delete', label: 'Remove', color: '#8d8f92' },
 ];
-
-const SCENERY_LABEL: Record<SceneryType, string> = {
-  tree_pine: 'Pine tree',
-  tree_oak: 'Oak tree',
-  tree_birch: 'Birch tree',
-  rock_a: 'Small rock',
-  rock_b: 'Large rock',
-  house_a: 'Cottage',
-  house_b: 'Long house',
-  house_c: 'Town house',
-};
 
 function polar(angleDeg: number, r: number) {
   const a = ((angleDeg - 90) * Math.PI) / 180;
@@ -99,6 +89,9 @@ export class Hud {
   perf!: PerfOverlay;
   timetable!: TimetableDialog;
   private lamps: HTMLElement[] | null = null;
+  private panel: EditorPanel | null = null;
+  private panelTool: Tool | null = null;
+  private panelKey = '';
   guide!: Guide;
 
   constructor(private game: Game) {}
@@ -459,94 +452,21 @@ export class Hud {
       if (document.activeElement?.parentElement !== b.parentElement) b.tabIndex = b.dataset.tool === ed.tool ? 0 : -1;
     });
     const p = $('tool-panel');
-    p.innerHTML = '';
-    switch (ed.tool) {
-      case 'select':
-        this.panelSelect(p);
-        break;
-      case 'track':
-        p.innerHTML = `<h2>Lay track</h2><p>Click to start, then click again to lay a section. Start on a track to branch into a junction, or finish on one to join it.</p>
-          <label><span>Height above ground: <output id="height-val"></output> m</span><input id="height" type="range" min="-30" max="60" step="1" /></label>
-          <p>High sections become bridges automatically. Low sections cut through the ground.</p>
-          <label class="check"><input id="snap" type="checkbox" /> Snap new lines to 15° steps (Shift)</label>
-          <div class="row"><button id="stop-laying">Stop laying (Esc)</button></div>`;
-        {
-          const snap = $<HTMLInputElement>('snap');
-          snap.checked = ed.snap;
-          snap.onchange = () => (ed.snap = snap.checked);
-          $('stop-laying').onclick = () => ed.cancel();
-          const hv = $<HTMLOutputElement>('height-val');
-          const h = $<HTMLInputElement>('height');
-          h.value = String(ed.heightOffset);
-          hv.textContent = String(ed.heightOffset);
-          h.oninput = () => {
-            ed.heightOffset = Number(h.value);
-            hv.textContent = h.value;
-          };
-        }
-        break;
-      case 'signal': {
-        const sigTypes: { type: SignalType; label: string }[] = [
-          { type: 'main', label: 'Main' },
-          { type: 'distant', label: 'Distant' },
-          { type: 'shunt', label: 'Calling-on' },
-        ];
-        p.innerHTML = `<h2>Signals</h2><div class="row" id="signal-types">${sigTypes
-          .map((s) => `<button data-sig="${s.type}" aria-pressed="${s.type === ed.signalType}">${s.label}</button>`)
-          .join('')}</div>
-          <p>Click beside a track to place or switch type; click again with the same type to remove.</p>
-          <p>Main stops at red and shows junction routes; distant repeats the next main signal; calling-on admits trains into occupied track at 25 km/h.</p>`;
-        p.querySelectorAll<HTMLButtonElement>('#signal-types button').forEach((b) => {
-          b.onclick = () => {
-            ed.signalType = b.dataset.sig as SignalType;
-            this.syncEditor();
-          };
-        });
-        break;
-      }
-      case 'station':
-        p.innerHTML = `<h2>Stations</h2><p>Click beside a track to build a platform on that side. Trains stop here on their timetable.</p>`;
-        break;
-      case 'bridge':
-        p.innerHTML = `<h2>Bridges</h2><p>Click a section of track to switch between automatic, always a bridge, and always an embankment.</p><p>Spans over water get a steel truss.</p>`;
-        break;
-      case 'terrain':
-        this.panelTerrain(p);
-        break;
-      case 'scenery':
-        p.innerHTML = `<h2>Scenery</h2><label>Place<select id="scenery-type">${Object.entries(SCENERY_LABEL)
-          .map(([k, v]) => `<option value="${k}">${v}</option>`)
-          .join('')}</select></label><p>Click the ground to place one.</p>`;
-        {
-          const s = $<HTMLSelectElement>('scenery-type');
-          s.value = ed.sceneryType;
-          s.onchange = () => (ed.sceneryType = s.value as SceneryType);
-        }
-        break;
-      case 'train':
-        p.innerHTML = `<h2>Add a train</h2><label>Type<select id="train-kind"><option value="passenger">Express: 3 coaches, 2 locomotives</option><option value="shuttle">Local: 2 coaches</option><option value="freight">Freight: 5 loaded wagons</option><option value="emptyFreight">Empties: 5 empty wagons</option></select></label><p>Click a track to place it. New trains call at every station.</p>
-          <label class="check"><input id="run-trains" type="checkbox" /> Keep trains moving while editing</label>
-          <div class="row"><button id="btn-tt-edit">Edit timetables</button></div>`;
-        {
-          const k = $<HTMLSelectElement>('train-kind');
-          k.value = ed.trainKind;
-          k.onchange = () => (ed.trainKind = k.value as typeof ed.trainKind);
-          $('btn-tt-edit').onclick = () => this.timetable.open(g.sim.trains.at(-1) ?? null);
-          const r = $<HTMLInputElement>('run-trains');
-          r.checked = ed.runTrains;
-          r.onchange = () => (ed.runTrains = r.checked);
-        }
-        break;
-      case 'delete':
-        p.innerHTML = `<h2>Remove</h2><p>Click a train, signal, station, placed scenery or section of track to remove it.</p>`;
-        break;
+    if (this.panel && this.panelTool === ed.tool && this.panel.key() === this.panelKey) {
+      this.panel.update();
+    } else {
+      p.innerHTML = '';
+      const body = document.createElement('div');
+      p.appendChild(body);
+      this.panel = PANELS[ed.tool](body, g, () => this.syncEditor());
+      this.panelTool = ed.tool;
+      this.panelKey = this.panel.key();
+      const undoRow = buttonRow([
+        { id: 'btn-undo', label: 'Undo', onClick: () => g.undo() },
+        { id: 'btn-redo', label: 'Redo', onClick: () => g.redo() },
+      ]);
+      p.appendChild(undoRow.root);
     }
-    const undoRow = document.createElement('div');
-    undoRow.className = 'row';
-    undoRow.innerHTML = `<button id="btn-undo">Undo</button><button id="btn-redo">Redo</button>`;
-    p.appendChild(undoRow);
-    $('btn-undo').onclick = () => g.undo();
-    $('btn-redo').onclick = () => g.redo();
     this.syncUndo();
   }
 
@@ -555,176 +475,6 @@ export class Hud {
     const redo = document.getElementById('btn-redo') as HTMLButtonElement | null;
     if (undo) undo.disabled = !this.game.history.canUndo;
     if (redo) redo.disabled = !this.game.history.canRedo;
-  }
-
-  private panelTerrain(p: HTMLElement) {
-    const ed = this.game.editor;
-    const labels: Record<BrushMode, string> = { raise: 'Raise', lower: 'Lower', smooth: 'Smooth', flatten: 'Flatten' };
-    p.innerHTML = `<h2>Shape terrain</h2><div class="row" id="brush-modes">${(Object.keys(labels) as BrushMode[])
-      .map((m) => `<button data-mode="${m}" aria-pressed="${m === ed.brushMode}">${labels[m]}</button>`)
-      .join('')}</div>
-      <label>Brush size<input id="brush-size" type="range" min="15" max="220" /></label>
-      <label>Strength<input id="brush-str" type="range" min="0.1" max="2" step="0.05" /></label>
-      <p>Lower the ground below the waterline to make lakes and rivers.</p>`;
-    p.querySelectorAll<HTMLButtonElement>('#brush-modes button').forEach((b) => {
-      b.onclick = () => {
-        ed.brushMode = b.dataset.mode as BrushMode;
-        this.syncEditor();
-      };
-    });
-    const size = $<HTMLInputElement>('brush-size');
-    size.value = String(ed.brushRadius);
-    size.oninput = () => (ed.brushRadius = Number(size.value));
-    const str = $<HTMLInputElement>('brush-str');
-    str.value = String(ed.brushStrength);
-    str.oninput = () => (ed.brushStrength = Number(str.value));
-  }
-
-  private panelSelect(p: HTMLElement) {
-    const g = this.game;
-    const ed = g.editor;
-    const n = ed.selected !== null ? g.net.nodes.get(ed.selected) : null;
-    if (!n) {
-      p.innerHTML = `<h2>Select</h2><p>Click a point on the track to change it. Drag a point to move it. Drag the ground to move the view.</p>`;
-      return;
-    }
-    const station = g.net.stationAt(n.id);
-    const rows: string[] = [
-      `<h2>Track point</h2>`,
-      `<label><span>Rail height: <output id="sel-y">${n.y.toFixed(1)}</output> m</span><input id="sel-h" type="range" min="-5" max="160" step="0.5" value="${n.y}" /></label>`,
-    ];
-    rows.push(
-      `<div class="row"><button data-turn="5">Turn 5° left</button><button data-turn="-5">Turn 5° right</button></div>`,
-    );
-    if (station) {
-      rows.push(`<label>Station name<input id="sel-name" type="text" maxlength="24" /></label>`);
-      rows.push(
-        `<label><span>Platform length: <output id="sel-len">${station.length}</output> m</span><input id="sel-len-in" type="range" min="60" max="300" step="10" value="${station.length}" /></label>`,
-      );
-    }
-    for (const side of [1, -1] as Side[]) {
-      const attached = g.net.attached(n.id, side);
-      const count = attached.length;
-      const label = side === 1 ? 'Forward' : 'Backward';
-      if (count > 1)
-        rows.push(`<div class="row"><button data-throw="${side}">Throw ${label.toLowerCase()} points</button></div>`);
-      if (count === 1) {
-        const seg = g.net.segs.get(attached[0]);
-        if (seg) {
-          const cur = seg.speedLimit !== undefined ? Math.round(seg.speedLimit * 3.6) : 0;
-          const opts = [0, 30, 50, 70, 90, 120]
-            .map(
-              (v) => `<option value="${v}"${cur === v ? ' selected' : ''}>${v ? `${v} km/h` : 'Auto (curve)'}</option>`,
-            )
-            .join('');
-          rows.push(`<label>${label} speed limit<select data-seg-limit="${seg.id}">${opts}</select></label>`);
-        }
-      }
-      const sig = n.signals[side];
-      if (sig) {
-        const st = signalType(sig);
-        rows.push(
-          `<label>${label} signal type<select data-sig-type="${side}"><option value="main"${st === 'main' ? ' selected' : ''}>Main (3-aspect)</option><option value="distant"${st === 'distant' ? ' selected' : ''}>Distant repeater</option><option value="shunt"${st === 'shunt' ? ' selected' : ''}>Calling-on / shunt</option></select></label>`,
-        );
-        const holdLabel =
-          st === 'distant'
-            ? `Hold the ${label.toLowerCase()} distant at caution`
-            : `Hold the ${label.toLowerCase()} signal at red`;
-        rows.push(
-          `<label class="check"><input type="checkbox" data-hold="${side}" ${sig.hold ? 'checked' : ''}/> ${holdLabel}</label>`,
-        );
-      }
-    }
-    rows.push(`<div class="row"><button id="sel-del">Remove point</button></div>`);
-    p.innerHTML = rows.join('');
-    const h = $<HTMLInputElement>('sel-h');
-    const y = $<HTMLOutputElement>('sel-y');
-    let undoPushed = false;
-    h.oninput = () => {
-      if (!undoPushed) {
-        g.pushUndo();
-        undoPushed = true;
-      }
-      g.net.moveNode(n.id, n.x, Number(h.value), n.z);
-      y.textContent = Number(h.value).toFixed(1);
-      g.commitEdit();
-      ed.status = g.net.problemAt(n.id) ?? '';
-    };
-    h.onchange = () => {
-      undoPushed = false;
-      ed.refuseIfBroken(n.id, 'Height change');
-    };
-    p.querySelectorAll<HTMLButtonElement>('[data-turn]').forEach((b) => {
-      b.onclick = () => ed.turnSelected(Number(b.dataset.turn));
-    });
-    if (station) {
-      const name = $<HTMLInputElement>('sel-name');
-      name.value = station.name;
-      // Typing a name is one undo step, not one per key.
-      let renamePushed = false;
-      name.onfocus = () => (renamePushed = false);
-      name.oninput = () => {
-        if (!renamePushed) {
-          g.pushUndo();
-          renamePushed = true;
-        }
-        station.name = name.value || station.name;
-        g.net.version++;
-      };
-      const len = $<HTMLInputElement>('sel-len-in');
-      let lenPushed = false;
-      len.oninput = () => {
-        if (!lenPushed) {
-          g.pushUndo();
-          lenPushed = true;
-        }
-        station.length = Number(len.value);
-        $('sel-len').textContent = len.value;
-        g.net.version++;
-      };
-      len.onchange = () => (lenPushed = false);
-    }
-    p.querySelectorAll<HTMLButtonElement>('[data-throw]').forEach((b) => {
-      b.onclick = () => {
-        g.pushUndo();
-        g.net.throwSwitch(n.id, Number(b.dataset.throw) as Side);
-        g.sim.interlock();
-        this.toast('Points thrown');
-      };
-    });
-    p.querySelectorAll<HTMLSelectElement>('[data-seg-limit]').forEach((sel) => {
-      sel.onchange = () => {
-        const seg = g.net.segs.get(Number(sel.dataset.segLimit));
-        if (!seg) return;
-        g.pushUndo();
-        const kmh = Number(sel.value);
-        seg.speedLimit = kmh > 0 ? kmh / 3.6 : undefined;
-        g.net.rebuild(seg.id);
-        g.net.version++;
-        g.commitEdit();
-        this.toast(kmh > 0 ? `Speed limit set to ${kmh} km/h` : 'Speed limit set to automatic');
-      };
-    });
-    p.querySelectorAll<HTMLSelectElement>('[data-sig-type]').forEach((sel) => {
-      sel.onchange = () => {
-        const side = Number(sel.dataset.sigType) as Side;
-        const sig = n.signals[side];
-        if (!sig) return;
-        g.pushUndo();
-        sig.type = sel.value as SignalType;
-        g.net.version++;
-        g.commitEdit();
-        this.syncEditor();
-      };
-    });
-    p.querySelectorAll<HTMLInputElement>('[data-hold]').forEach((c) => {
-      c.onchange = () => {
-        g.pushUndo();
-        n.signals[Number(c.dataset.hold)]!.hold = c.checked;
-        g.net.version++;
-      };
-    });
-    $('sel-del').onclick = () => ed.deleteSelected();
   }
 
   toast(text: string, warn = false) {

@@ -4,14 +4,14 @@
 
 Dependencies point downward only.
 
-| Layer      | Path                                   | Responsibility                                                  |
-| ---------- | -------------------------------------- | --------------------------------------------------------------- |
-| Interface  | `src/ui/`                              | HTML interface; reads game state and calls `Game` methods       |
-| Editor     | `src/editor/`                          | Turns pointer input into map edits                              |
-| Game       | `src/game.ts`                          | Owns the world, frame loop and modes, and coordinates the rest  |
-| Audio      | `src/audio.ts`                         | Web Audio synthesis; driven by `Game`, `DriverInput` and `Hud`  |
-| Rendering  | `src/render/`                          | Draws simulation and terrain state with Three.js                |
-| Simulation | `src/rail/`, `src/world/`, `src/core/` | Rail model, trains, heights, scenery data and noise (no DOM/GL) |
+| Layer      | Path                                   | Responsibility                                                                                       |
+| ---------- | -------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Interface  | `src/ui/`, `src/ui/panels/`            | HTML interface and per-tool panels; read game state and call `Game` methods                          |
+| Editor     | `src/editor/`, `src/editor/tools/`     | Turns pointer input into map edits via `EditorTool` modules and a narrow `EditorHost` view of `Game` |
+| Game       | `src/game.ts`                          | Owns the world, frame loop and modes, and coordinates the rest                                       |
+| Audio      | `src/audio.ts`                         | Web Audio synthesis; driven by `Game`, `DriverInput` and `Hud`                                       |
+| Rendering  | `src/render/`                          | Draws simulation and terrain state with Three.js                                                     |
+| Simulation | `src/rail/`, `src/world/`, `src/core/` | Rail model, trains, heights, scenery data and noise (no DOM/GL)                                      |
 
 `src/main.ts` is the entry point and the only module that runs anything on import. Next to `Game`, and needing no WebGL so tests can use them:
 
@@ -20,10 +20,11 @@ Dependencies point downward only.
 - `src/history.ts` holds the undo and redo stacks.
 - `src/driverInput.ts` holds held keys and the power lever, and binds the keyboard.
 - `src/world/scenery.ts` holds `SceneryType` and `PlacedItem`, shared between saves, the editor and `ScatterRenderer`.
+- `src/editor/trackPlan.ts` holds pure track-planning geometry and anchor resolution without Three.js or DOM dependencies so unit tests can exercise it directly.
 
-The editor, interface and `driverInput.ts` import `Game` as a type, while `game.ts` creates them.
+The editor, interface (`src/ui/hud.ts` and per-tool panels in `src/ui/panels/`, which update controls in place to preserve focus) and `driverInput.ts` import `Game` as a type, while `game.ts` creates them. Editor tools talk to `Game` through `EditorHost` (`src/editor/tools/tool.ts`) and run edits through `Editor.edit()` so undo, commit and abandon happen in one place.
 
-The simulation layer's isolation is a hard rule enforced by `.oxlintrc.json` (`no-restricted-imports` and `no-restricted-globals`): it is what lets `tests/` run the whole railway headlessly.
+The simulation layer's isolation (plus `src/editor/trackPlan.ts`) is a hard rule enforced by `.oxlintrc.json` (`no-restricted-imports` and `no-restricted-globals`): it is what lets `tests/` run the whole railway headlessly.
 
 ## Rail model
 

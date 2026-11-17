@@ -111,6 +111,46 @@ test('lays a section of track in the editor, then undoes and redoes it', async (
   await frames(page);
 });
 
+test('editor tool panels update controls in place without dropping focus', async ({ page }) => {
+  await load(page);
+  await page.locator('#mode-edit').click();
+  await page.locator('[data-tool="terrain"]').click();
+  await frames(page);
+
+  const lowerBtn = page.locator('#brush-modes button[data-mode="lower"]');
+  await lowerBtn.focus();
+  await page.keyboard.press('Enter');
+  await expect(lowerBtn).toHaveAttribute('aria-pressed', 'true');
+  expect(await page.evaluate(() => document.activeElement?.getAttribute('data-mode'))).toBe('lower');
+
+  await page.locator('[data-tool="select"]').click();
+  await frames(page);
+  const selH = page.locator('#sel-h');
+  await page.evaluate(() => {
+    const g = window.__game;
+    const first = g.net.nodes.keys().next().value;
+    if (first !== undefined) {
+      g.editor.selected = first;
+      g.hud.syncEditor();
+    }
+  });
+  await expect(selH).toBeVisible();
+  const initialY = await page.locator('#sel-y').textContent();
+  await selH.focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(page.locator('#sel-y')).not.toHaveText(initialY ?? '');
+  expect(await page.evaluate(() => document.activeElement?.id)).toBe('sel-h');
+
+  await page.locator('[data-tool="track"]').click();
+  await frames(page);
+  const heightSlider = page.locator('#height');
+  const initialOffset = await page.locator('#height-val').textContent();
+  await heightSlider.focus();
+  await page.keyboard.press('BracketRight');
+  await expect(page.locator('#height-val')).not.toHaveText(initialOffset ?? '');
+  expect(await page.evaluate(() => document.activeElement?.id)).toBe('height');
+});
+
 test('driving keys take over from the autopilot and move the power lever', async ({ page }) => {
   await load(page);
   expect(await page.evaluate(() => window.__game.driven?.ai)).toBe(true);

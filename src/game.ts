@@ -33,6 +33,7 @@ import {
 } from './persistence';
 import { buildDemoNetwork, populateDemoTrains } from './rail/demoMap';
 import { Duty } from './rail/duty';
+import type { Dir } from './rail/network';
 import { Network } from './rail/network';
 import type { Train } from './rail/sim';
 import type { Car } from './rail/vehicles';
@@ -475,6 +476,37 @@ export class Game {
     this.hf.grade(this.net);
     for (const t of this.sim.syncTrack()) this.removeTrain(t);
     if (opts.scenery) this.scatterTimer = 0.25;
+    this.hud.syncTrains();
+  }
+
+  addPlacedScenery(item: PlacedItem) {
+    this.scatter.placed.push(item);
+  }
+
+  placedSceneryNear(x: number, z: number, radius: number) {
+    return this.scatter.placedNear(x, z, radius);
+  }
+
+  removePlacedScenery(index: number) {
+    this.scatter.placed.splice(index, 1);
+  }
+
+  /** Adds and places a train on track; returns any existing train blocking it if there is no room. */
+  addTrain(train: Train, seg: number, s: number, dir: Dir): Train | null {
+    this.sim.trains.push(train);
+    this.sim.place(train, seg, s, dir);
+    return this.sim.touching(train);
+  }
+
+  toast(text: string, warn = false) {
+    this.hud.toast(text, warn);
+  }
+
+  syncEditor() {
+    this.hud.syncEditor();
+  }
+
+  syncTrains() {
     this.hud.syncTrains();
   }
 

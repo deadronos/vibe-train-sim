@@ -48,8 +48,8 @@
       "rules": { "import/no-unassigned-import": "off" }
     },
     {
-      // Keep Three.js, the DOM and higher layers out of the simulation, terrain and math layers.
-      "files": ["src/rail/**/*.ts", "src/world/**/*.ts", "src/core/**/*.ts"],
+      // Keep Three.js, the DOM and higher layers out of the simulation, terrain, math and track-planning layers.
+      "files": ["src/rail/**/*.ts", "src/world/**/*.ts", "src/core/**/*.ts", "src/editor/trackPlan.ts"],
       "rules": {
         "no-restricted-globals": ["error", "window", "document"],
         "no-restricted-imports": [
