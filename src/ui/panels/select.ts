@@ -91,7 +91,7 @@ export const selectPanel: PanelFactory = (container, g, sync) => {
           renamePushed = true;
         }
         station.name = v || station.name;
-        g.net.version++;
+        g.net.markStationRenamed(station.id);
       },
     });
     let lenPushed = false;
@@ -110,6 +110,7 @@ export const selectPanel: PanelFactory = (container, g, sync) => {
           lenPushed = true;
         }
         station.length = v;
+        g.net.markStationDirty(station.nodeId);
         g.net.version++;
       },
       onChange: () => (lenPushed = false),
@@ -154,6 +155,7 @@ export const selectPanel: PanelFactory = (container, g, sync) => {
             const kmh = Number(value);
             seg.speedLimit = kmh > 0 ? kmh / 3.6 : undefined;
             g.net.rebuild(seg.id);
+            g.net.markSpeedSignsDirty();
             g.net.version++;
             g.commitEdit();
             g.hud.toast(kmh > 0 ? `Speed limit set to ${kmh} km/h` : 'Speed limit set to automatic');
@@ -173,6 +175,7 @@ export const selectPanel: PanelFactory = (container, g, sync) => {
         onChange: (value) => {
           g.pushUndo();
           sig.type = value as SignalType;
+          g.net.markSignalDirty(n.id);
           g.net.version++;
           g.commitEdit();
           sync();
@@ -185,7 +188,7 @@ export const selectPanel: PanelFactory = (container, g, sync) => {
         onChange: (checked) => {
           g.pushUndo();
           sig.hold = checked;
-          g.net.version++;
+          g.sim.interlock();
         },
       });
       updaters.push(() => {

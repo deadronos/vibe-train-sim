@@ -84,6 +84,76 @@ describe('grading', () => {
     hf.grade(net);
     expect(hf.dirty).toBeNull();
   });
+
+  it.each(PRESETS)(
+    '%s incremental grading matches full grading after brush, track, bridge, and station edits',
+    (preset) => {
+      const hf = new Heightfield(preset, 3);
+      const { net } = buildDemoNetwork(hf);
+      hf.grade(net);
+
+      // 1. Brush near track and away from track
+      const firstNode = [...net.nodes.values()][1];
+      hf.brush('raise', firstNode.x, firstNode.z, 55, 0.8);
+      hf.grade(net);
+
+      // 2. Move a node
+      const moving = [...net.nodes.values()][3];
+      net.moveNode(moving.id, moving.x + 12, moving.y + 4, moving.z - 8);
+      hf.grade(net);
+
+      // 3. Toggle a segment's bridge mode
+      const firstSeg = [...net.segs.values()][0];
+      firstSeg.bridge = firstSeg.bridge === 'force' ? 'none' : 'force';
+      hf.grade(net);
+
+      // 4. Add & remove a station, add & remove a branch segment
+      const branchStart = [...net.nodes.values()][4];
+      const branchEnd = net.addNode(branchStart.x + 180, branchStart.y + 3, branchStart.z + 180, 1, 1);
+      const branchSeg = net.addSegment(branchStart.id, 1, branchEnd.id, -1);
+      hf.grade(net);
+
+      const extraStation = {
+        id: net.id(),
+        name: 'Temp',
+        nodeId: branchEnd.id,
+        platformSide: 1 as const,
+        length: 100,
+      };
+      net.stations.push(extraStation);
+      hf.grade(net);
+
+      net.stations = net.stations.filter((s) => s !== extraStation);
+      net.removeSegment(branchSeg.id);
+      hf.grade(net);
+
+      // Compare against a fresh Heightfield graded from scratch with the exact same base & network.
+      const ref = new Heightfield(preset, 3);
+      ref.base.set(hf.base);
+      ref.grade(net);
+
+      for (let k = 0; k < hf.h.length; k++) {
+        expect(Math.abs(hf.h[k] - ref.h[k])).toBeLessThan(0.002);
+      }
+    },
+  );
+
+  it('keeps dirty bounds local during a local brush edit on a large network', () => {
+    const hf = new Heightfield('plains', 2);
+    const { net } = buildDemoNetwork(hf);
+    hf.grade(net);
+    hf.dirty = null;
+
+    hf.brush('raise', -1100, -1100, 50, 1);
+    hf.grade(net);
+    expect(hf.dirty).not.toBeNull();
+    const [i0, j0, i1, j1] = hf.dirty!;
+    // Brush at (-1100, -1100) only touches cells in the low quadrant, leaving distant quadrants clean.
+    expect(i1).toBeLessThan(160);
+    expect(j1).toBeLessThan(160);
+    expect(i0).toBeLessThan(i1);
+    expect(j0).toBeLessThan(j1);
+  });
 });
 
 describe('bridge decisions', () => {

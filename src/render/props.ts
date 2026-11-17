@@ -1,32 +1,125 @@
 // Lineside objects driven by the network: signals, route indicators, speed boards, point levers, buffer stops and stations.
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
-import type { Network, RailNode, Side, SignalType, SpeedSign, Station } from '../rail/network';
+import type { Network, RailNode, Side, SignalType, Station } from '../rail/network';
 import { computeSpeedSigns, signalType } from '../rail/network';
-import type { Sim } from '../rail/sim';
+import type { Aspect, Sim } from '../rail/sim';
 import { keyOf } from '../rail/sim';
 import type { Assets } from './assets';
 
 const LAMP_INTENSITY = { red: 26, yellow: 22, green: 16, white: 18 };
+const MIN_INST_CAP = 8;
+
+interface RouteVisual {
+  left: THREE.MeshStandardMaterial;
+  right: THREE.MeshStandardMaterial;
+  numMat: THREE.MeshStandardMaterial;
+  lastDir: string;
+  lastNum: number;
+}
 
 interface SignalVisual {
   key: string;
+  nodeId: number;
   type: SignalType;
-  lamps: {
-    red?: THREE.MeshStandardMaterial;
-    yellow?: THREE.MeshStandardMaterial;
-    green?: THREE.MeshStandardMaterial;
-    white?: THREE.MeshStandardMaterial;
-  };
-  route?: {
-    left: THREE.MeshStandardMaterial;
-    right: THREE.MeshStandardMaterial;
-    numMat: THREE.MeshStandardMaterial;
-    lastKey: string;
-  };
+  worldMatrix: THREE.Matrix4;
+  route?: RouteVisual;
   glow: THREE.Sprite;
-  pos: THREE.Vector3;
-  last?: string;
+  lastAspect: Aspect | null;
+}
+
+interface LeverVisual {
+  key: string;
+  node: number;
+  side: Side;
+  px: number;
+  py: number;
+  pz: number;
+  yaw: number;
+  lastState: number;
+}
+
+interface StationBoardVisual {
+  stationId: number;
+  mat: THREE.MeshStandardMaterial;
+  tex: THREE.CanvasTexture;
+}
+
+interface PoolEntry {
+  poolKey: string;
+  matrix: THREE.Matrix4;
+}
+
+interface NodeRecord {
+  entries: PoolEntry[];
+  signalKeys: string[];
+  leverKeys: string[];
+  lampPositions: THREE.Vector3[];
+  objects: THREE.Object3D[];
+  owned: { dispose(): void }[];
+  stationId?: number;
+}
+
+class InstancedPool {
+  mesh: THREE.InstancedMesh | null = null;
+  capacity = 0;
+
+  constructor(
+    private group: THREE.Group,
+    readonly geo: THREE.BufferGeometry,
+    readonly mat: THREE.Material,
+    readonly castShadow: boolean,
+    readonly receiveShadow: boolean,
+    private withColor = false,
+  ) {}
+
+  sync(matrices: THREE.Matrix4[], colors?: THREE.Color[]) {
+    const count = matrices.length;
+    if (count === 0) {
+      if (this.mesh) {
+        this.mesh.count = 0;
+        this.mesh.visible = false;
+      }
+      return;
+    }
+    if (!this.mesh || count > this.capacity) {
+      if (this.mesh) {
+        this.group.remove(this.mesh);
+        this.mesh.dispose();
+      }
+      let cap = Math.max(MIN_INST_CAP, this.capacity || MIN_INST_CAP);
+      while (cap < count) cap *= 2;
+      this.capacity = cap;
+      this.mesh = new THREE.InstancedMesh(this.geo, this.mat, cap);
+      this.mesh.castShadow = this.castShadow;
+      this.mesh.receiveShadow = this.receiveShadow;
+      this.mesh.frustumCulled = true;
+      if (this.withColor) {
+        const c = new THREE.Color(0xffffff);
+        for (let i = 0; i < cap; i++) this.mesh.setColorAt(i, c);
+      }
+      this.group.add(this.mesh);
+    }
+    this.mesh.visible = true;
+    this.mesh.count = count;
+    for (let i = 0; i < count; i++) {
+      this.mesh.setMatrixAt(i, matrices[i]);
+      if (colors && this.withColor) this.mesh.setColorAt(i, colors[i]);
+    }
+    this.mesh.instanceMatrix.needsUpdate = true;
+    if (colors && this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+    this.mesh.computeBoundingBox();
+    this.mesh.computeBoundingSphere();
+  }
+
+  dispose() {
+    if (!this.mesh) return;
+    this.group.remove(this.mesh);
+    this.mesh.dispose();
+    this.mesh = null;
+    this.capacity = 0;
+  }
 }
 
 function glowTexture() {
@@ -149,22 +242,64 @@ function hasFacingJunctionInBlock(net: Network, startNode: number, startSide: Si
   return false;
 }
 
+function makeLampMat(color: number, emissive: number, intensity: number) {
+  return new THREE.MeshStandardMaterial({
+    color,
+    emissive,
+    emissiveIntensity: intensity,
+    roughness: 0.25,
+  });
+}
+
+function translatedGeo(geo: THREE.BufferGeometry, x: number, y: number, z: number, rz = 0): THREE.BufferGeometry {
+  const g = geo.clone();
+  if (rz) g.rotateZ(rz);
+  g.translate(x, y, z);
+  return g;
+}
+
 export class PropsRenderer {
   group = new THREE.Group();
+  readonly stats = { nodeRebuilds: 0, signUpdates: 0, speedSignRebuilds: 0 };
+
+  private nodeRecords = new Map<number, NodeRecord>();
   private signals = new Map<string, SignalVisual>();
-  private lastVersion = -1;
+  private levers = new Map<string, LeverVisual>();
+  private stationBoards = new Map<number, StationBoardVisual>();
+  private invalidated = true;
+
+  private pools = new Map<string, InstancedPool>();
+  private dirtyPools = new Set<string>();
+  private lampsDirty = false;
+  private leversDirty = false;
+  private pointLightsDirty = false;
+
   private lamps: THREE.Vector3[] = [];
   private lightPool: THREE.PointLight[] = [];
   private glowTex = glowTexture();
-  private levers = new Map<string, { arm: THREE.Object3D; node: number; side: Side }>();
   private speedTex = new Map<string, THREE.CanvasTexture>();
+  private speedFaceMats = new Map<string, THREE.MeshStandardMaterial>();
+  private speedPools = new Map<string, InstancedPool>();
   private routeTex = new Map<number, THREE.CanvasTexture>();
-  private speedMats: THREE.MeshStandardMaterial[] = [];
   /** Lamps nearest the camera first. Re-sorted in place only once the camera has moved a fair way. */
   private nearLamps: THREE.Vector3[] = [];
   private sortedAt = new THREE.Vector3(Infinity, 0, 0);
-  // Shared by every rebuild, so never disposed when props are cleared.
-  private armGeo = new THREE.BoxGeometry(0.46, 0.46, 0.04);
+
+  // Reusable scratch objects to keep sync() and update() allocation-free.
+  private tmpObj = new THREE.Object3D();
+  private tmpPoolMats: THREE.Matrix4[] = [];
+  private tmpLeverMats: THREE.Matrix4[] = [];
+  private tmpLeverCols: THREE.Color[] = [];
+  private leverMatCache: THREE.Matrix4[] = [];
+  private leverColCache: THREE.Color[] = [];
+  private tmpSpeedBuckets = new Map<string, THREE.Matrix4[]>();
+  private tmpLampBuckets = new Map<string, THREE.Matrix4[]>();
+  private lampPools = new Map<string, InstancedPool>();
+  private leverPool: InstancedPool;
+
+  // Shared geometries and materials reused across the network.
+  private armGeo = translatedGeo(new THREE.BoxGeometry(0.46, 0.46, 0.04), 0, 1.35, 0);
+  private armMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5 });
   private boardGeo = new THREE.PlaneGeometry(6.4, 1.2);
   private postGeo = new THREE.CylinderGeometry(0.05, 0.05, 2.5, 6);
   private postMat = new THREE.MeshStandardMaterial({ color: 0x25292c, roughness: 0.6 });
@@ -173,40 +308,65 @@ export class PropsRenderer {
   private amberPaintMat = new THREE.MeshStandardMaterial({ color: 0xf0a62b, roughness: 0.45 });
   private creamPaintMat = new THREE.MeshStandardMaterial({ color: 0xe9e4d2, roughness: 0.5 });
   private concreteMat = new THREE.MeshStandardMaterial({ color: 0x7b7b75, roughness: 0.9 });
-  private speedPostGeo = new THREE.CylinderGeometry(0.045, 0.045, 2.35, 6);
-  private speedBoardGeo = new THREE.PlaneGeometry(1.15, 1.15);
-  private speedBackGeo = new THREE.BoxGeometry(1.18, 1.18, 0.04);
-  private routeBoxGeo = new THREE.BoxGeometry(0.96, 0.58, 0.14);
-  private routeTrimGeo = new THREE.BoxGeometry(1.02, 0.64, 0.1);
+  private speedPostGeo = translatedGeo(new THREE.CylinderGeometry(0.045, 0.045, 2.35, 6), 0, 1.15, -0.04);
+  private speedBoardGeo = translatedGeo(new THREE.PlaneGeometry(1.15, 1.15), 0, 2.25, 0.005);
+  private speedBackGeo = translatedGeo(new THREE.BoxGeometry(1.18, 1.18, 0.04), 0, 2.25, -0.02);
+  private routeBoxGeo = translatedGeo(new THREE.BoxGeometry(0.96, 0.58, 0.14), 0, 5.82, 0.08);
+  private routeTrimGeo = translatedGeo(new THREE.BoxGeometry(1.02, 0.64, 0.1), 0, 5.82, 0.08);
   private routeNumGeo = new THREE.PlaneGeometry(0.32, 0.38);
-  private featherDotGeo = (() => {
-    const g = new THREE.CylinderGeometry(0.038, 0.038, 0.04, 8);
-    g.rotateX(Math.PI / 2);
-    return g;
-  })();
-  private distantBaseGeo = new THREE.CylinderGeometry(0.2, 0.28, 0.35, 10);
-  private distantPostGeo = new THREE.CylinderGeometry(0.065, 0.075, 4.6, 10);
-  private distantBandGeo = new THREE.CylinderGeometry(0.074, 0.074, 0.42, 10);
-  private distantDiamondGeo = new THREE.BoxGeometry(0.56, 0.56, 0.05);
-  private distantDiamondInnerGeo = new THREE.BoxGeometry(0.42, 0.42, 0.06);
-  private distantHeadGeo = new THREE.BoxGeometry(0.46, 0.94, 0.16);
-  private distantLensGeo = (() => {
+  private leftDotsGeo: THREE.BufferGeometry;
+  private rightDotsGeo: THREE.BufferGeometry;
+
+  // Baked local geometries for distant and shunt signals so every part can be instanced across the network.
+  private distantStaticParts: { key: string; geo: THREE.BufferGeometry; mat: THREE.Material; shadow: boolean }[];
+  private shuntStaticParts: { key: string; geo: THREE.BufferGeometry; mat: THREE.Material; shadow: boolean }[];
+  private mainBodyPrims: { key: string; geo: THREE.BufferGeometry; mat: THREE.Material }[] = [];
+  private distantLensYellowGeo = (() => {
     const g = new THREE.CylinderGeometry(0.125, 0.125, 0.04, 16);
     g.rotateX(Math.PI / 2);
+    g.translate(0, 4.95, 0.16);
     return g;
   })();
-  private hoodGeo = new THREE.BoxGeometry(0.3, 0.03, 0.26);
-  private shuntBaseGeo = new THREE.BoxGeometry(0.44, 0.2, 0.44);
-  private shuntPostGeo = new THREE.CylinderGeometry(0.055, 0.065, 1.0, 8);
-  private shuntHeadGeo = new THREE.BoxGeometry(0.62, 0.62, 0.2);
-  private shuntStripeGeo = new THREE.BoxGeometry(0.64, 0.08, 0.22);
-  private shuntLensGeo = (() => {
+  private distantLensGreenGeo = (() => {
+    const g = new THREE.CylinderGeometry(0.125, 0.125, 0.04, 16);
+    g.rotateX(Math.PI / 2);
+    g.translate(0, 4.55, 0.16);
+    return g;
+  })();
+  private shuntLensRedGeo = (() => {
     const g = new THREE.CylinderGeometry(0.09, 0.09, 0.04, 14);
     g.rotateX(Math.PI / 2);
+    g.translate(0.14, 1.24, 0.1);
     return g;
   })();
-  /** Per-instance materials and textures made by the current build, freed on the next. */
-  private owned: { dispose(): void }[] = [];
+  private shuntLensWhite1Geo = (() => {
+    const g = new THREE.CylinderGeometry(0.09, 0.09, 0.04, 14);
+    g.rotateX(Math.PI / 2);
+    g.translate(-0.14, 1.24, 0.1);
+    return g;
+  })();
+  private shuntLensWhite2Geo = (() => {
+    const g = new THREE.CylinderGeometry(0.09, 0.09, 0.04, 14);
+    g.rotateX(Math.PI / 2);
+    g.translate(0.14, 1.52, 0.1);
+    return g;
+  })();
+  private lampMats = {
+    mainRedOn: makeLampMat(0x2a0606, 0xff1a10, LAMP_INTENSITY.red),
+    mainRedOff: makeLampMat(0x2a0606, 0xff1a10, 0),
+    mainAmberOn: makeLampMat(0x2a1d06, 0xffa010, LAMP_INTENSITY.yellow),
+    mainAmberOff: makeLampMat(0x2a1d06, 0xffa010, 0),
+    mainGreenOn: makeLampMat(0x062a14, 0x18ff78, LAMP_INTENSITY.green),
+    mainGreenOff: makeLampMat(0x062a14, 0x18ff78, 0),
+    distYellowOn: makeLampMat(0x2a1d06, 0xffa010, LAMP_INTENSITY.yellow),
+    distYellowOff: makeLampMat(0x2a1d06, 0xffa010, 0),
+    distGreenOn: makeLampMat(0x062a14, 0x18ff78, LAMP_INTENSITY.green),
+    distGreenOff: makeLampMat(0x062a14, 0x18ff78, 0),
+    shuntRedOn: makeLampMat(0x2a0606, 0xff1a10, LAMP_INTENSITY.red),
+    shuntRedOff: makeLampMat(0x2a0606, 0xff1a10, 0),
+    shuntWhiteOn: makeLampMat(0x2a2a26, 0xf4f1de, LAMP_INTENSITY.white),
+    shuntWhiteOff: makeLampMat(0x2a2a26, 0xf4f1de, 0),
+  };
 
   constructor(
     scene: THREE.Scene,
@@ -219,323 +379,507 @@ export class PropsRenderer {
       this.lightPool.push(l);
       scene.add(l);
     }
+
+    const makeDots = (sgn: number) => {
+      const parts: THREE.BufferGeometry[] = [];
+      for (let d = 0; d < 4; d++) {
+        const g = new THREE.CylinderGeometry(0.038, 0.038, 0.04, 8);
+        g.rotateX(Math.PI / 2);
+        g.translate(sgn * (0.16 + d * 0.08), -0.1 + d * 0.09, 0.08);
+        parts.push(g);
+      }
+      const merged = mergeGeometries(parts, false);
+      for (const p of parts) p.dispose();
+      return merged;
+    };
+    this.leftDotsGeo = makeDots(-1);
+    this.rightDotsGeo = makeDots(1);
+
+    const mergeParts = (parts: THREE.BufferGeometry[]) => {
+      const merged = mergeGeometries(parts, false);
+      for (const p of parts) p.dispose();
+      return merged;
+    };
+
+    this.distantStaticParts = [
+      {
+        key: 'dist:base',
+        geo: translatedGeo(new THREE.CylinderGeometry(0.2, 0.28, 0.35, 10), 0, 0.18, 0),
+        mat: this.concreteMat,
+        shadow: false,
+      },
+      {
+        key: 'dist:steel',
+        geo: mergeParts([
+          translatedGeo(new THREE.CylinderGeometry(0.065, 0.075, 4.6, 10), 0, 2.45, 0),
+          translatedGeo(new THREE.BoxGeometry(0.56, 0.56, 0.05), 0, 2.45, 0.09, Math.PI / 4),
+          translatedGeo(new THREE.BoxGeometry(0.46, 0.94, 0.16), 0, 4.75, 0.08),
+          ...[5.09, 4.69].map((hy) => translatedGeo(new THREE.BoxGeometry(0.3, 0.03, 0.26), 0, hy, 0.28)),
+        ]),
+        mat: this.darkSteelMat,
+        shadow: true,
+      },
+      {
+        key: 'dist:amber',
+        geo: mergeParts([
+          ...[1.1, 2.0, 2.9, 3.8].map((by) =>
+            translatedGeo(new THREE.CylinderGeometry(0.074, 0.074, 0.42, 10), 0, by, 0),
+          ),
+          translatedGeo(new THREE.BoxGeometry(0.42, 0.42, 0.06), 0, 2.45, 0.1, Math.PI / 4),
+        ]),
+        mat: this.amberPaintMat,
+        shadow: false,
+      },
+    ];
+
+    this.shuntStaticParts = [
+      {
+        key: 'shunt:base',
+        geo: translatedGeo(new THREE.BoxGeometry(0.44, 0.2, 0.44), 0, 0.1, 0),
+        mat: this.concreteMat,
+        shadow: false,
+      },
+      {
+        key: 'shunt:steel',
+        geo: mergeParts([
+          translatedGeo(new THREE.CylinderGeometry(0.055, 0.065, 1.0, 8), 0, 0.7, 0),
+          translatedGeo(new THREE.BoxGeometry(0.62, 0.62, 0.2), 0, 1.38, 0),
+        ]),
+        mat: this.darkSteelMat,
+        shadow: false,
+      },
+      {
+        key: 'shunt:stripe',
+        geo: translatedGeo(new THREE.BoxGeometry(0.64, 0.08, 0.22), 0, 1.03, 0),
+        mat: this.creamPaintMat,
+        shadow: false,
+      },
+    ];
+
+    this.leverPool = new InstancedPool(this.group, this.armGeo, this.armMat, false, false, true);
+    this.initPools();
   }
 
-  /** Rebuilds when the network was edited. */
+  private initPools() {
+    const registerAsset = (assetName: string, prefix: string, castShadow = true, receiveShadow = true) => {
+      this.assets.primitives(assetName).forEach((prim, idx) => {
+        const key = `${prefix}:${idx}`;
+        this.pools.set(key, new InstancedPool(this.group, prim.geometry, prim.material, castShadow, receiveShadow));
+      });
+    };
+
+    registerAsset('buffer_stop', 'buffer', false);
+    registerAsset('switch_stand', 'lever_stand', false);
+    registerAsset('platform', 'platform');
+    registerAsset('station_building', 'station_building');
+    registerAsset('shelter', 'shelter');
+    registerAsset('lamp_post', 'lamp_post');
+    this.pools.set('sign_post', new InstancedPool(this.group, this.postGeo, this.postMat, false, true));
+    this.pools.set('route:trim', new InstancedPool(this.group, this.routeTrimGeo, this.brassMat, false, false));
+    this.pools.set('route:box', new InstancedPool(this.group, this.routeBoxGeo, this.darkSteelMat, false, false));
+
+    for (const part of this.distantStaticParts) {
+      this.pools.set(part.key, new InstancedPool(this.group, part.geo, part.mat, part.shadow, true));
+    }
+    for (const part of this.shuntStaticParts) {
+      this.pools.set(part.key, new InstancedPool(this.group, part.geo, part.mat, part.shadow, true));
+    }
+
+    const mastPrims = this.assets.primitives('signal_mast');
+    let redGeo: THREE.BufferGeometry | null = null;
+    let amberGeo: THREE.BufferGeometry | null = null;
+    let greenGeo: THREE.BufferGeometry | null = null;
+    mastPrims.forEach((prim, idx) => {
+      if (prim.name.startsWith('lamp_red')) redGeo = prim.geometry;
+      else if (prim.name.startsWith('lamp_amber')) amberGeo = prim.geometry;
+      else if (prim.name.startsWith('lamp_green')) greenGeo = prim.geometry;
+      else {
+        const key = `main:body:${idx}`;
+        this.mainBodyPrims.push({ key, geo: prim.geometry, mat: prim.material });
+        this.pools.set(key, new InstancedPool(this.group, prim.geometry, prim.material, true, true));
+      }
+    });
+    if (redGeo && amberGeo && greenGeo) {
+      this.lampPools.set('main:red:on', new InstancedPool(this.group, redGeo, this.lampMats.mainRedOn, false, false));
+      this.lampPools.set('main:red:off', new InstancedPool(this.group, redGeo, this.lampMats.mainRedOff, false, false));
+      this.lampPools.set(
+        'main:amber:on',
+        new InstancedPool(this.group, amberGeo, this.lampMats.mainAmberOn, false, false),
+      );
+      this.lampPools.set(
+        'main:amber:off',
+        new InstancedPool(this.group, amberGeo, this.lampMats.mainAmberOff, false, false),
+      );
+      this.lampPools.set(
+        'main:green:on',
+        new InstancedPool(this.group, greenGeo, this.lampMats.mainGreenOn, false, false),
+      );
+      this.lampPools.set(
+        'main:green:off',
+        new InstancedPool(this.group, greenGeo, this.lampMats.mainGreenOff, false, false),
+      );
+    }
+    this.lampPools.set(
+      'dist:yellow:on',
+      new InstancedPool(this.group, this.distantLensYellowGeo, this.lampMats.distYellowOn, false, false),
+    );
+    this.lampPools.set(
+      'dist:yellow:off',
+      new InstancedPool(this.group, this.distantLensYellowGeo, this.lampMats.distYellowOff, false, false),
+    );
+    this.lampPools.set(
+      'dist:green:on',
+      new InstancedPool(this.group, this.distantLensGreenGeo, this.lampMats.distGreenOn, false, false),
+    );
+    this.lampPools.set(
+      'dist:green:off',
+      new InstancedPool(this.group, this.distantLensGreenGeo, this.lampMats.distGreenOff, false, false),
+    );
+    this.lampPools.set(
+      'shunt:red:on',
+      new InstancedPool(this.group, this.shuntLensRedGeo, this.lampMats.shuntRedOn, false, false),
+    );
+    this.lampPools.set(
+      'shunt:red:off',
+      new InstancedPool(this.group, this.shuntLensRedGeo, this.lampMats.shuntRedOff, false, false),
+    );
+    this.lampPools.set(
+      'shunt:white:on',
+      new InstancedPool(this.group, this.shuntLensWhite1Geo, this.lampMats.shuntWhiteOn, false, false),
+    );
+    this.lampPools.set(
+      'shunt:white:off',
+      new InstancedPool(this.group, this.shuntLensWhite1Geo, this.lampMats.shuntWhiteOff, false, false),
+    );
+    this.lampPools.set(
+      'shunt:white2:on',
+      new InstancedPool(this.group, this.shuntLensWhite2Geo, this.lampMats.shuntWhiteOn, false, false),
+    );
+    this.lampPools.set(
+      'shunt:white2:off',
+      new InstancedPool(this.group, this.shuntLensWhite2Geo, this.lampMats.shuntWhiteOff, false, false),
+    );
+
+    this.speedPools.set('post', new InstancedPool(this.group, this.speedPostGeo, this.postMat, true, true));
+    this.speedPools.set('back', new InstancedPool(this.group, this.speedBackGeo, this.darkSteelMat, false, true));
+  }
+
+  /** Rebuilds only the nodes, station signs, or speed signs that changed since the last sync. */
   sync(net: Network) {
-    if (net.version === this.lastVersion) return;
-    this.lastVersion = net.version;
-    this.rebuild(net);
+    if (this.invalidated) {
+      this.invalidated = false;
+      this.clearAll();
+      for (const nid of net.nodes.keys()) net.dirtyNodes.add(nid);
+      net.speedSignsDirty = true;
+    }
+
+    if (net.dirtyNodes.size > 0) {
+      for (const nid of net.dirtyNodes) {
+        this.removeNodeProps(nid);
+        const node = net.nodes.get(nid);
+        if (node) this.buildNodeProps(net, node);
+        this.stats.nodeRebuilds++;
+      }
+      net.dirtyNodes.clear();
+    }
+
+    if (net.dirtyStationSigns.size > 0) {
+      for (const stId of net.dirtyStationSigns) {
+        const st = net.stationById(stId);
+        const rec = this.stationBoards.get(stId);
+        if (st && rec) {
+          rec.tex.dispose();
+          const next = signTexture(st.name);
+          rec.tex = next;
+          rec.mat.map = next;
+          rec.mat.needsUpdate = true;
+          this.stats.signUpdates++;
+        }
+      }
+      net.dirtyStationSigns.clear();
+    }
+
+    if (net.speedSignsDirty) {
+      net.speedSignsDirty = false;
+      this.rebuildSpeedSigns(net);
+      this.stats.speedSignRebuilds++;
+    }
+
+    if (this.dirtyPools.size > 0) {
+      this.flushDirtyPools();
+      this.dirtyPools.clear();
+    }
+
+    if (this.pointLightsDirty) {
+      this.pointLightsDirty = false;
+      this.lamps = [];
+      for (const rec of this.nodeRecords.values()) {
+        for (const p of rec.lampPositions) this.lamps.push(p);
+      }
+      this.nearLamps = [];
+    }
   }
 
   invalidate() {
-    this.lastVersion = -1;
+    this.invalidated = true;
   }
 
-  private clearGroup() {
-    for (const child of [...this.group.children]) {
-      this.group.remove(child);
-      child.traverse((o) => {
-        const s = o as THREE.Sprite;
-        if (s.isSprite) s.material.dispose();
-        const im = o as THREE.InstancedMesh;
-        if (im.isInstancedMesh) im.dispose();
-      });
-    }
-    for (const r of this.owned) r.dispose();
-    this.owned = [];
-    this.speedMats = [];
+  private clearAll() {
+    for (const nid of [...this.nodeRecords.keys()]) this.removeNodeProps(nid);
+    for (const pool of this.pools.values()) pool.dispose();
+    for (const pool of this.lampPools.values()) pool.dispose();
+    for (const pool of this.speedPools.values()) pool.dispose();
+    this.leverPool.dispose();
     this.signals.clear();
     this.levers.clear();
+    this.stationBoards.clear();
     this.lamps = [];
     this.nearLamps = [];
+    this.dirtyPools.clear();
+    this.lampsDirty = false;
+    this.leversDirty = false;
+    this.pointLightsDirty = false;
   }
 
-  private rebuild(net: Network) {
-    this.clearGroup();
-    for (const node of net.nodes.values()) {
-      for (const side of [1, -1] as Side[]) {
-        if (node.signals[side]) this.addSignal(net, node, side);
-        const opts = net.attached(node.id, side);
-        if (opts.length > 1) this.addLever(node, side);
-        if (opts.length === 0 && net.attached(node.id, -side as Side).length > 0) this.addBuffer(node, side);
+  private removeNodeProps(nid: number) {
+    const rec = this.nodeRecords.get(nid);
+    if (!rec) return;
+    for (const o of rec.objects) this.group.remove(o);
+    for (const r of rec.owned) r.dispose();
+    for (const key of rec.signalKeys) {
+      this.signals.delete(key);
+      this.lampsDirty = true;
+    }
+    for (const key of rec.leverKeys) {
+      this.levers.delete(key);
+      this.leversDirty = true;
+    }
+    for (const e of rec.entries) this.dirtyPools.add(e.poolKey);
+    if (rec.lampPositions.length > 0) this.pointLightsDirty = true;
+    if (rec.stationId !== undefined) this.stationBoards.delete(rec.stationId);
+    this.nodeRecords.delete(nid);
+  }
+
+  private buildNodeProps(net: Network, node: RailNode) {
+    const rec: NodeRecord = {
+      entries: [],
+      signalKeys: [],
+      leverKeys: [],
+      lampPositions: [],
+      objects: [],
+      owned: [],
+    };
+    for (const side of [1, -1] as Side[]) {
+      if (node.signals[side]) this.addSignal(net, node, side, rec);
+      const opts = net.attached(node.id, side);
+      if (opts.length > 1) this.addLever(node, side, rec);
+      if (opts.length === 0 && net.attached(node.id, -side as Side).length > 0) this.addBuffer(node, side, rec);
+    }
+    const st = net.stationAt(node.id);
+    if (st) this.addStation(net, node, st, rec);
+    this.nodeRecords.set(node.id, rec);
+  }
+
+  private pushAssetInstances(prefix: string, assetName: string, matrix: THREE.Matrix4, rec: NodeRecord) {
+    const count = this.assets.primitives(assetName).length;
+    for (let i = 0; i < count; i++) {
+      const poolKey = `${prefix}:${i}`;
+      rec.entries.push({ poolKey, matrix });
+      this.dirtyPools.add(poolKey);
+    }
+  }
+
+  private pushStaticInstance(poolKey: string, matrix: THREE.Matrix4, rec: NodeRecord) {
+    rec.entries.push({ poolKey, matrix });
+    this.dirtyPools.add(poolKey);
+  }
+
+  private flushDirtyPools() {
+    for (const key of this.dirtyPools) {
+      const pool = this.pools.get(key);
+      if (!pool) continue;
+      const list = this.tmpPoolMats;
+      list.length = 0;
+      for (const rec of this.nodeRecords.values()) {
+        for (let i = 0; i < rec.entries.length; i++) {
+          if (rec.entries[i].poolKey === key) list.push(rec.entries[i].matrix);
+        }
       }
+      pool.sync(list);
     }
-    for (const sign of computeSpeedSigns(net)) this.addSpeedSign(sign);
-    for (const st of net.stations) this.addStation(net, st);
   }
 
-  private addSpeedSign(sign: SpeedSign) {
-    const pos = new THREE.Vector3(sign.x + -sign.tz * 2.55, sign.y - 0.2, sign.z + sign.tx * 2.55);
-    const holder = new THREE.Group();
-    holder.position.copy(pos);
-    holder.rotation.y = Math.atan2(-sign.tx, -sign.tz);
+  private rebuildSpeedSigns(net: Network) {
+    const signs = computeSpeedSigns(net);
+    const posts: THREE.Matrix4[] = [];
+    const backs: THREE.Matrix4[] = [];
+    for (const list of this.tmpSpeedBuckets.values()) list.length = 0;
 
-    const post = new THREE.Mesh(this.speedPostGeo, this.postMat);
-    post.position.set(0, 1.15, -0.04);
-    post.castShadow = true;
-    holder.add(post);
+    const t = this.tmpObj;
+    for (const sign of signs) {
+      t.position.set(sign.x + -sign.tz * 2.55, sign.y - 0.2, sign.z + sign.tx * 2.55);
+      t.rotation.set(0, Math.atan2(-sign.tx, -sign.tz), 0);
+      t.scale.set(1, 1, 1);
+      t.updateMatrix();
+      const m = t.matrix.clone();
+      posts.push(m);
+      backs.push(m);
 
-    const back = new THREE.Mesh(this.speedBackGeo, this.darkSteelMat);
-    back.position.set(0, 2.25, -0.02);
-    back.castShadow = true;
-    holder.add(back);
-
-    const texKey = `${sign.advance ? 'adv' : 'main'}:${sign.kmh}`;
-    let tex = this.speedTex.get(texKey);
-    if (!tex) {
-      tex = speedSignTexture(sign.kmh, sign.advance);
-      this.speedTex.set(texKey, tex);
+      const texKey = `${sign.advance ? 'adv' : 'main'}:${sign.kmh}`;
+      let list = this.tmpSpeedBuckets.get(texKey);
+      if (!list) this.tmpSpeedBuckets.set(texKey, (list = []));
+      list.push(m);
     }
-    const faceMat = new THREE.MeshStandardMaterial({
-      map: tex,
-      roughness: 0.4,
-      emissive: 0xffffff,
-      emissiveMap: tex,
-      emissiveIntensity: 0.14,
-    });
-    this.owned.push(faceMat);
-    this.speedMats.push(faceMat);
-    const face = new THREE.Mesh(this.speedBoardGeo, faceMat);
-    face.position.set(0, 2.25, 0.005);
-    holder.add(face);
+    this.speedPools.get('post')!.sync(posts);
+    this.speedPools.get('back')!.sync(backs);
 
-    this.group.add(holder);
+    for (const [texKey, list] of this.tmpSpeedBuckets) {
+      let pool = this.speedPools.get(`face:${texKey}`);
+      if (!pool) {
+        let tex = this.speedTex.get(texKey);
+        if (!tex) {
+          const [kind, kmhStr] = texKey.split(':');
+          tex = speedSignTexture(Number(kmhStr), kind === 'adv');
+          this.speedTex.set(texKey, tex);
+        }
+        const mat = new THREE.MeshStandardMaterial({
+          map: tex,
+          roughness: 0.4,
+          emissive: 0xffffff,
+          emissiveMap: tex,
+          emissiveIntensity: 0.14,
+        });
+        this.speedFaceMats.set(texKey, mat);
+        pool = new InstancedPool(this.group, this.speedBoardGeo, mat, false, false);
+        this.speedPools.set(`face:${texKey}`, pool);
+      }
+      pool.sync(list);
+    }
   }
 
-  private setupLamp(mat: THREE.MeshStandardMaterial, color: number, emissive: number) {
+  private setupLampMat(mat: THREE.MeshStandardMaterial, color: number, emissive: number, rec: NodeRecord) {
     mat.color.set(color);
     mat.emissive.set(emissive);
     mat.roughness = 0.25;
     mat.emissiveIntensity = 0;
-    this.owned.push(mat);
+    rec.owned.push(mat);
     return mat;
   }
 
-  private addSignal(net: Network, node: RailNode, side: Side) {
+  private addSignal(net: Network, node: RailNode, side: Side, rec: NodeRecord) {
     const type = signalType(node.signals[side]);
     const tx = node.dx * side;
     const tz = node.dz * side;
     const yaw = Math.atan2(-tx, -tz);
     const key = keyOf(node.id, side);
 
+    const t = this.tmpObj;
+    const lat = type === 'shunt' ? 2.45 : 2.9;
+    const back = type === 'shunt' ? 2.5 : 3.0;
+    const yOff = type === 'shunt' ? -0.35 : -0.55;
+    const px = node.x + -tz * lat - tx * back;
+    const py = node.y + yOff;
+    const pz = node.z + tx * lat - tz * back;
+    t.position.set(px, py, pz);
+    t.rotation.set(0, yaw, 0);
+    t.scale.set(1, 1, 1);
+    t.updateMatrix();
+    const worldMatrix = t.matrix.clone();
+
     if (type === 'shunt') {
-      const pos = new THREE.Vector3(node.x + -tz * 2.45 - tx * 2.5, node.y - 0.35, node.z + tx * 2.45 - tz * 2.5);
-      const obj = new THREE.Group();
-      obj.position.copy(pos);
-      obj.rotation.y = yaw;
-      const base = new THREE.Mesh(this.shuntBaseGeo, this.concreteMat);
-      base.position.y = 0.1;
-      const post = new THREE.Mesh(this.shuntPostGeo, this.darkSteelMat);
-      post.position.y = 0.7;
-      const head = new THREE.Mesh(this.shuntHeadGeo, this.darkSteelMat);
-      head.position.set(0, 1.38, 0);
-      const stripe = new THREE.Mesh(this.shuntStripeGeo, this.creamPaintMat);
-      stripe.position.set(0, 1.03, 0);
-      obj.add(base, post, head, stripe);
-
-      const red = this.setupLamp(new THREE.MeshStandardMaterial(), 0x2a0606, 0xff1a10);
-      const white = this.setupLamp(new THREE.MeshStandardMaterial(), 0x2a2a26, 0xf4f1de);
-      const redLamp = new THREE.Mesh(this.shuntLensGeo, red);
-      redLamp.position.set(0.14, 1.24, 0.1);
-      const w1 = new THREE.Mesh(this.shuntLensGeo, white);
-      w1.position.set(-0.14, 1.24, 0.1);
-      const w2 = new THREE.Mesh(this.shuntLensGeo, white);
-      w2.position.set(0.14, 1.52, 0.1);
-      obj.add(redLamp, w1, w2);
-      this.group.add(obj);
-
-      const glow = new THREE.Sprite(
-        new THREE.SpriteMaterial({
-          map: this.glowTex,
-          blending: THREE.AdditiveBlending,
-          transparent: true,
-          depthWrite: false,
-          opacity: 0,
-        }),
-      );
-      glow.scale.setScalar(1.9);
-      const lampPos = pos.clone();
-      lampPos.y += 1.38;
-      lampPos.x += -tx * 0.25;
-      lampPos.z += -tz * 0.25;
-      glow.position.copy(lampPos);
-      this.group.add(glow);
-      this.signals.set(key, { key, type, lamps: { red, white }, glow, pos: lampPos });
-      return;
+      for (const part of this.shuntStaticParts) this.pushStaticInstance(part.key, worldMatrix, rec);
+    } else if (type === 'distant') {
+      for (const part of this.distantStaticParts) this.pushStaticInstance(part.key, worldMatrix, rec);
+    } else {
+      for (const prim of this.mainBodyPrims) this.pushStaticInstance(prim.key, worldMatrix, rec);
     }
 
-    if (type === 'distant') {
-      const pos = new THREE.Vector3(node.x + -tz * 2.9 - tx * 3, node.y - 0.55, node.z + tx * 2.9 - tz * 3);
-      const obj = new THREE.Group();
-      obj.position.copy(pos);
-      obj.rotation.y = yaw;
-      const base = new THREE.Mesh(this.distantBaseGeo, this.concreteMat);
-      base.position.y = 0.18;
-      const post = new THREE.Mesh(this.distantPostGeo, this.darkSteelMat);
-      post.position.y = 2.45;
-      post.castShadow = true;
-      obj.add(base, post);
-      for (const by of [1.1, 2.0, 2.9, 3.8]) {
-        const band = new THREE.Mesh(this.distantBandGeo, this.amberPaintMat);
-        band.position.y = by;
-        obj.add(band);
-      }
-      const diamond = new THREE.Mesh(this.distantDiamondGeo, this.darkSteelMat);
-      diamond.position.set(0, 2.45, 0.09);
-      diamond.rotation.z = Math.PI / 4;
-      const diamondIn = new THREE.Mesh(this.distantDiamondInnerGeo, this.amberPaintMat);
-      diamondIn.position.set(0, 2.45, 0.1);
-      diamondIn.rotation.z = Math.PI / 4;
-      const head = new THREE.Mesh(this.distantHeadGeo, this.darkSteelMat);
-      head.position.set(0, 4.75, 0.08);
-      head.castShadow = true;
-      obj.add(diamond, diamondIn, head);
-
-      const yellow = this.setupLamp(new THREE.MeshStandardMaterial(), 0x2a1d06, 0xffa010);
-      const green = this.setupLamp(new THREE.MeshStandardMaterial(), 0x062a14, 0x18ff78);
-      const amberLamp = new THREE.Mesh(this.distantLensGeo, yellow);
-      amberLamp.position.set(0, 4.95, 0.16);
-      const greenLamp = new THREE.Mesh(this.distantLensGeo, green);
-      greenLamp.position.set(0, 4.55, 0.16);
-      for (const hy of [5.09, 4.69]) {
-        const hood = new THREE.Mesh(this.hoodGeo, this.darkSteelMat);
-        hood.position.set(0, hy, 0.28);
-        obj.add(hood);
-      }
-      obj.add(amberLamp, greenLamp);
-      this.group.add(obj);
-
-      const glow = new THREE.Sprite(
-        new THREE.SpriteMaterial({
-          map: this.glowTex,
-          blending: THREE.AdditiveBlending,
-          transparent: true,
-          depthWrite: false,
-          opacity: 0,
-        }),
-      );
-      glow.scale.setScalar(2.6);
-      const lampPos = pos.clone();
-      lampPos.y += 4.75;
-      lampPos.x += -tx * 0.25;
-      lampPos.z += -tz * 0.25;
-      glow.position.copy(lampPos);
-      this.group.add(glow);
-      this.signals.set(key, { key, type, lamps: { yellow, green }, glow, pos: lampPos });
-      return;
-    }
-
-    // Standard 3-aspect main signal, plus an original lit route indicator when protecting a facing junction.
-    const obj = this.assets.clone('signal_mast');
-    const pos = new THREE.Vector3(node.x + -tz * 2.9 - tx * 3, node.y - 0.55, node.z + tx * 2.9 - tz * 3);
-    obj.position.copy(pos);
-    // The lamps face oncoming trains, opposite the direction of travel.
-    obj.rotation.y = yaw;
-    const lamps = {
-      red: this.setupLamp(new THREE.MeshStandardMaterial(), 0x2a0606, 0xff1a10),
-      yellow: this.setupLamp(new THREE.MeshStandardMaterial(), 0x2a1d06, 0xffa010),
-      green: this.setupLamp(new THREE.MeshStandardMaterial(), 0x062a14, 0x18ff78),
-    };
-    obj.traverse((o) => {
-      const m = o as THREE.Mesh;
-      if (!m.isMesh) return;
-      if (o.name.startsWith('lamp_red')) m.material = lamps.red;
-      if (o.name.startsWith('lamp_amber')) m.material = lamps.yellow;
-      if (o.name.startsWith('lamp_green')) m.material = lamps.green;
-    });
-
-    let routeVis: SignalVisual['route'];
-    if (hasFacingJunctionInBlock(net, node.id, side)) {
+    let routeVis: RouteVisual | undefined;
+    if (type === 'main' && hasFacingJunctionInBlock(net, node.id, side)) {
+      this.pushStaticInstance('route:trim', worldMatrix, rec);
+      this.pushStaticInstance('route:box', worldMatrix, rec);
       const rGroup = new THREE.Group();
-      rGroup.position.set(0, 5.82, 0.08);
-      const trim = new THREE.Mesh(this.routeTrimGeo, this.brassMat);
-      const rBox = new THREE.Mesh(this.routeBoxGeo, this.darkSteelMat);
-      rGroup.add(trim, rBox);
+      rGroup.position.set(px, py, pz);
+      rGroup.rotation.y = yaw;
+      const boxWrap = new THREE.Group();
+      boxWrap.position.set(0, 5.82, 0.08);
 
-      const leftMat = this.setupLamp(new THREE.MeshStandardMaterial(), 0x1b1d1e, 0xf4f1de);
-      const rightMat = this.setupLamp(new THREE.MeshStandardMaterial(), 0x1b1d1e, 0xf4f1de);
-      for (const [isRight, mat] of [
-        [false, leftMat],
-        [true, rightMat],
-      ] as const) {
-        const sgn = isRight ? 1 : -1;
-        for (let d = 0; d < 4; d++) {
-          const dot = new THREE.Mesh(this.featherDotGeo, mat);
-          dot.position.set(sgn * (0.16 + d * 0.08), -0.1 + d * 0.09, 0.08);
-          rGroup.add(dot);
-        }
-      }
+      const leftMat = this.setupLampMat(new THREE.MeshStandardMaterial(), 0x1b1d1e, 0xf4f1de, rec);
+      const rightMat = this.setupLampMat(new THREE.MeshStandardMaterial(), 0x1b1d1e, 0xf4f1de, rec);
+      boxWrap.add(new THREE.Mesh(this.leftDotsGeo, leftMat), new THREE.Mesh(this.rightDotsGeo, rightMat));
       const numMat = new THREE.MeshStandardMaterial({
         color: 0xffffff,
         emissive: 0xf4f1de,
         emissiveIntensity: 0,
         roughness: 0.3,
       });
-      this.owned.push(numMat);
+      rec.owned.push(numMat);
       const numMesh = new THREE.Mesh(this.routeNumGeo, numMat);
       numMesh.position.set(0, 0, 0.082);
-      rGroup.add(numMesh);
-
-      obj.add(rGroup);
-      routeVis = { left: leftMat, right: rightMat, numMat, lastKey: '' };
+      boxWrap.add(numMesh);
+      rGroup.add(boxWrap);
+      this.group.add(rGroup);
+      rec.objects.push(rGroup);
+      routeVis = { left: leftMat, right: rightMat, numMat, lastDir: '', lastNum: -1 };
     }
 
-    this.group.add(obj);
-    const glow = new THREE.Sprite(
-      new THREE.SpriteMaterial({
-        map: this.glowTex,
-        blending: THREE.AdditiveBlending,
-        transparent: true,
-        depthWrite: false,
-        opacity: 0,
-      }),
-    );
-    glow.scale.setScalar(2.6);
-    const lampPos = pos.clone();
-    lampPos.y += 4.75;
-    lampPos.x += -tx * 0.25;
-    lampPos.z += -tz * 0.25;
-    glow.position.copy(lampPos);
+    const spriteMat = new THREE.SpriteMaterial({
+      map: this.glowTex,
+      blending: THREE.AdditiveBlending,
+      transparent: true,
+      depthWrite: false,
+      opacity: 0,
+    });
+    rec.owned.push(spriteMat);
+    const glow = new THREE.Sprite(spriteMat);
+    glow.scale.setScalar(type === 'shunt' ? 1.9 : 2.6);
+    glow.position.set(px - tx * 0.25, py + (type === 'shunt' ? 1.38 : 4.75), pz - tz * 0.25);
     this.group.add(glow);
-    this.signals.set(key, { key, type, lamps, route: routeVis, glow, pos: lampPos });
+    rec.objects.push(glow);
+
+    this.signals.set(key, { key, nodeId: node.id, type, worldMatrix, route: routeVis, glow, lastAspect: null });
+    rec.signalKeys.push(key);
+    this.lampsDirty = true;
   }
 
-  private addLever(node: RailNode, side: Side) {
-    const obj = this.assets.clone('switch_stand');
+  private addLever(node: RailNode, side: Side, rec: NodeRecord) {
     const tx = node.dx * side;
     const tz = node.dz * side;
-    const pos = new THREE.Vector3(node.x - -tz * 3.1, node.y - 0.6, node.z - tx * 3.1);
-    obj.position.copy(pos);
-    obj.rotation.y = Math.atan2(tx, tz);
-    // Painted target that turns with the switch position.
-    const armMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5 });
-    this.owned.push(armMat);
-    const arm = new THREE.Mesh(this.armGeo, armMat);
-    arm.position.y = 1.35;
-    obj.add(arm);
-    this.group.add(obj);
-    this.levers.set(keyOf(node.id, side), { arm, node: node.id, side });
+    const px = node.x - -tz * 3.1;
+    const py = node.y - 0.6;
+    const pz = node.z - tx * 3.1;
+    const yaw = Math.atan2(tx, tz);
+    const t = this.tmpObj;
+    t.position.set(px, py, pz);
+    t.rotation.set(0, yaw, 0);
+    t.scale.set(1, 1, 1);
+    t.updateMatrix();
+    this.pushAssetInstances('lever_stand', 'switch_stand', t.matrix.clone(), rec);
+    const key = keyOf(node.id, side);
+    this.levers.set(key, { key, node: node.id, side, px, py, pz, yaw, lastState: -1 });
+    rec.leverKeys.push(key);
+    this.leversDirty = true;
   }
 
-  private addBuffer(node: RailNode, side: Side) {
-    // A dead end on this side: the buffer stop faces back along the track.
-    const obj = this.assets.clone('buffer_stop');
+  private addBuffer(node: RailNode, side: Side, rec: NodeRecord) {
     const tx = node.dx * side;
     const tz = node.dz * side;
-    obj.position.set(node.x, node.y - 0.25, node.z);
-    obj.rotation.y = Math.atan2(-tx, -tz);
-    this.group.add(obj);
+    const t = this.tmpObj;
+    t.position.set(node.x, node.y - 0.25, node.z);
+    t.rotation.set(0, Math.atan2(-tx, -tz), 0);
+    t.scale.set(1, 1, 1);
+    t.updateMatrix();
+    this.pushAssetInstances('buffer', 'buffer_stop', t.matrix.clone(), rec);
   }
 
-  private addStation(net: Network, st: Station) {
-    const node = net.nodes.get(st.nodeId);
-    if (!node) return;
+  private addStation(net: Network, node: RailNode, st: Station, rec: NodeRecord) {
     const halfLen = st.length / 2;
     const seg1 = net.attached(node.id, 1);
     const seg2 = net.attached(node.id, -1);
-    // Sample the track through the station so platforms follow gentle curves.
-    const frames: { x: number; y: number; z: number; tx: number; tz: number }[] = [];
+    const offset = 1.6 + 2.3;
+    const t = this.tmpObj;
+    t.scale.set(1, 1, 1);
+
     const walk = (segs: number[], fromSide: Side, sign: number) => {
       if (!segs.length) return;
       const segId = segs[0];
@@ -546,68 +890,52 @@ export class PropsRenderer {
         if (d > L) break;
         const p = net.sample(segId, forward ? d : L - d);
         const flip = forward ? 1 : -1;
-        frames.push({ x: p.x, y: p.y, z: p.z, tx: p.tx * flip * fromSide, tz: p.tz * flip * fromSide });
+        const tx = p.tx * flip * fromSide;
+        const tz = p.tz * flip * fromSide;
+        const rx = -tz * st.platformSide;
+        const rz = tx * st.platformSide;
+        t.position.set(p.x + rx * offset, p.y - 0.05, p.z + rz * offset);
+        t.rotation.set(0, Math.atan2(rx, rz) + Math.PI / 2, 0);
+        t.updateMatrix();
+        this.pushAssetInstances('platform', 'platform', t.matrix.clone(), rec);
       }
     };
     walk(seg1, 1, 1);
     walk(seg2, -1, -1);
-    if (!frames.length) return;
-
-    const instances: THREE.Matrix4[] = [];
-    const t = new THREE.Object3D();
-    const offset = 1.6 + 2.3;
-    for (const f of frames) {
-      const rx = -f.tz * st.platformSide;
-      const rz = f.tx * st.platformSide;
-      t.position.set(f.x + rx * offset, f.y - 0.05, f.z + rz * offset);
-      // Tile local +X is the track edge, which must point back at the rails.
-      t.rotation.y = Math.atan2(rx, rz) + Math.PI / 2;
-      t.updateMatrix();
-      instances.push(t.matrix.clone());
-    }
-    for (const prim of this.assets.primitives('platform')) {
-      const inst = new THREE.InstancedMesh(prim.geometry, prim.material, instances.length);
-      instances.forEach((m, i) => inst.setMatrixAt(i, m));
-      inst.castShadow = true;
-      inst.receiveShadow = true;
-      inst.frustumCulled = false;
-      this.group.add(inst);
-    }
 
     const rx = -node.dz * st.platformSide;
     const rz = node.dx * st.platformSide;
     const y = node.y + 1.0;
     const yaw = Math.atan2(rx, rz) + Math.PI / 2;
-    const place = (name: string, along: number, lateral: number, yOff = 0, yawOff = 0) => {
-      const obj = this.assets.clone(name);
-      obj.position.set(node.x + node.dx * along + rx * lateral, y + yOff, node.z + node.dz * along + rz * lateral);
-      obj.rotation.y = yaw + yawOff;
-      this.group.add(obj);
-      return obj;
+    const placeInst = (prefix: string, asset: string, along: number, lateral: number, yOff = 0) => {
+      t.position.set(node.x + node.dx * along + rx * lateral, y + yOff, node.z + node.dz * along + rz * lateral);
+      t.rotation.set(0, yaw, 0);
+      t.updateMatrix();
+      this.pushAssetInstances(prefix, asset, t.matrix.clone(), rec);
     };
-    place('station_building', 4, 14.2, -0.08);
-    for (const along of [-42, 42]) place('shelter', along, offset - 0.1);
-    // Lamps on the platform; the nearest few get real point lights.
+    placeInst('station_building', 'station_building', 4, 14.2, -0.08);
+    for (const along of [-42, 42]) placeInst('shelter', 'shelter', along, offset - 0.1);
     for (let along = -st.length / 2 + 12; along < st.length / 2 - 4; along += 26) {
-      place('lamp_post', along, offset - 1.2);
-      const yawR = yaw;
-      this.lamps.push(
+      placeInst('lamp_post', 'lamp_post', along, offset - 1.2);
+      rec.lampPositions.push(
         new THREE.Vector3(
-          node.x + node.dx * along + rx * (offset - 1.2) + Math.cos(yawR) * 0.75,
+          node.x + node.dx * along + rx * (offset - 1.2) + Math.cos(yaw) * 0.75,
           y + 4.5,
-          node.z + node.dz * along + rz * (offset - 1.2) - Math.sin(yawR) * 0.75,
+          node.z + node.dz * along + rz * (offset - 1.2) - Math.sin(yaw) * 0.75,
         ),
       );
     }
-    // Name board.
+    if (rec.lampPositions.length > 0) this.pointLightsDirty = true;
+
+    const tex = signTexture(st.name);
     const boardMat = new THREE.MeshStandardMaterial({
-      map: signTexture(st.name),
+      map: tex,
       roughness: 0.5,
       emissive: 0xffffff,
       emissiveIntensity: 0,
       side: THREE.DoubleSide,
     });
-    this.owned.push(boardMat, boardMat.map!);
+    rec.owned.push(boardMat, tex);
     const board = new THREE.Mesh(this.boardGeo, boardMat);
     board.position.set(
       node.x + node.dx * 16 + rx * (offset + 0.2),
@@ -616,10 +944,48 @@ export class PropsRenderer {
     );
     board.rotation.y = Math.atan2(-rx, -rz);
     this.group.add(board);
+    rec.objects.push(board);
+    rec.stationId = st.id;
+    this.stationBoards.set(st.id, { stationId: st.id, mat: boardMat, tex });
+
     for (const leg of [-2.8, 2.8]) {
-      const post = new THREE.Mesh(this.postGeo, this.postMat);
-      post.position.set(board.position.x + node.dx * leg, y + 1.25, board.position.z + node.dz * leg);
-      this.group.add(post);
+      t.position.set(board.position.x + node.dx * leg, y + 1.25, board.position.z + node.dz * leg);
+      t.rotation.set(0, 0, 0);
+      t.updateMatrix();
+      this.pushStaticInstance('sign_post', t.matrix.clone(), rec);
+    }
+  }
+
+  private flushSignalLamps() {
+    for (const list of this.tmpLampBuckets.values()) list.length = 0;
+    const push = (bucket: string, m: THREE.Matrix4) => {
+      let list = this.tmpLampBuckets.get(bucket);
+      if (!list) this.tmpLampBuckets.set(bucket, (list = []));
+      list.push(m);
+    };
+    for (const v of this.signals.values()) {
+      const a = v.lastAspect ?? 'red';
+      if (v.type === 'shunt') {
+        const on = a !== 'red';
+        push(on ? 'shunt:red:off' : 'shunt:red:on', v.worldMatrix);
+        push(on ? 'shunt:white:on' : 'shunt:white:off', v.worldMatrix);
+        push(on ? 'shunt:white2:on' : 'shunt:white2:off', v.worldMatrix);
+      } else if (v.type === 'distant') {
+        push(a === 'yellow' ? 'dist:yellow:on' : 'dist:yellow:off', v.worldMatrix);
+        push(a === 'green' ? 'dist:green:on' : 'dist:green:off', v.worldMatrix);
+      } else {
+        push(a === 'red' ? 'main:red:on' : 'main:red:off', v.worldMatrix);
+        push(a === 'yellow' ? 'main:amber:on' : 'main:amber:off', v.worldMatrix);
+        push(a === 'green' ? 'main:green:on' : 'main:green:off', v.worldMatrix);
+      }
+    }
+    for (const [key, pool] of this.lampPools) {
+      const list = this.tmpLampBuckets.get(key);
+      if (list) pool.sync(list);
+      else {
+        this.tmpPoolMats.length = 0;
+        pool.sync(this.tmpPoolMats);
+      }
     }
   }
 
@@ -629,18 +995,12 @@ export class PropsRenderer {
     for (const v of this.signals.values()) {
       const ind = sim.indications.get(v.key);
       const aspect = ind?.aspect ?? sim.aspects.get(v.key) ?? 'red';
-      const calling = ind?.callingOn ?? false;
-      const stateKey = `${aspect}:${calling ? 1 : 0}`;
-      if (stateKey !== v.last) {
-        v.last = stateKey;
+      if (aspect !== v.lastAspect) {
+        v.lastAspect = aspect;
+        this.lampsDirty = true;
         if (v.type === 'shunt') {
-          if (v.lamps.red) v.lamps.red.emissiveIntensity = aspect === 'red' ? LAMP_INTENSITY.red : 0;
-          if (v.lamps.white) v.lamps.white.emissiveIntensity = aspect !== 'red' ? LAMP_INTENSITY.white : 0;
           v.glow.material.color.set(aspect === 'red' ? 0xff2a18 : 0xf4f1de);
         } else {
-          if (v.lamps.red) v.lamps.red.emissiveIntensity = aspect === 'red' ? LAMP_INTENSITY.red : 0;
-          if (v.lamps.yellow) v.lamps.yellow.emissiveIntensity = aspect === 'yellow' ? LAMP_INTENSITY.yellow : 0;
-          if (v.lamps.green) v.lamps.green.emissiveIntensity = aspect === 'green' ? LAMP_INTENSITY.green : 0;
           v.glow.material.color.set(aspect === 'red' ? 0xff2a18 : aspect === 'yellow' ? 0xffa820 : 0x30ff88);
         }
       }
@@ -648,9 +1008,9 @@ export class PropsRenderer {
         const route = aspect !== 'red' && ind?.route?.diverging ? ind.route : null;
         const dir = route ? route.dir : 'off';
         const num = route ? route.index + 1 : 0;
-        const rKey = `${dir}:${num}`;
-        if (rKey !== v.route.lastKey) {
-          v.route.lastKey = rKey;
+        if (dir !== v.route.lastDir || num !== v.route.lastNum) {
+          v.route.lastDir = dir;
+          v.route.lastNum = num;
           v.route.left.emissiveIntensity = dir === 'left' ? 14 : 0;
           v.route.right.emissiveIntensity = dir === 'right' ? 14 : 0;
           if (num > 0) {
@@ -675,15 +1035,56 @@ export class PropsRenderer {
       }
       v.glow.material.opacity = 0.15 + night * 0.75;
     }
+
+    if (this.lampsDirty) {
+      this.lampsDirty = false;
+      this.flushSignalLamps();
+    }
+
     const boardEmissive = 0.14 + night * 0.48;
-    for (const m of this.speedMats) m.emissiveIntensity = boardEmissive;
+    for (const m of this.speedFaceMats.values()) m.emissiveIntensity = boardEmissive;
+
     for (const lever of this.levers.values()) {
-      const { node, side } = lever;
-      const opts = net.attached(node, side);
+      const opts = net.attached(lever.node, lever.side);
       if (!opts.length) continue;
-      const idx = opts.indexOf(net.selected(node, side)!);
-      lever.arm.rotation.y = idx === 0 ? 0 : Math.PI / 2;
-      ((lever.arm as THREE.Mesh).material as THREE.MeshStandardMaterial).color.set(idx === 0 ? 0x32c46c : 0xe8a820);
+      const idx = opts.indexOf(net.selected(lever.node, lever.side)!);
+      const state = idx === 0 ? 0 : 1;
+      if (state !== lever.lastState) {
+        lever.lastState = state;
+        this.leversDirty = true;
+      }
+    }
+    if (this.leversDirty) {
+      this.leversDirty = false;
+      const mats = this.tmpLeverMats;
+      const cols = this.tmpLeverCols;
+      mats.length = 0;
+      cols.length = 0;
+      const t = this.tmpObj;
+      let idx = 0;
+      for (const lever of this.levers.values()) {
+        const state = lever.lastState === 1 ? 1 : 0;
+        t.position.set(lever.px, lever.py, lever.pz);
+        t.rotation.set(0, lever.yaw + (state === 0 ? 0 : Math.PI / 2), 0);
+        t.scale.set(1, 1, 1);
+        t.updateMatrix();
+        let m = this.leverMatCache[idx];
+        if (!m) {
+          m = new THREE.Matrix4();
+          this.leverMatCache[idx] = m;
+        }
+        m.copy(t.matrix);
+        mats.push(m);
+        let c = this.leverColCache[idx];
+        if (!c) {
+          c = new THREE.Color();
+          this.leverColCache[idx] = c;
+        }
+        c.setHex(state === 0 ? 0x32c46c : 0xe8a820);
+        cols.push(c);
+        idx++;
+      }
+      this.leverPool.sync(mats, cols);
     }
 
     const camPos = camera.position;
@@ -695,13 +1096,14 @@ export class PropsRenderer {
         this.sortedAt.copy(camPos);
       }
       const sorted = this.nearLamps;
-      this.lightPool.forEach((l, i) => {
+      for (let i = 0; i < this.lightPool.length; i++) {
+        const l = this.lightPool[i];
         const p = sorted[i];
         if (p && p.distanceTo(camPos) < 500) {
           l.position.copy(p);
           l.intensity = 70 * night;
         } else l.intensity = 0;
-      });
+      }
     } else {
       for (const l of this.lightPool) l.intensity = 0;
     }

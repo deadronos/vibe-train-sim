@@ -1,11 +1,121 @@
-// Chunked terrain mesh with procedural slope and height shading, plus the water surface.
+// Chunked terrain mesh with distance LODs, edge skirts, shadow culling and procedural shading, plus water.
 import * as THREE from 'three';
 
 import type { Heightfield, Preset } from '../world/heightfield';
 import { RES, WATER_LEVEL, WORLD_SIZE } from '../world/heightfield';
 
-const CHUNKS = 16;
-const CELLS = RES / CHUNKS;
+export const TERRAIN_CHUNKS = 8;
+const CELLS = RES / TERRAIN_CHUNKS;
+export const TERRAIN_LOD_STEPS = [1, 2, 4] as const;
+const SKIRT_DROPS = [8, 14, 22] as const;
+const TERRAIN_LOD_THRESHOLDS = [120, 420] as const;
+const TERRAIN_LOD_HYSTERESIS = 30;
+
+export function chunkXZDistance(x: number, z: number, minX: number, minZ: number, maxX: number, maxZ: number): number {
+  const dx = x < minX ? minX - x : x > maxX ? x - maxX : 0;
+  const dz = z < minZ ? minZ - z : z > maxZ ? z - maxZ : 0;
+  return Math.hypot(dx, dz);
+}
+
+export function selectLod(dist: number, current: number, thresholds: readonly number[], hysteresis: number): number {
+  const n = thresholds.length;
+  let target = n;
+  for (let i = 0; i < n; i++) {
+    if (dist < thresholds[i]) {
+      target = i;
+      break;
+    }
+  }
+  if (current < 0 || current > n || target === current) return target;
+  if (target > current) {
+    // Stepping down in detail: only switch once past threshold + hysteresis.
+    let lod = current;
+    while (lod < n && dist >= thresholds[lod] + hysteresis) lod++;
+    return lod;
+  }
+  // Stepping up in detail: only switch once inside threshold - hysteresis.
+  let lod = current;
+  while (lod > 0 && dist < thresholds[lod - 1] - hysteresis) lod--;
+  return lod;
+}
+
+/** Builds a shared terrain chunk index buffer with 4 downward edge skirts to prevent LOD seams. */
+export function buildTerrainLodIndex(cells: number, step: number): Uint16Array {
+  const m = cells / step;
+  const n = m + 1;
+  const surfaceTris = m * m * 2;
+  const skirtTris = m * 4 * 2;
+  const out = new Uint16Array((surfaceTris + skirtTris) * 3);
+  let w = 0;
+  for (let j = 0; j < m; j++) {
+    for (let i = 0; i < m; i++) {
+      const a = j * n + i;
+      const b = a + 1;
+      const c = a + n;
+      const d = c + 1;
+      out[w++] = a;
+      out[w++] = c;
+      out[w++] = b;
+      out[w++] = b;
+      out[w++] = c;
+      out[w++] = d;
+    }
+  }
+  const base = n * n;
+  // North edge (j = 0, facing -Z)
+  for (let i = 0; i < m; i++) {
+    const t = i;
+    const t1 = i + 1;
+    const s = base + i;
+    const s1 = s + 1;
+    out[w++] = t;
+    out[w++] = t1;
+    out[w++] = s;
+    out[w++] = t1;
+    out[w++] = s1;
+    out[w++] = s;
+  }
+  // South edge (j = m, facing +Z)
+  for (let i = 0; i < m; i++) {
+    const t = m * n + i;
+    const t1 = t + 1;
+    const s = base + n + i;
+    const s1 = s + 1;
+    out[w++] = t;
+    out[w++] = s;
+    out[w++] = t1;
+    out[w++] = t1;
+    out[w++] = s;
+    out[w++] = s1;
+  }
+  // West edge (i = 0, facing -X)
+  for (let j = 0; j < m; j++) {
+    const t = j * n;
+    const t1 = (j + 1) * n;
+    const s = base + 2 * n + j;
+    const s1 = s + 1;
+    out[w++] = t;
+    out[w++] = s;
+    out[w++] = t1;
+    out[w++] = t1;
+    out[w++] = s;
+    out[w++] = s1;
+  }
+  // East edge (i = m, facing +X)
+  for (let j = 0; j < m; j++) {
+    const t = j * n + m;
+    const t1 = (j + 1) * n + m;
+    const s = base + 3 * n + j;
+    const s1 = s + 1;
+    out[w++] = t;
+    out[w++] = t1;
+    out[w++] = s;
+    out[w++] = t1;
+    out[w++] = s1;
+    out[w++] = s;
+  }
+  return out;
+}
 
 interface Palette {
   grass: number;
@@ -101,9 +211,22 @@ function makeNormalTexture() {
   return tex;
 }
 
+interface TerrainChunk {
+  cx: number;
+  cz: number;
+  minX: number;
+  minZ: number;
+  maxX: number;
+  maxZ: number;
+  mesh: THREE.Mesh;
+  lods: THREE.BufferGeometry[];
+  lod: number;
+  box: THREE.Box3;
+}
+
 export class TerrainRenderer {
   group = new THREE.Group();
-  private chunks: THREE.Mesh[] = [];
+  private chunks: TerrainChunk[] = [];
   private material: THREE.MeshStandardMaterial;
   private uniforms = {
     uGrass: { value: new THREE.Color() },
@@ -123,29 +246,39 @@ export class TerrainRenderer {
   ) {
     this.material = this.makeMaterial();
     this.setPalette(hf.preset);
-    const index: number[] = [];
-    const n = CELLS + 1;
-    for (let j = 0; j < CELLS; j++) {
-      for (let i = 0; i < CELLS; i++) {
-        const a = j * n + i;
-        const b = a + 1;
-        const c = a + n;
-        const d = c + 1;
-        index.push(a, c, b, b, c, d);
-      }
-    }
-    const indexAttr = new THREE.BufferAttribute(new Uint16Array(index), 1);
-    for (let cz = 0; cz < CHUNKS; cz++) {
-      for (let cx = 0; cx < CHUNKS; cx++) {
-        const g = new THREE.BufferGeometry();
-        g.setIndex(indexAttr);
-        g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * n * 3), 3));
-        g.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(n * n * 3), 3));
-        const mesh = new THREE.Mesh(g, this.material);
+    const indexAttrs = TERRAIN_LOD_STEPS.map((step) => new THREE.BufferAttribute(buildTerrainLodIndex(CELLS, step), 1));
+    const chunkSize = WORLD_SIZE / TERRAIN_CHUNKS;
+    const half = WORLD_SIZE / 2;
+
+    for (let cz = 0; cz < TERRAIN_CHUNKS; cz++) {
+      for (let cx = 0; cx < TERRAIN_CHUNKS; cx++) {
+        const lods = TERRAIN_LOD_STEPS.map((step, lodIdx) => {
+          const n = CELLS / step + 1;
+          const vertCount = n * n + 4 * n;
+          const g = new THREE.BufferGeometry();
+          g.setIndex(indexAttrs[lodIdx]);
+          g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(vertCount * 3), 3));
+          g.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(vertCount * 3), 3));
+          return g;
+        });
+        const mesh = new THREE.Mesh(lods[0], this.material);
         mesh.castShadow = true;
         mesh.receiveShadow = true;
         mesh.userData = { cx, cz };
-        this.chunks.push(mesh);
+        const minX = cx * chunkSize - half;
+        const minZ = cz * chunkSize - half;
+        this.chunks.push({
+          cx,
+          cz,
+          minX,
+          minZ,
+          maxX: minX + chunkSize,
+          maxZ: minZ + chunkSize,
+          mesh,
+          lods,
+          lod: 0,
+          box: new THREE.Box3(),
+        });
         this.group.add(mesh);
       }
     }
@@ -252,7 +385,7 @@ export class TerrainRenderer {
     hf.dirty = [0, 0, RES, RES];
   }
 
-  /** Rewrites the chunks overlapping the field's dirty rectangle. */
+  /** Rewrites the LOD geometries of chunks overlapping the field's dirty rectangle. */
   sync() {
     const d = this.hf.dirty;
     if (!d) return;
@@ -261,39 +394,87 @@ export class TerrainRenderer {
     const cell = WORLD_SIZE / RES;
     const s = this.hf.stride;
     const h = this.hf.h;
-    const n = CELLS + 1;
     // Normals sample one cell out, so neighbouring chunks need refreshing too.
     const minC = Math.max(0, Math.floor((d[0] - 1) / CELLS));
-    const maxC = Math.min(CHUNKS - 1, Math.floor((d[2] + 1) / CELLS));
+    const maxC = Math.min(TERRAIN_CHUNKS - 1, Math.floor((d[2] + 1) / CELLS));
     const minR = Math.max(0, Math.floor((d[1] - 1) / CELLS));
-    const maxR = Math.min(CHUNKS - 1, Math.floor((d[3] + 1) / CELLS));
+    const maxR = Math.min(TERRAIN_CHUNKS - 1, Math.floor((d[3] + 1) / CELLS));
+
     for (let cz = minR; cz <= maxR; cz++) {
       for (let cx = minC; cx <= maxC; cx++) {
-        const mesh = this.chunks[cz * CHUNKS + cx];
-        const pos = mesh.geometry.attributes.position as THREE.BufferAttribute;
-        const nor = mesh.geometry.attributes.normal as THREE.BufferAttribute;
-        for (let j = 0; j < n; j++) {
-          for (let i = 0; i < n; i++) {
-            const gi = cx * CELLS + i;
-            const gj = cz * CELLS + j;
-            const k = j * n + i;
-            pos.setXYZ(k, gi * cell - half, h[gj * s + gi], gj * cell - half);
-            const l = h[gj * s + Math.max(0, gi - 1)];
-            const r = h[gj * s + Math.min(RES, gi + 1)];
-            const u = h[Math.max(0, gj - 1) * s + gi];
-            const dn = h[Math.min(RES, gj + 1) * s + gi];
-            const nx = l - r;
-            const nz = u - dn;
-            const ny = 2 * cell;
-            const il = 1 / Math.hypot(nx, ny, nz);
-            nor.setXYZ(k, nx * il, ny * il, nz * il);
+        const chunk = this.chunks[cz * TERRAIN_CHUNKS + cx];
+        for (let lodIdx = 0; lodIdx < TERRAIN_LOD_STEPS.length; lodIdx++) {
+          const step = TERRAIN_LOD_STEPS[lodIdx];
+          const drop = SKIRT_DROPS[lodIdx];
+          const m = CELLS / step;
+          const n = m + 1;
+          const g = chunk.lods[lodIdx];
+          const pos = g.attributes.position as THREE.BufferAttribute;
+          const nor = g.attributes.normal as THREE.BufferAttribute;
+          for (let j = 0; j < n; j++) {
+            for (let i = 0; i < n; i++) {
+              const gi = cx * CELLS + i * step;
+              const gj = cz * CELLS + j * step;
+              const k = j * n + i;
+              pos.setXYZ(k, gi * cell - half, h[gj * s + gi], gj * cell - half);
+              const l = h[gj * s + Math.max(0, gi - 1)];
+              const r = h[gj * s + Math.min(RES, gi + 1)];
+              const u = h[Math.max(0, gj - 1) * s + gi];
+              const dn = h[Math.min(RES, gj + 1) * s + gi];
+              const nx = l - r;
+              const nz = u - dn;
+              const ny = 2 * cell;
+              const il = 1 / Math.hypot(nx, ny, nz);
+              nor.setXYZ(k, nx * il, ny * il, nz * il);
+            }
           }
+          // Copy edge positions dropped downward and keep edge normals so skirt slivers match terrain lighting.
+          const base = n * n;
+          for (let i = 0; i < n; i++) {
+            const top = i;
+            const sk = base + i;
+            pos.setXYZ(sk, pos.getX(top), pos.getY(top) - drop, pos.getZ(top));
+            nor.setXYZ(sk, nor.getX(top), nor.getY(top), nor.getZ(top));
+          }
+          for (let i = 0; i < n; i++) {
+            const top = m * n + i;
+            const sk = base + n + i;
+            pos.setXYZ(sk, pos.getX(top), pos.getY(top) - drop, pos.getZ(top));
+            nor.setXYZ(sk, nor.getX(top), nor.getY(top), nor.getZ(top));
+          }
+          for (let j = 0; j < n; j++) {
+            const top = j * n;
+            const sk = base + 2 * n + j;
+            pos.setXYZ(sk, pos.getX(top), pos.getY(top) - drop, pos.getZ(top));
+            nor.setXYZ(sk, nor.getX(top), nor.getY(top), nor.getZ(top));
+          }
+          for (let j = 0; j < n; j++) {
+            const top = j * n + m;
+            const sk = base + 3 * n + j;
+            pos.setXYZ(sk, pos.getX(top), pos.getY(top) - drop, pos.getZ(top));
+            nor.setXYZ(sk, nor.getX(top), nor.getY(top), nor.getZ(top));
+          }
+          pos.needsUpdate = true;
+          nor.needsUpdate = true;
+          g.computeBoundingBox();
+          g.computeBoundingSphere();
         }
-        pos.needsUpdate = true;
-        nor.needsUpdate = true;
-        mesh.geometry.computeBoundingSphere();
-        mesh.geometry.computeBoundingBox();
+        chunk.box.copy(chunk.lods[0].boundingBox!);
       }
+    }
+  }
+
+  /** Picks per-chunk LOD from camera distance and culls shadow casting outside the sun shadow frustum. */
+  updateLOD(camPos: THREE.Vector3, shadowFrustum: THREE.Frustum | null) {
+    for (let i = 0; i < this.chunks.length; i++) {
+      const c = this.chunks[i];
+      const dist = chunkXZDistance(camPos.x, camPos.z, c.minX, c.minZ, c.maxX, c.maxZ);
+      const nextLod = selectLod(dist, c.lod, TERRAIN_LOD_THRESHOLDS, TERRAIN_LOD_HYSTERESIS);
+      if (nextLod !== c.lod) {
+        c.lod = nextLod;
+        c.mesh.geometry = c.lods[nextLod];
+      }
+      c.mesh.castShadow = shadowFrustum !== null && shadowFrustum.intersectsBox(c.box);
     }
   }
 

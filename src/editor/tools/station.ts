@@ -45,6 +45,7 @@ export class StationTool implements EditorTool {
         platformSide: onRightOfNode ? 1 : -1,
         length: 140,
       });
+      host.net.markStationDirty(node.id);
       host.net.version++;
       ctx.selected = node.id;
     });

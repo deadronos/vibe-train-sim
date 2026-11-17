@@ -47,6 +47,8 @@ export class Environment {
   private moon: THREE.Mesh;
   private time = 0;
   shadowTexelSnap = 0;
+  shadowFrustum = new THREE.Frustum();
+  private shadowMatrix = new THREE.Matrix4();
   private tmp = new THREE.Vector3();
   private keyDir = new THREE.Vector3();
 
@@ -102,8 +104,9 @@ export class Environment {
     cam.right = span;
     cam.top = span;
     cam.bottom = -span;
-    cam.near = 10;
-    cam.far = 2400;
+    cam.near = 600;
+    cam.far = 1650;
+    cam.updateProjectionMatrix();
     this.sun.shadow.bias = -0.00035;
     this.sun.shadow.normalBias = 0.9;
     this.setShadowSize(shadowSize);
@@ -206,6 +209,13 @@ export class Environment {
     this.sun.target.position.set(fx, focus.y, fz);
     this.sun.position.set(fx + dir.x * 1200, focus.y + Math.max(dir.y, 0.08) * 1200, fz + dir.z * 1200);
     this.sun.target.updateMatrixWorld();
+    const sc = this.sun.shadow.camera;
+    sc.position.copy(this.sun.position);
+    sc.lookAt(this.sun.target.position);
+    sc.updateMatrixWorld();
+    sc.matrixWorldInverse.copy(sc.matrixWorld).invert();
+    this.shadowMatrix.multiplyMatrices(sc.projectionMatrix, sc.matrixWorldInverse);
+    this.shadowFrustum.setFromProjectionMatrix(this.shadowMatrix);
 
     this.hemi.color.copy(COLORS.hemiSkyNight).lerp(COLORS.hemiSkyDay, day);
     this.hemi.groundColor.copy(COLORS.hemiGround).multiplyScalar(0.4 + day * 0.6);

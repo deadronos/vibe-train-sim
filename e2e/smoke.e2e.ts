@@ -311,3 +311,117 @@ test('remove tool previews target, deletes one signal, and box-selects multiple 
   await page.mouse.up();
   await expect.poll(() => page.evaluate(() => window.__game.net.segs.size)).toBe(0);
 });
+
+test('keeps starter-map draw calls and triangles below budget and performs incremental edits cleanly', async ({
+  page,
+}) => {
+  await page.addInitScript(() => localStorage.setItem('vibe-train-sim/quality', 'high'));
+  await page.goto('/?debug');
+  await expect(page.locator('#loading')).toHaveClass(/gone/);
+  await frames(page, 6);
+
+  const starter = await page.evaluate(() => {
+    const g = window.__game;
+    return {
+      calls: g.renderer.info.render.calls,
+      triangles: g.renderer.info.render.triangles,
+      nodeRebuilds: g.props.stats.nodeRebuilds,
+      signUpdates: g.props.stats.signUpdates,
+    };
+  });
+  expect(starter.calls).toBeLessThan(285);
+  expect(starter.triangles).toBeLessThan(335_000);
+
+  // Throwing points must not rebuild any props nodes.
+  await page.evaluate(() => {
+    const g = window.__game;
+    const junc = [...g.net.nodes.values()].find((n) => g.net.isJunction(n.id));
+    if (junc) {
+      const side = g.net.attached(junc.id, 1).length > 1 ? 1 : -1;
+      g.net.throwSwitch(junc.id, side);
+    }
+  });
+  await frames(page, 3);
+  expect(await page.evaluate(() => window.__game.props.stats.nodeRebuilds)).toBe(starter.nodeRebuilds);
+
+  // Renaming a station updates only the sign without rebuilding node props.
+  await page.evaluate(() => {
+    const g = window.__game;
+    const st = g.net.stations[0];
+    st.name = 'Newhaven';
+    g.net.markStationRenamed(st.id);
+  });
+  await frames(page, 3);
+  const afterRename = await page.evaluate(() => ({
+    nodeRebuilds: window.__game.props.stats.nodeRebuilds,
+    signUpdates: window.__game.props.stats.signUpdates,
+  }));
+  expect(afterRename.nodeRebuilds).toBe(starter.nodeRebuilds);
+  expect(afterRename.signUpdates).toBe(starter.signUpdates + 1);
+
+  // Placing one scenery item rebuilds only a single scatter region with zero procedural regens.
+  const placeStats = await page.evaluate(() => {
+    const g = window.__game;
+    const regens0 = g.scatter.stats.regionRegens;
+    const mesh0 = g.scatter.stats.regionMeshRebuilds;
+    g.addPlacedScenery({ type: 'tree_pine', x: 50, z: 50, rot: 0, scale: 1 });
+    g.scatter.sync(g.hf, g.net);
+    return {
+      regens: g.scatter.stats.regionRegens - regens0,
+      meshes: g.scatter.stats.regionMeshRebuilds - mesh0,
+    };
+  });
+  expect(placeStats).toEqual({ regens: 0, meshes: 1 });
+
+  // Build a 500-segment network, run a local node move + terrain brush, and sweep camera without errors.
+  const bigStats = await page.evaluate(() => {
+    const g = window.__game;
+    g.newWorld('plains', 2, false);
+    const cols = 25;
+    const rows = 20;
+    const spacing = 110;
+    const grid: ReturnType<typeof g.net.addNode>[][] = [];
+    for (let r = 0; r < rows; r++) {
+      const row = [];
+      for (let c = 0; c <= cols; c++) {
+        const x = (c - cols / 2) * spacing;
+        const z = (r - rows / 2) * spacing;
+        row.push(g.net.addNode(x, g.hf.baseAt(x, z) + 2, z, 1, 0));
+      }
+      grid.push(row);
+    }
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) g.net.addSegment(grid[r][c].id, 1, grid[r][c + 1].id, -1);
+    }
+    g.commitEdit({ scenery: true });
+    g.hf.grade(g.net);
+    g.terrain.sync();
+    g.track.sync(g.net, g.hf);
+    g.props.sync(g.net);
+    g.scatter.sync(g.hf, g.net);
+
+    const segRebuilds0 = g.track.stats.segRebuilds;
+    const mid = grid[10][12];
+    g.net.moveNode(mid.id, mid.x + 2, mid.y, mid.z + 2);
+    g.commitEdit();
+    g.terrain.sync();
+    g.track.sync(g.net, g.hf);
+    g.props.sync(g.net);
+    const segRebuildsAfterMove = g.track.stats.segRebuilds - segRebuilds0;
+
+    // Brush locally and verify only nearby track segments are flagged dirty.
+    g.hf.brush('raise', -900, -900, 60, 0.5);
+    g.hf.grade(g.net);
+    const nearby = g.net.segmentsInBounds(-968, -968, -832, -832);
+    for (const id of nearby) g.net.dirty.add(id);
+    const dirtyCount = g.net.dirty.size;
+    g.track.sync(g.net, g.hf);
+
+    return { segs: g.net.segs.size, segRebuildsAfterMove, dirtyCount };
+  });
+  expect(bigStats.segs).toBe(500);
+  expect(bigStats.segRebuildsAfterMove).toBeLessThan(10);
+  expect(bigStats.dirtyCount).toBeLessThan(20);
+  await frames(page, 4);
+  expect(await page.evaluate(() => window.__game.renderer.info.render.calls)).toBeLessThan(350);
+});

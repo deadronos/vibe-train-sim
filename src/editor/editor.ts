@@ -168,7 +168,10 @@ export class Editor implements EditorContext {
   }
 
   // ------------------------------------------------------------ EditorContext helpers
-  edit(opts: { scenery?: boolean }, fn: () => boolean | void): boolean {
+  edit(
+    opts: { scenery?: boolean; bounds?: { minX: number; minZ: number; maxX: number; maxZ: number } },
+    fn: () => boolean | void,
+  ): boolean {
     this.host.pushUndo();
     if (fn() === false) {
       this.host.abandonEdit();

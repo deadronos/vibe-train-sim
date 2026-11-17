@@ -1,6 +1,6 @@
 import { fbm, ridged, smoothstep } from '../core/noise';
 // Terrain heights. "base" holds noise plus editor brush work; "h" adds embankments and cuttings around track.
-import type { Network, Segment } from '../rail/network';
+import type { BridgeMode, Network, SegGeom, Segment } from '../rail/network';
 
 export type Preset = 'alpine' | 'plains' | 'desert' | 'islands';
 
@@ -10,6 +10,7 @@ export const WATER_LEVEL = 0;
 /** Gap between rail and ground above which the track becomes a bridge. */
 export const BRIDGE_GAP = 6.5;
 const GROUND_BELOW_RAIL = 0.68;
+const MAX_GRADE_REACH = 66;
 
 export function riverCenter(x: number) {
   return 170 * Math.sin(x * 0.0021 + 1.1) + 70 * Math.sin(x * 0.0051);
@@ -77,11 +78,26 @@ export class Heightfield {
   private tBest = new Float32Array((RES + 1) * (RES + 1));
   /** Grid cell bounds touched since the renderer last updated, as [minI, minJ, maxI, maxJ]. */
   dirty: [number, number, number, number] | null = null;
+  private gradedNet: Network | null = null;
+  private gradedSegs = new Map<
+    number,
+    { geom: SegGeom; bridge: BridgeMode; i0: number; j0: number; i1: number; j1: number }
+  >();
+  private gradedStations = new Map<number, { key: string; i0: number; j0: number; i1: number; j1: number }>();
+  private gradeDirty: [number, number, number, number] | null = null;
+  private seenStationIds = new Set<number>();
 
   constructor(preset: Preset, seed: number) {
     this.preset = preset;
     this.seed = seed;
     this.generate();
+  }
+
+  private resetGradingCache() {
+    this.gradedNet = null;
+    this.gradedSegs.clear();
+    this.gradedStations.clear();
+    this.gradeDirty = [0, 0, RES, RES];
   }
 
   generate() {
@@ -96,6 +112,7 @@ export class Heightfield {
     this.pristine.set(this.base);
     this.h.set(this.base);
     this.dirty = [0, 0, RES, RES];
+    this.resetGradingCache();
   }
 
   private sampleArray(arr: Float32Array, x: number, z: number): number {
@@ -172,6 +189,22 @@ export class Heightfield {
     }
   }
 
+  private markGradeDirty(i0: number, j0: number, i1: number, j1: number) {
+    const ci0 = Math.max(0, i0);
+    const cj0 = Math.max(0, j0);
+    const ci1 = Math.min(RES, i1);
+    const cj1 = Math.min(RES, j1);
+    if (ci0 > ci1 || cj0 > cj1) return;
+    if (!this.gradeDirty) this.gradeDirty = [ci0, cj0, ci1, cj1];
+    else {
+      const d = this.gradeDirty;
+      d[0] = Math.min(d[0], ci0);
+      d[1] = Math.min(d[1], cj0);
+      d[2] = Math.max(d[2], ci1);
+      d[3] = Math.max(d[3], cj1);
+    }
+  }
+
   /** Editor brush. mode: raise, lower, smooth or flatten toward flattenTo. */
   brush(
     mode: 'raise' | 'lower' | 'smooth' | 'flatten',
@@ -207,6 +240,9 @@ export class Heightfield {
         }
       }
     }
+    // Pad by max grading reach so any track sample whose baseAt() changed re-stamps its full skirt.
+    const pad = Math.ceil(MAX_GRADE_REACH / cell) + 1;
+    this.markGradeDirty(i0 - pad, j0 - pad, i1 + pad, j1 + pad);
   }
 
   /** True for a segment sample that should be carried by a bridge rather than an embankment. */
@@ -222,17 +258,104 @@ export class Heightfield {
     const half = WORLD_SIZE / 2;
     const cell = WORLD_SIZE / RES;
     const s = this.stride;
+    const padCells = Math.ceil(MAX_GRADE_REACH / cell);
+
+    if (this.gradedNet !== net) {
+      this.gradedNet = net;
+      this.gradedSegs.clear();
+      this.gradedStations.clear();
+      this.gradeDirty = [0, 0, RES, RES];
+    }
+
+    // Collect dirty cell bounds from brush changes and any added, moved, or removed segments and stations.
+    for (const [id, prev] of this.gradedSegs) {
+      if (!net.segs.has(id)) {
+        this.markGradeDirty(prev.i0, prev.j0, prev.i1, prev.j1);
+        this.gradedSegs.delete(id);
+      }
+    }
+    for (const [id, seg] of net.segs) {
+      const g = net.geom.get(id);
+      const prev = this.gradedSegs.get(id);
+      if (prev && prev.geom === g && prev.bridge === seg.bridge) continue;
+      if (prev) this.markGradeDirty(prev.i0, prev.j0, prev.i1, prev.j1);
+      if (!g) {
+        this.gradedSegs.delete(id);
+        continue;
+      }
+      const b = net.segBounds.get(id);
+      let minX = b ? b.minX : Infinity;
+      let maxX = b ? b.maxX : -Infinity;
+      let minZ = b ? b.minZ : Infinity;
+      let maxZ = b ? b.maxZ : -Infinity;
+      if (!b) {
+        for (let i = 0; i < g.n; i++) {
+          const x = g.pos[i * 3];
+          const z = g.pos[i * 3 + 2];
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (z < minZ) minZ = z;
+          if (z > maxZ) maxZ = z;
+        }
+      }
+      const i0 = Math.max(0, Math.floor((minX + half) / cell) - padCells);
+      const i1 = Math.min(RES, Math.ceil((maxX + half) / cell) + padCells);
+      const j0 = Math.max(0, Math.floor((minZ + half) / cell) - padCells);
+      const j1 = Math.min(RES, Math.ceil((maxZ + half) / cell) + padCells);
+      this.gradedSegs.set(id, { geom: g, bridge: seg.bridge, i0, j0, i1, j1 });
+      this.markGradeDirty(i0, j0, i1, j1);
+    }
+
+    const seenSt = this.seenStationIds;
+    seenSt.clear();
+    for (const st of net.stations) {
+      seenSt.add(st.id);
+      const node = net.nodes.get(st.nodeId);
+      const key = node ? `${node.x}:${node.y}:${node.z}:${node.dx}:${node.dz}:${st.platformSide}:${st.length}` : '';
+      const prev = this.gradedStations.get(st.id);
+      if (prev && prev.key === key) continue;
+      if (prev) this.markGradeDirty(prev.i0, prev.j0, prev.i1, prev.j1);
+      if (!node) {
+        this.gradedStations.delete(st.id);
+        continue;
+      }
+      const reach = st.length * 0.5 + 17 + MAX_GRADE_REACH;
+      const i0 = Math.max(0, Math.floor((node.x - reach + half) / cell));
+      const i1 = Math.min(RES, Math.ceil((node.x + reach + half) / cell));
+      const j0 = Math.max(0, Math.floor((node.z - reach + half) / cell));
+      const j1 = Math.min(RES, Math.ceil((node.z + reach + half) / cell));
+      this.gradedStations.set(st.id, { key, i0, j0, i1, j1 });
+      this.markGradeDirty(i0, j0, i1, j1);
+    }
+    for (const [id, prev] of this.gradedStations) {
+      if (!seenSt.has(id)) {
+        this.markGradeDirty(prev.i0, prev.j0, prev.i1, prev.j1);
+        this.gradedStations.delete(id);
+      }
+    }
+    seenSt.clear();
+
+    const rect = this.gradeDirty;
+    if (!rect) return;
+    this.gradeDirty = null;
+    const [ri0, rj0, ri1, rj1] = rect;
+
     const w = this.wBest;
     const t = this.tBest;
-    w.fill(0);
+    for (let j = rj0; j <= rj1; j++) {
+      const row = j * s;
+      for (let i = ri0; i <= ri1; i++) w[row + i] = 0;
+    }
+
     const stamp = (x: number, z: number, target: number, core: number, slope: number) => {
       const groundNow = this.baseAt(x, z);
       const diff = Math.abs(target - groundNow);
       const reach = core + Math.min(55, Math.max(6, diff * slope));
-      const i0 = Math.max(0, Math.floor((x - reach + half) / cell));
-      const i1 = Math.min(RES, Math.ceil((x + reach + half) / cell));
-      const j0 = Math.max(0, Math.floor((z - reach + half) / cell));
-      const j1 = Math.min(RES, Math.ceil((z + reach + half) / cell));
+      const i0 = Math.max(ri0, Math.floor((x - reach + half) / cell));
+      const i1 = Math.min(ri1, Math.ceil((x + reach + half) / cell));
+      const j0 = Math.max(rj0, Math.floor((z - reach + half) / cell));
+      const j1 = Math.min(rj1, Math.ceil((z + reach + half) / cell));
+      if (i0 > i1 || j0 > j1) return;
       for (let j = j0; j <= j1; j++) {
         for (let i = i0; i <= i1; i++) {
           const px = i * cell - half;
@@ -247,9 +370,11 @@ export class Heightfield {
         }
       }
     };
-    for (const seg of net.segs.values()) {
-      const g = net.geom.get(seg.id);
-      if (!g) continue;
+
+    for (const [id, rec] of this.gradedSegs) {
+      if (rec.i1 < ri0 || rec.i0 > ri1 || rec.j1 < rj0 || rec.j0 > rj1) continue;
+      const seg = net.segs.get(id)!;
+      const g = rec.geom;
       for (let i = 0; i < g.n; i += 2) {
         const x = g.pos[i * 3];
         const y = g.pos[i * 3 + 1];
@@ -260,6 +385,8 @@ export class Heightfield {
     }
     // Level ground for platforms and station buildings.
     for (const st of net.stations) {
+      const rec = this.gradedStations.get(st.id);
+      if (!rec || rec.i1 < ri0 || rec.i0 > ri1 || rec.j1 < rj0 || rec.j0 > rj1) continue;
       const node = net.nodes.get(st.nodeId);
       if (!node) continue;
       const rx = -node.dz * st.platformSide;
@@ -271,13 +398,14 @@ export class Heightfield {
         stamp(px, pz, node.y + 0.92, 10.5, 1.8);
       }
     }
-    let minI = RES;
-    let minJ = RES;
-    let maxI = 0;
-    let maxJ = 0;
+
+    let minI = ri1;
+    let minJ = rj1;
+    let maxI = ri0;
+    let maxJ = rj0;
     let changed = false;
-    for (let j = 0; j <= RES; j++) {
-      for (let i = 0; i <= RES; i++) {
+    for (let j = rj0; j <= rj1; j++) {
+      for (let i = ri0; i <= ri1; i++) {
         const k = j * s + i;
         const v = this.base[k] + (t[k] - this.base[k]) * w[k];
         const nv = w[k] > 0 ? v : this.base[k];
@@ -307,5 +435,6 @@ export class Heightfield {
   importEdits(edits: number[]) {
     this.base.set(this.pristine);
     for (let i = 0; i < edits.length; i += 2) this.base[edits[i]] = this.pristine[edits[i]] + edits[i + 1];
+    this.resetGradingCache();
   }
 }

@@ -447,6 +447,79 @@ def rock(name, r, sub=2):
     return blob(name, (0, 0, r * 0.3), r, M["rock"], 0.24, sub, 0.7)
 
 
+def pine_lod1(name, scale=1.0):
+    h = 13.0 * scale
+    p = [cyl("trunk", (0, 0, 0), (0, 0, h * 0.45), 0.26 * scale, M["bark"], 4, r2=0.1)]
+    for z0, z1, r1, r2 in (
+        (h * 0.2, h * 0.63, 3.2 * scale, 0.7 * scale),
+        (h * 0.54, h * 1.04, 2.1 * scale, 0.05),
+    ):
+        bm = bmesh.new()
+        bmesh.ops.create_cone(bm, cap_ends=True, segments=5, radius1=r1, radius2=r2, depth=z1 - z0)
+        for v in bm.verts:
+            v.co.z += (z0 + z1) / 2
+        p.append(new_obj("tier", bm, M["pine"]))
+    return join(name, p)
+
+
+def broadleaf_lod1(name, leaf, scale=1.0):
+    h = 5.2 * scale
+    p = [cyl("trunk", (0, 0, 0), (0, 0, h), 0.3 * scale, M["bark"], 4, r2=0.14)]
+    for (dx, dy, dz, r) in [(0, 0, 2.4, 3.4), (1.6, 0.8, 1.3, 2.3), (-1.4, -0.7, 1.6, 2.3)]:
+        p.append(blob("crown", (dx * scale, dy * scale, h + dz * scale - 1.4), r * scale, leaf, 0.1, 0, 0.9))
+    return join(name, p)
+
+
+def _card_tree(name, leaf, profile_rz, cap_z, cap_r):
+    """Crossed silhouette cards plus a horizontal crown cap so distant trees read full from any angle."""
+    bm = bmesh.new()
+    for angle in (0.0, math.pi / 2):
+        ca, sa = math.cos(angle), math.sin(angle)
+        n = len(profile_rz)
+        if n == 2:
+            # Single triangle card: base [0] to apex [1].
+            r0, z0 = profile_rz[0]
+            _, z1 = profile_rz[1]
+            v0 = bm.verts.new((-r0 * ca, -r0 * sa, z0))
+            v1 = bm.verts.new((r0 * ca, r0 * sa, z0))
+            v2 = bm.verts.new((0.0, 0.0, z1))
+            bm.faces.new((v0, v1, v2))
+        else:
+            left = [bm.verts.new((-r * ca, -r * sa, z)) for r, z in profile_rz]
+            right = [bm.verts.new((r * ca, r * sa, z)) for r, z in profile_rz]
+            for i in range(n - 1):
+                if profile_rz[i + 1][0] <= 1e-4:
+                    bm.faces.new((left[i], right[i], right[i + 1]))
+                else:
+                    bm.faces.new((left[i], right[i], right[i + 1], left[i + 1]))
+    cap = [bm.verts.new((math.cos(a) * cap_r, math.sin(a) * cap_r, cap_z)) for a in (0, math.pi / 2, math.pi, 3 * math.pi / 2)]
+    bm.faces.new(cap)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    ob = new_obj(name, bm, leaf)
+    # Bias normals upward and outward so crossed cards match 3D tree crown shading without brightness pops.
+    me = ob.data
+    me.normals_split_custom_set_from_vertices(
+        [Vector((v.co.x, v.co.y, max(0.8, v.co.z - cap_z * 0.4))).normalized() for v in me.vertices]
+    )
+    return ob
+
+
+def pine_lod2(name, scale=1.0):
+    s = scale
+    profile = [(3.1 * s, 0.8 * s), (0.0, 13.5 * s)]
+    return _card_tree(name, M["pine"], profile, 4.2 * s, 2.4 * s)
+
+
+def broadleaf_lod2(name, leaf, scale=1.0):
+    s = scale
+    profile = [
+        (0.35 * s, 1.0 * s),
+        (3.7 * s, 6.4 * s),
+        (0.0, 11.2 * s),
+    ]
+    return _card_tree(name, leaf, profile, 6.4 * s, 3.2 * s)
+
+
 ASSETS = [
     bogie, coach, wagon_box, wagon_tank, locomotive,
     lambda: locomotive("loco_freight", 22.0, M["freight"], M["freight_band"], (-6.2, -2.1, 2.1, 6.2)),
@@ -457,8 +530,14 @@ ASSETS = [
     lambda: house("house_c", M["brick"], M["slate"], 8.0, 8.0, 5.4),
     pier, abutment, buffer_stop, switch_stand,
     lambda: pine("tree_pine"),
+    lambda: pine_lod1("tree_pine_lod1"),
+    lambda: pine_lod2("tree_pine_lod2"),
     lambda: broadleaf("tree_oak", M["oak"]),
+    lambda: broadleaf_lod1("tree_oak_lod1", M["oak"]),
+    lambda: broadleaf_lod2("tree_oak_lod2", M["oak"]),
     lambda: broadleaf("tree_birch", M["birch"], 0.72),
+    lambda: broadleaf_lod1("tree_birch_lod1", M["birch"], 0.72),
+    lambda: broadleaf_lod2("tree_birch_lod2", M["birch"], 0.72),
     lambda: rock("rock_a", 2.2),
     lambda: rock("rock_b", 3.6),
 ]

@@ -86,3 +86,4 @@ __game.setTrainSpeed(8); // Fast-forward the railway; 0 pauses it
 - **The clock has two meanings.** The clock's Real setting follows train speed, and pausing the railway stops the clock at any setting. The faster settings are a time-lapse of the sky, so the sun moves far faster than the trains on purpose.
 - **Physics changes can make the 40-minute run slower, not just wrong.** The freight train's brakes and top speed set the pace on the starter map, so look at `t.score.stops` if that test fails before changing thresholds.
 - **`console.log` from passing tests may not appear in non-interactive runs.** Write to a file if you need output from a throwaway test.
+- **`InstancedMesh` culling needs explicit bounds.** Three.js checks `instancedMesh.boundingSphere` (not the base geometry's) for frustum culling and shadow-map culling, so call `computeBoundingBox()` and `computeBoundingSphere()` after writing `instanceMatrix`.

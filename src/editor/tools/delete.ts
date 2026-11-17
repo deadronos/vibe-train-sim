@@ -178,6 +178,7 @@ function removeSingleTarget(ctx: EditorContext, target: DeleteTarget) {
     case 'signal':
       ctx.edit({}, () => {
         delete target.node.signals[target.side];
+        net.markSignalDirty(target.node.id);
         net.version++;
       });
       host.toast('Signal removed');
@@ -185,6 +186,7 @@ function removeSingleTarget(ctx: EditorContext, target: DeleteTarget) {
     case 'station':
       ctx.edit({ scenery: true }, () => {
         net.stations = net.stations.filter((s) => s !== target.station);
+        net.markStationDirty(target.station.nodeId);
         net.version++;
       });
       host.toast(`${target.station.name} removed`);
@@ -330,11 +332,15 @@ export class DeleteTool implements EditorTool {
     const ok = ctx.edit({ scenery: true }, () => {
       for (const t of matches.trains) host.removeTrain(t);
       if (matches.signals.length) {
-        for (const { node, side } of matches.signals) delete node.signals[side];
+        for (const { node, side } of matches.signals) {
+          delete node.signals[side];
+          net.markSignalDirty(node.id);
+        }
         net.version++;
       }
       if (matches.stations.length) {
         const drop = new Set(matches.stations);
+        for (const st of matches.stations) net.markStationDirty(st.nodeId);
         net.stations = net.stations.filter((s) => !drop.has(s));
         net.version++;
       }

@@ -41,6 +41,7 @@ export const signalTool: EditorTool = {
         const label = SIGNAL_LABELS[ctx.signalType];
         host.toast(`${label[0].toUpperCase()}${label.slice(1)} signal placed`);
       }
+      host.net.markSignalDirty(node.id);
       host.net.version++;
     });
   },

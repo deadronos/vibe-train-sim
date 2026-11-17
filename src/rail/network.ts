@@ -147,7 +147,21 @@ function xzIntersect(
   return { t, u, x: ax + t * rX, z: az + t * rZ };
 }
 
-function geomBounds(g: SegGeom) {
+const GRID_CELL = 64;
+const GRID_BIAS = 32768;
+
+function gridKey(cx: number, cz: number): number {
+  return (cx + GRID_BIAS) * 65536 + (cz + GRID_BIAS);
+}
+
+export interface Bounds2D {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+}
+
+function geomBounds(g: SegGeom): Bounds2D {
   let minX = Infinity;
   let maxX = -Infinity;
   let minZ = Infinity;
@@ -189,7 +203,7 @@ export function findCurveCrossings(
     if (ignoreNodes.has(seg.a) || ignoreNodes.has(seg.b)) continue;
     const g = net.geom.get(sid);
     if (!g) continue;
-    const b = geomBounds(g);
+    const b = net.segBounds.get(sid) ?? geomBounds(g);
     if (cMaxX < b.minX || cMinX > b.maxX || cMaxZ < b.minZ || cMinZ > b.maxZ) continue;
     for (let i = 0; i < steps; i++) {
       const ax = xs[i];
@@ -289,9 +303,19 @@ export class Network {
   segs = new Map<number, Segment>();
   stations: Station[] = [];
   geom = new Map<number, SegGeom>();
+  /** Per-segment XZ bounding boxes, kept in sync with geom. */
+  segBounds = new Map<number, Bounds2D>();
   /** Segment ids whose geometry changed since the renderer last synced. */
   dirty = new Set<number>();
-  /** Bumped on every edit so props and terrain know to refresh. */
+  /** Node ids whose props (signals, levers, buffers, station) changed since PropsRenderer last synced. */
+  dirtyNodes = new Set<number>();
+  /** Station ids whose name changed since PropsRenderer last synced. */
+  dirtyStationSigns = new Set<number>();
+  /** True when lineside speed signs need recomputation. */
+  speedSignsDirty = true;
+  /** World XZ bounds touched by track/station edits since the caller last consumed them. */
+  dirtyBounds: Bounds2D | null = null;
+  /** Bumped on structural/geometry edits; throwing points does not bump version. */
   version = 0;
   private nextId = 1;
   private adj = new Map<number, { p: number[]; m: number[] }>();
@@ -302,6 +326,131 @@ export class Network {
   private stationRef: Station[] | null = null;
   private stationCount = -1;
   private stationVersion = -1;
+  private nodeGrid = new Map<number, number[]>();
+  private nodeCell = new Map<number, number>();
+  private segGrid = new Map<number, number[]>();
+  private segCells = new Map<number, number[]>();
+  private seenSegs = new Set<number>();
+  private seenNodes = new Set<number>();
+
+  private expandDirtyBounds(minX: number, minZ: number, maxX: number, maxZ: number) {
+    if (!this.dirtyBounds) {
+      this.dirtyBounds = { minX, minZ, maxX, maxZ };
+    } else {
+      const b = this.dirtyBounds;
+      if (minX < b.minX) b.minX = minX;
+      if (minZ < b.minZ) b.minZ = minZ;
+      if (maxX > b.maxX) b.maxX = maxX;
+      if (maxZ > b.maxZ) b.maxZ = maxZ;
+    }
+  }
+
+  private indexNode(n: RailNode) {
+    const key = gridKey(Math.floor(n.x / GRID_CELL), Math.floor(n.z / GRID_CELL));
+    const prev = this.nodeCell.get(n.id);
+    if (prev === key) return;
+    if (prev !== undefined) this.removeFromGrid(this.nodeGrid, prev, n.id);
+    this.nodeCell.set(n.id, key);
+    let bucket = this.nodeGrid.get(key);
+    if (!bucket) this.nodeGrid.set(key, (bucket = []));
+    bucket.push(n.id);
+  }
+
+  private unindexNode(id: number) {
+    const prev = this.nodeCell.get(id);
+    if (prev === undefined) return;
+    this.removeFromGrid(this.nodeGrid, prev, id);
+    this.nodeCell.delete(id);
+  }
+
+  private removeFromGrid(grid: Map<number, number[]>, key: number, id: number) {
+    const bucket = grid.get(key);
+    if (!bucket) return;
+    const idx = bucket.indexOf(id);
+    if (idx >= 0) {
+      bucket[idx] = bucket[bucket.length - 1];
+      bucket.pop();
+    }
+    if (bucket.length === 0) grid.delete(key);
+  }
+
+  private indexSeg(segId: number, g: SegGeom) {
+    this.unindexSeg(segId);
+    const cells: number[] = [];
+    let lastKey = NaN;
+    for (let i = 0; i < g.n; i++) {
+      const key = gridKey(Math.floor(g.pos[i * 3] / GRID_CELL), Math.floor(g.pos[i * 3 + 2] / GRID_CELL));
+      if (key === lastKey) continue;
+      lastKey = key;
+      if (!cells.includes(key)) {
+        cells.push(key);
+        let bucket = this.segGrid.get(key);
+        if (!bucket) this.segGrid.set(key, (bucket = []));
+        bucket.push(segId);
+      }
+    }
+    this.segCells.set(segId, cells);
+  }
+
+  private unindexSeg(segId: number) {
+    const prev = this.segCells.get(segId);
+    if (!prev) return;
+    for (const key of prev) this.removeFromGrid(this.segGrid, key, segId);
+    this.segCells.delete(segId);
+  }
+
+  markNodeDirty(id: number) {
+    this.dirtyNodes.add(id);
+  }
+
+  markSignalDirty(nodeId: number) {
+    this.dirtyNodes.add(nodeId);
+    // Upstream main signals in the same block show a route indicator when a facing junction exists ahead.
+    const seen = this.seenNodes;
+    seen.clear();
+    const walkBack = (nid: number, depth: number) => {
+      if (depth > 16 || seen.has(nid)) return;
+      seen.add(nid);
+      for (const side of [1, -1] as Side[]) {
+        for (const sid of this.attached(nid, side)) {
+          const seg = this.segs.get(sid);
+          if (!seg) continue;
+          const other = seg.a === nid ? seg.b : seg.a;
+          const otherSide = seg.a === nid ? seg.sa : seg.sb;
+          const def = this.nodes.get(other)?.signals[otherSide];
+          if (def) {
+            if (signalType(def) === 'main') this.dirtyNodes.add(other);
+            if (signalType(def) !== 'distant') continue;
+          }
+          walkBack(other, depth + 1);
+        }
+      }
+    };
+    walkBack(nodeId, 0);
+    seen.clear();
+  }
+
+  markStationDirty(nodeId: number) {
+    this.dirtyNodes.add(nodeId);
+    const n = this.nodes.get(nodeId);
+    if (n) this.expandDirtyBounds(n.x - 160, n.z - 160, n.x + 160, n.z + 160);
+  }
+
+  markStationRenamed(stationId: number) {
+    this.dirtyStationSigns.add(stationId);
+  }
+
+  markSpeedSignsDirty() {
+    this.speedSignsDirty = true;
+  }
+
+  segmentsInBounds(minX: number, minZ: number, maxX: number, maxZ: number): number[] {
+    const out: number[] = [];
+    for (const [id, b] of this.segBounds) {
+      if (b.maxX >= minX && b.minX <= maxX && b.maxZ >= minZ && b.minZ <= maxZ) out.push(id);
+    }
+    return out;
+  }
 
   private syncStations() {
     if (
@@ -357,6 +506,8 @@ export class Network {
     const n: RailNode = { id: nid, x, y, z, dx: dx / l, dz: dz / l, sw: {}, signals: {} };
     this.nodes.set(nid, n);
     this.adj.set(nid, { p: [], m: [] });
+    this.indexNode(n);
+    this.dirtyNodes.add(nid);
     this.version++;
     return n;
   }
@@ -377,21 +528,16 @@ export class Network {
   private computeCrossings(): Crossing[] {
     const out: Crossing[] = [];
     const entries = [...this.segs.entries()];
-    const bounds = new Map<number, ReturnType<typeof geomBounds>>();
-    for (const [id] of entries) {
-      const g = this.geom.get(id);
-      if (g) bounds.set(id, geomBounds(g));
-    }
     for (let i = 0; i < entries.length; i++) {
       const [id1, s1] = entries[i];
       const g1 = this.geom.get(id1);
-      const b1 = bounds.get(id1);
+      const b1 = this.segBounds.get(id1);
       if (!g1 || !b1) continue;
       for (let j = i + 1; j < entries.length; j++) {
         const [id2, s2] = entries[j];
         if (s1.a === s2.a || s1.a === s2.b || s1.b === s2.a || s1.b === s2.b) continue;
         const g2 = this.geom.get(id2);
-        const b2 = bounds.get(id2);
+        const b2 = this.segBounds.get(id2);
         if (!g2 || !b2) continue;
         if (b1.maxX < b2.minX || b1.minX > b2.maxX || b1.maxZ < b2.minZ || b1.minZ > b2.maxZ) continue;
         let idx = 0;
@@ -487,6 +633,10 @@ export class Network {
     const s = this.segs.get(id);
     if (!s) return;
     this.dirtyCrossedSegments([id]);
+    const oldBounds = this.segBounds.get(id);
+    if (oldBounds) this.expandDirtyBounds(oldBounds.minX, oldBounds.minZ, oldBounds.maxX, oldBounds.maxZ);
+    this.unindexSeg(id);
+    this.segBounds.delete(id);
     this.segs.delete(id);
     this.geom.delete(id);
     this.dirty.add(id);
@@ -506,13 +656,18 @@ export class Network {
   }
 
   removeNode(id: number) {
-    if (!this.nodes.has(id)) return;
+    const n = this.nodes.get(id);
+    if (!n) return;
+    this.expandDirtyBounds(n.x - 160, n.z - 160, n.x + 160, n.z + 160);
     for (const list of [this.attached(id, 1), this.attached(id, -1)]) {
       for (const sid of [...list]) this.removeSegment(sid);
     }
+    this.unindexNode(id);
     this.nodes.delete(id);
     this.adj.delete(id);
     this.stations = this.stations.filter((s) => s.nodeId !== id);
+    this.dirtyNodes.add(id);
+    this.speedSignsDirty = true;
     this.version++;
   }
 
@@ -572,9 +727,12 @@ export class Network {
 
   moveNode(id: number, x: number, y: number, z: number) {
     const n = this.nodes.get(id)!;
+    this.expandDirtyBounds(n.x - 40, n.z - 40, n.x + 40, n.z + 40);
     n.x = x;
     n.y = y;
     n.z = z;
+    this.indexNode(n);
+    this.expandDirtyBounds(x - 40, z - 40, x + 40, z + 40);
     this.touchNodes([id]);
   }
 
@@ -591,9 +749,18 @@ export class Network {
       }
     }
     for (const id of far) {
+      this.dirtyNodes.add(id);
       for (const sid of [...this.attached(id, 1), ...this.attached(id, -1)]) segIds.add(sid);
     }
-    for (const sid of segIds) this.rebuild(sid);
+    for (const sid of segIds) {
+      const s = this.segs.get(sid);
+      if (s) {
+        if (this.stationAt(s.a)) this.dirtyNodes.add(s.a);
+        if (this.stationAt(s.b)) this.dirtyNodes.add(s.b);
+      }
+      this.rebuild(sid);
+    }
+    this.speedSignsDirty = true;
     this.version++;
     this.dirtyCrossedSegments(segIds);
   }
@@ -664,7 +831,14 @@ export class Network {
     const minRadius = curveMinRadius(rx, rz, n, 3);
     const cap = s.speedLimit !== undefined ? Math.min(LINE_VMAX, s.speedLimit) : LINE_VMAX;
     const vmax = Math.min(cap, Math.sqrt(LATERAL_ACCEL * minRadius));
-    this.geom.set(segId, { length: L, n, step, pos, tan, minRadius, vmax });
+    const oldBounds = this.segBounds.get(segId);
+    if (oldBounds) this.expandDirtyBounds(oldBounds.minX, oldBounds.minZ, oldBounds.maxX, oldBounds.maxZ);
+    const geomObj: SegGeom = { length: L, n, step, pos, tan, minRadius, vmax };
+    const bounds = geomBounds(geomObj);
+    this.geom.set(segId, geomObj);
+    this.segBounds.set(segId, bounds);
+    this.expandDirtyBounds(bounds.minX, bounds.minZ, bounds.maxX, bounds.maxZ);
+    this.indexSeg(segId, geomObj);
     this.dirty.add(segId);
   }
 
@@ -724,13 +898,67 @@ export class Network {
     if (options.length < 2) return;
     const cur = this.selected(node, side)!;
     this.nodes.get(node)!.sw[side] = options[(options.indexOf(cur) + 1) % options.length];
-    this.version++;
   }
 
   nearest(x: number, z: number, maxDist: number) {
     let best: { seg: number; s: number; dist: number } | null = null;
     let bd = maxDist * maxDist;
+
+    const searchGrid = (r: number) => {
+      const c0x = Math.floor((x - r) / GRID_CELL);
+      const c1x = Math.floor((x + r) / GRID_CELL);
+      const c0z = Math.floor((z - r) / GRID_CELL);
+      const c1z = Math.floor((z + r) / GRID_CELL);
+      const seen = this.seenSegs;
+      seen.clear();
+      let limit = Math.min(bd, r * r);
+      for (let cz = c0z; cz <= c1z; cz++) {
+        for (let cx = c0x; cx <= c1x; cx++) {
+          const bucket = this.segGrid.get(gridKey(cx, cz));
+          if (!bucket) continue;
+          for (let bIdx = 0; bIdx < bucket.length; bIdx++) {
+            const id = bucket[bIdx];
+            if (seen.has(id)) continue;
+            seen.add(id);
+            const sb = this.segBounds.get(id);
+            if (sb) {
+              const curR = Math.sqrt(limit);
+              if (x + curR < sb.minX || x - curR > sb.maxX || z + curR < sb.minZ || z - curR > sb.maxZ) continue;
+            }
+            const g = this.geom.get(id);
+            if (!g) continue;
+            for (let i = 0; i < g.n; i++) {
+              const dx = g.pos[i * 3] - x;
+              const dz = g.pos[i * 3 + 2] - z;
+              const d = dx * dx + dz * dz;
+              if (d < limit) {
+                limit = d;
+                bd = d;
+                best = { seg: id, s: i * g.step, dist: Math.sqrt(d) };
+              }
+            }
+          }
+        }
+      }
+      seen.clear();
+    };
+
+    if (maxDist <= 512) {
+      searchGrid(maxDist);
+      return best;
+    }
+    // Expanding local search handles huge maxDist queries (like train reseating) in O(1) when track is nearby.
+    searchGrid(128);
+    if (best) return best;
+    searchGrid(512);
+    if (best) return best;
+
     for (const [id, g] of this.geom) {
+      const sb = this.segBounds.get(id);
+      if (sb) {
+        const curR = Math.sqrt(bd);
+        if (x + curR < sb.minX || x - curR > sb.maxX || z + curR < sb.minZ || z - curR > sb.maxZ) continue;
+      }
       for (let i = 0; i < g.n; i++) {
         const dx = g.pos[i * 3] - x;
         const dz = g.pos[i * 3 + 2] - z;
@@ -747,6 +975,28 @@ export class Network {
   nearestNode(x: number, z: number, maxDist: number): RailNode | null {
     let best: RailNode | null = null;
     let bd = maxDist * maxDist;
+    const c0x = Math.floor((x - maxDist) / GRID_CELL);
+    const c1x = Math.floor((x + maxDist) / GRID_CELL);
+    const c0z = Math.floor((z - maxDist) / GRID_CELL);
+    const c1z = Math.floor((z + maxDist) / GRID_CELL);
+    if ((c1x - c0x + 1) * (c1z - c0z + 1) <= 256) {
+      for (let cz = c0z; cz <= c1z; cz++) {
+        for (let cx = c0x; cx <= c1x; cx++) {
+          const bucket = this.nodeGrid.get(gridKey(cx, cz));
+          if (!bucket) continue;
+          for (let i = 0; i < bucket.length; i++) {
+            const n = this.nodes.get(bucket[i]);
+            if (!n) continue;
+            const d = (n.x - x) ** 2 + (n.z - z) ** 2;
+            if (d < bd) {
+              bd = d;
+              best = n;
+            }
+          }
+        }
+      }
+      return best;
+    }
     for (const n of this.nodes.values()) {
       const d = (n.x - x) ** 2 + (n.z - z) ** 2;
       if (d < bd) {
