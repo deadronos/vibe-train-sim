@@ -335,6 +335,12 @@ export class Hud {
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && document.body.matches('.menu-open, .trains-open')) set(null);
     });
+    const topbar = $('topbar');
+    const placeBelowTopbar = () => {
+      document.body.style.setProperty('--below-topbar', `${Math.ceil(topbar.getBoundingClientRect().bottom + 10)}px`);
+    };
+    placeBelowTopbar();
+    if (typeof ResizeObserver !== 'undefined') new ResizeObserver(placeBelowTopbar).observe(topbar);
   }
 
   private bindSound() {
