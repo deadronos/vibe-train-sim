@@ -565,4 +565,12 @@ test('keeps starter-map draw calls and triangles below budget and performs incre
   expect(bigStats.dirtyCount).toBeLessThan(20);
   await frames(page, 4);
   expect(await page.evaluate(() => window.__game.renderer.info.render.calls)).toBeLessThan(350);
+
+  // Verify terrain grading weights feed chunk geometry and toggling high/low water reflections works cleanly.
+  const hasGradedWeights = await page.evaluate(() => window.__game.hf.gradeWeight.some((w) => w > 0.9));
+  expect(hasGradedWeights).toBe(true);
+  await page.evaluate(() => window.__game.setQuality('low'));
+  await frames(page, 3);
+  await page.evaluate(() => window.__game.setQuality('high'));
+  await frames(page, 3);
 });

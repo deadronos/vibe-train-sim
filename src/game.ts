@@ -244,6 +244,7 @@ export class Game {
     this.renderer.setSize(w, h, false);
     this.composer.setPixelRatio(this.renderer.getPixelRatio());
     this.composer.setSize(w, h);
+    this.terrain?.resize(w, h);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
   }
@@ -496,6 +497,7 @@ export class Game {
     this.appliedSceneryDensity = density;
     this.scatter?.setDensity(density);
     this.particles?.setEnabled(!low);
+    this.terrain?.setPlanarReflections(!low);
     if (rebuildScenery && densityChanged && this.hf) this.scatter.rebuild(this.hf, this.net);
     this.resize();
   }
@@ -894,11 +896,12 @@ export class Game {
     this.props.update(this.sim, this.camera, this.env.night);
     this.trainsR.updateHeadlight(this.sim, this.driven, this.env.night, this.camera.position);
     this.particles.update(this.sim, this.hf, dt, simDt, this.env.night);
-    this.terrain.update(this.elapsed);
+    this.terrain.update(this.elapsed, this.env);
 
     this.updateAudio(dt, simDt > 0);
     this.hud.update();
     this.renderer.info.reset();
+    this.terrain.renderReflection(this.renderer, this.camera);
     this.composer.render();
     this.hud.perf.update(this.renderer.info, dt);
     this.adaptQuality(dt);

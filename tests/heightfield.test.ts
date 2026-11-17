@@ -4,7 +4,7 @@ import { buildDemoNetwork, populateDemoTrains } from '../src/rail/demoMap';
 import { Network } from '../src/rail/network';
 import { Sim } from '../src/rail/sim';
 import type { Preset } from '../src/world/heightfield';
-import { BRIDGE_GAP, Heightfield, WATER_LEVEL } from '../src/world/heightfield';
+import { BRIDGE_GAP, Heightfield, RES, WATER_LEVEL, WORLD_SIZE } from '../src/world/heightfield';
 
 const PRESETS: Preset[] = ['alpine', 'plains', 'desert', 'islands'];
 
@@ -134,9 +134,35 @@ describe('grading', () => {
 
       for (let k = 0; k < hf.h.length; k++) {
         expect(Math.abs(hf.h[k] - ref.h[k])).toBeLessThan(0.002);
+        expect(Math.abs(hf.gradeWeight[k] - ref.gradeWeight[k])).toBeLessThan(0.01);
       }
     },
   );
+
+  it('tracks grading weight under flush track and clears it under bridges', () => {
+    const hf = new Heightfield('islands', 1);
+    const cell = WORLD_SIZE / RES;
+    const gi = Math.round((400 + WORLD_SIZE / 2) / cell);
+    const gj = Math.round((400 + WORLD_SIZE / 2) / cell);
+    const x = gi * cell - WORLD_SIZE / 2;
+    const z = gj * cell - WORLD_SIZE / 2;
+    const flushY = hf.baseAt(x, z) + 0.68;
+
+    const net = new Network();
+    const a = net.addNode(x - 100, flushY, z, 1, 0);
+    const b = net.addNode(x + 100, flushY, z, 1, 0);
+    const seg = net.addSegment(a.id, 1, b.id, -1, 'none');
+    hf.dirty = null;
+    hf.grade(net);
+    expect(hf.gradeWeight[gj * hf.stride + gi]).toBe(1);
+    expect(hf.dirty).not.toBeNull();
+
+    seg.bridge = 'force';
+    hf.dirty = null;
+    hf.grade(net);
+    expect(hf.gradeWeight[gj * hf.stride + gi]).toBe(0);
+    expect(hf.dirty).not.toBeNull();
+  });
 
   it('keeps dirty bounds local during a local brush edit on a large network', () => {
     const hf = new Heightfield('plains', 2);
