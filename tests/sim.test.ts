@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { buildDemoNetwork, populateDemoTrains, SHUTTLE } from '../src/rail/demoMap';
 import { Network } from '../src/rail/network';
 import { Sim, Train } from '../src/rail/sim';
+import { walkTrack } from '../src/rail/walk';
 import { Heightfield } from '../src/world/heightfield';
 
 function line() {
@@ -371,5 +372,43 @@ describe('editing under running trains', () => {
     net.removeSegment(s1.id);
     net.removeSegment(s2.id);
     expect(sim.syncTrack()).toEqual([t]);
+  });
+});
+
+describe('station indexing and walkTrack', () => {
+  it('keeps stationAt and stationById synchronized across direct station edits', () => {
+    const { net, a, b } = line();
+    const st1 = { id: 10, name: 'Alpha', nodeId: a.id, platformSide: 1 as const, length: 120 };
+    const st2 = { id: 20, name: 'Beta', nodeId: b.id, platformSide: -1 as const, length: 140 };
+    net.stations.push(st1);
+    expect(net.stationAt(a.id)).toEqual(st1);
+    expect(net.stationById(10)).toEqual(st1);
+    net.stations.push(st2);
+    expect(net.stationAt(b.id)).toEqual(st2);
+    expect(net.stationById(20)).toEqual(st2);
+    net.stations = net.stations.filter((s) => s.id !== 10);
+    expect(net.stationAt(a.id)).toBeUndefined();
+    expect(net.stationById(10)).toBeUndefined();
+    expect(net.stationAt(b.id)).toEqual(st2);
+  });
+
+  it('walks segments in order and stops on callback return or range', () => {
+    const { net, s1, s2 } = line();
+    const visited: number[] = [];
+    const hit = walkTrack(
+      net,
+      (_seg, node, side) => net.selected(node, side),
+      s1.id,
+      1,
+      0,
+      2000,
+      10,
+      ({ seg, end }) => {
+        visited.push(seg);
+        return seg === s2.id ? end : undefined;
+      },
+    );
+    expect(visited).toEqual([s1.id, s2.id]);
+    expect(hit).toBeCloseTo(1000, 0);
   });
 });

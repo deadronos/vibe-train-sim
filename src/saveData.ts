@@ -2,9 +2,10 @@
 import type { Network, SignalType } from './rail/network';
 import type { TrainState } from './rail/sim';
 import type { Car, CarType } from './rail/vehicles';
-import type { PlacedItem, SceneryType } from './render/scatter';
 import type { Preset } from './world/heightfield';
 import { RES } from './world/heightfield';
+import type { PlacedItem } from './world/scenery';
+import { SCENERY_TYPES } from './world/scenery';
 
 export interface SaveData {
   // Version 1 saves have no train state and load unchanged, with v raised to 2.
@@ -41,16 +42,7 @@ export type ParseResult = { ok: true; data: SaveData } | { ok: false; reason: st
 
 // Typed as records so adding a union member without listing it here fails to compile.
 const PRESETS: Record<Preset, true> = { alpine: true, plains: true, desert: true, islands: true };
-const SCENERY: Record<SceneryType, true> = {
-  tree_pine: true,
-  tree_oak: true,
-  tree_birch: true,
-  rock_a: true,
-  rock_b: true,
-  house_a: true,
-  house_b: true,
-  house_c: true,
-};
+const SCENERY = SCENERY_TYPES;
 const CAR_TYPES: Record<CarType, true> = {
   loco_diesel: true,
   loco_freight: true,

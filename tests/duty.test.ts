@@ -68,7 +68,7 @@ describe('driving a service by hand', () => {
     const { sim, t, events } = driving(0, () => 470);
     run(sim, 0.2);
     expect(events).toHaveLength(0);
-    expect(t.statusText).toMatch(/Draw forward/);
+    expect(t.status.kind).toBe('draw_forward');
   });
 
   it('counts a miss when the train leaves its stop behind', () => {

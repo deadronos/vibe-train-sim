@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:smoke": "vite build && playwright test",
-    "assets": "/Applications/Blender.app/Contents/MacOS/Blender --background --factory-startup --python tools/blender/build_assetpack.py",
+    "assets": "node tools/buildAssets.mjs",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "format": "oxfmt",

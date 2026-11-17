@@ -70,7 +70,7 @@ export class ServiceDiagram {
 
     // Stations
     for (const id of order) {
-      const st = sim.net.stations.find((s) => s.id === id);
+      const st = sim.net.stationById(id);
       ctx.strokeStyle = 'rgba(233, 228, 210, 0.15)';
       ctx.lineWidth = 1;
       ctx.beginPath();

@@ -46,6 +46,62 @@
       // Stylesheets are imported for their side effects.
       "files": ["src/main.ts"],
       "rules": { "import/no-unassigned-import": "off" }
+    },
+    {
+      // Keep Three.js, the DOM and higher layers out of the simulation, terrain and math layers.
+      "files": ["src/rail/**/*.ts", "src/world/**/*.ts", "src/core/**/*.ts"],
+      "rules": {
+        "no-restricted-globals": ["error", "window", "document"],
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "three",
+                  "three/*",
+                  "../render/*",
+                  "../ui/*",
+                  "../editor/*",
+                  "../game*",
+                  "../audio*",
+                  "../persistence*",
+                  "../saveData*",
+                  "../history*",
+                  "../driverInput*",
+                  "../mapLibrary*",
+                  "../startupError*"
+                ],
+                "message": "Simulation, world and core modules must stay free of Three.js, DOM and higher layers."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      // Support modules beside Game stay free of Three.js and renderers so headless tests can import them.
+      "files": [
+        "src/saveData.ts",
+        "src/persistence.ts",
+        "src/history.ts",
+        "src/mapLibrary.ts",
+        "src/startupError.ts",
+        "src/driverInput.ts"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["three", "three/*", "./render/*"],
+                "message": "Modules beside Game must stay free of Three.js and renderers."
+              }
+            ]
+          }
+        ]
+      }
     }
   ]
 }

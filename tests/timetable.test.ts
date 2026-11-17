@@ -58,7 +58,7 @@ describe('timetabled departures', () => {
       const { sim, t, last } = atPlatform(ai, 8 * H + 60);
       run(sim, 2);
       expect(t.dwell).toBeGreaterThan(0);
-      expect(t.statusText).toBe('Leaves at 08:01');
+      expect(t.status).toEqual({ kind: 'leaves_at', time: 8 * H + 60 });
       expect(sim.departureWait(t)).toBe(60);
       sim.clock += 61;
       run(sim, 0.5);
@@ -116,7 +116,7 @@ describe('a timetabled starter railway', () => {
       sim.clock = start + i * 0.1;
       sim.update(0.1);
       sim.trains.forEach((t, k) => {
-        if (t.statusText.startsWith('Leaves at')) waited++;
+        if (t.status.kind === 'leaves_at') waited++;
         // Leaving a platform moves the train on to its next stop.
         if (before[k].dwell > 0 && t.dwell <= 0 && t.schedIdx !== before[k].idx) {
           const dep = t.times[before[k].idx];

@@ -49,7 +49,6 @@ import { Assets } from './render/assets';
 import { CameraRig } from './render/cameraRig';
 import { Environment } from './render/environment';
 import { PropsRenderer } from './render/props';
-import type { PlacedItem } from './render/scatter';
 import { ScatterRenderer } from './render/scatter';
 import { TerrainRenderer } from './render/terrain';
 import { TrackRenderer } from './render/track';
@@ -61,6 +60,7 @@ import { showFatal } from './ui/fatal';
 import { Hud } from './ui/hud';
 import type { Preset } from './world/heightfield';
 import { Heightfield } from './world/heightfield';
+import type { PlacedItem } from './world/scenery';
 
 const TRAIN_SPEEDS = [0, 1, 2, 4, 8];
 const AUTOSAVE_MS = 60_000;

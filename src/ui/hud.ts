@@ -5,12 +5,13 @@ import type { MapEntry } from '../mapLibrary';
 import type { Quality, Rules } from '../persistence';
 import type { Duty } from '../rail/duty';
 import { clock } from '../rail/duty';
-import type { Side, SignalType } from '../rail/network';
+import type { Network, Side, SignalType } from '../rail/network';
 import { LINE_VMAX, signalType } from '../rail/network';
-import type { DeskInfo, SimEvent, Train } from '../rail/sim';
+import type { DeskInfo, SimEvent, Train, TrainStatus } from '../rail/sim';
+import { clockText } from '../rail/sim';
 import { CAM_LABEL } from '../render/cameraRig';
-import type { SceneryType } from '../render/scatter';
 import type { Preset } from '../world/heightfield';
+import type { SceneryType } from '../world/scenery';
 import { Guide } from './guide';
 import { OverviewMap } from './overviewMap';
 import { PerfOverlay } from './perfOverlay';
@@ -61,6 +62,30 @@ function brakeText(t: Train) {
   if (t.slipping) return 'Wheels slipping: ease off the power';
   if (t.airBrake > 0.02 || t.brake > 0) return 'Air brake on';
   if (t.dynamic > 0) return 'Engine brake on';
+  return '';
+}
+
+export function formatTrainStatus(status: TrainStatus, net: Network): string {
+  switch (status.kind) {
+    case 'idle':
+      return '';
+    case 'at_platform':
+      return 'At platform';
+    case 'waiting_signal':
+      return 'Waiting at signal';
+    case 'running':
+      return 'Running';
+    case 'next_stop':
+      return `Next stop: ${net.stationById(status.stationId)?.name ?? ''}`;
+    case 'leaves_at':
+      return `Leaves at ${clockText(status.time)}`;
+    case 'doors_open':
+      return 'Doors open';
+    case 'draw_forward':
+      return `Draw forward ${status.by} m to stand in the platform`;
+    case 'past_platform':
+      return `${status.by} m past the platform: change ends and set back`;
+  }
   return '';
 }
 
@@ -563,7 +588,7 @@ export class Hud {
       p.innerHTML = `<h2>Select</h2><p>Click a point on the track to change it. Drag a point to move it. Drag the ground to move the view.</p>`;
       return;
     }
-    const station = g.net.stations.find((s) => s.nodeId === n.id);
+    const station = g.net.stationAt(n.id);
     const rows: string[] = [
       `<h2>Track point</h2>`,
       `<label><span>Rail height: <output id="sel-y">${n.y.toFixed(1)}</output> m</span><input id="sel-h" type="range" min="-5" max="160" step="0.5" value="${n.y}" /></label>`,
@@ -800,7 +825,7 @@ export class Hud {
       ? 'Autopilot is driving. Press W or move the lever to take over'
       : warnActive
         ? warn.text
-        : tripText || t.statusText || brakeText(t);
+        : tripText || formatTrainStatus(t.status, g.net) || brakeText(t);
     trainTextEl.classList.toggle('alert', !t.ai && (warnActive || t.tripped || t.spadTripped));
 
     const ackBtn = $<HTMLButtonElement>('btn-ack');
@@ -853,7 +878,9 @@ export class Hud {
       const row = this.trainRows.get(train.id);
       if (!row) continue;
       row.speed.textContent = `${Math.round(train.speed * 3.6)} km/h`;
-      const text = train.ai ? train.statusText : `You are driving: ${train.duty?.total ?? 0} points`;
+      const text = train.ai
+        ? formatTrainStatus(train.status, g.net)
+        : `You are driving: ${train.duty?.total ?? 0} points`;
       if (row.state.textContent !== text) row.state.textContent = text;
     }
   }
@@ -884,7 +911,7 @@ export class Hud {
   /** When the player is due at the station ahead, how long until then, or how late they are. */
   private dueText(t: Train, station: string) {
     const due = t.duty?.due;
-    const target = this.game.net.stations.find((s) => s.id === t.targetStation);
+    const target = t.targetStation !== null ? this.game.net.stationById(t.targetStation) : undefined;
     if (t.ai || due === undefined || due === null || target?.name !== station) return '';
     const left = due - this.game.sim.time;
     return left >= 0 ? `, due in ${clock(left)}` : `, ${clock(-left)} late`;

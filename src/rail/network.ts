@@ -297,6 +297,40 @@ export class Network {
   private adj = new Map<number, { p: number[]; m: number[] }>();
   private crossingsCache: Crossing[] = [];
   private crossingsVersion = -1;
+  private stationByNode = new Map<number, Station>();
+  private stationByIdMap = new Map<number, Station>();
+  private stationRef: Station[] | null = null;
+  private stationCount = -1;
+  private stationVersion = -1;
+
+  private syncStations() {
+    if (
+      this.stationRef === this.stations &&
+      this.stationCount === this.stations.length &&
+      this.stationVersion === this.version
+    ) {
+      return;
+    }
+    this.stationByNode.clear();
+    this.stationByIdMap.clear();
+    for (const s of this.stations) {
+      this.stationByNode.set(s.nodeId, s);
+      this.stationByIdMap.set(s.id, s);
+    }
+    this.stationRef = this.stations;
+    this.stationCount = this.stations.length;
+    this.stationVersion = this.version;
+  }
+
+  stationAt(nodeId: number): Station | undefined {
+    this.syncStations();
+    return this.stationByNode.get(nodeId);
+  }
+
+  stationById(id: number): Station | undefined {
+    this.syncStations();
+    return this.stationByIdMap.get(id);
+  }
 
   id() {
     return this.nextId++;
