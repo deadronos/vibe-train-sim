@@ -140,6 +140,7 @@ export class Game {
     minRadius: Infinity,
     onBridge: false,
     nearby: 0,
+    cab: false,
   };
 
   constructor() {
@@ -888,6 +889,7 @@ export class Game {
       this.tmpAudioInput.minRadius = minRadius;
       this.tmpAudioInput.onBridge = onBridge;
       this.tmpAudioInput.nearby = nearby;
+      this.tmpAudioInput.cab = this.rig.cabInteriorActive;
       this.audio.update(this.tmpAudioInput, t.odometer, this.tmpJunctionDists, this.tmpBogieOffsets);
       this.audio.updateWarning(dt, !quiet && !t.ai && !!t.warning && !t.warning.acknowledged);
     } else {
@@ -901,6 +903,7 @@ export class Game {
       this.tmpAudioInput.minRadius = Infinity;
       this.tmpAudioInput.onBridge = false;
       this.tmpAudioInput.nearby = 0;
+      this.tmpAudioInput.cab = false;
       this.tmpJunctionDists.length = 0;
       this.tmpBogieOffsets.length = 0;
       this.audio.update(this.tmpAudioInput, 0, this.tmpJunctionDists, this.tmpBogieOffsets);
