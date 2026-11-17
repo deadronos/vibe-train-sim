@@ -29,7 +29,7 @@ export interface EditorHost {
   readonly placedScenery: readonly PlacedItem[];
   readonly generatedScenery: readonly PlacedItem[];
   pushUndo(): void;
-  commitEdit(opts?: { scenery?: boolean }): void;
+  commitEdit(opts?: { scenery?: boolean; bounds?: { minX: number; minZ: number; maxX: number; maxZ: number } }): void;
   abandonEdit(): void;
   addPlacedScenery(item: PlacedItem): void;
   placedSceneryNear(x: number, z: number, radius: number): number;
@@ -59,7 +59,10 @@ export interface EditorContext {
   trainKind: TrainKind;
 
   /** Runs an edit inside pushUndo + commitEdit, abandoning it without a redo entry if fn returns false. */
-  edit(opts: { scenery?: boolean }, fn: () => boolean | void): boolean;
+  edit(
+    opts: { scenery?: boolean; bounds?: { minX: number; minZ: number; maxX: number; maxZ: number } },
+    fn: () => boolean | void,
+  ): boolean;
   refuseIfBroken(node: number, action: string): boolean;
   setStatus(text: string): void;
   refreshPanel(): void;

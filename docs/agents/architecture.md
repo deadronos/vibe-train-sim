@@ -36,7 +36,7 @@ Defined in `src/rail/network.ts`.
 - A signal at `node.signals[side]` governs trains leaving the node on that side, with `type?: 'main' | 'distant' | 'shunt'` (missing defaults to `'main'`).
 - **Level crossings:** `Network.crossings` detects unconnected segments whose XZ paths cross with vertical separation under `CROSSING_CLEARANCE` (grade-separated bridges are excluded).
 - **Speed limits and boards:** Segments inherit curve `vmax` capped by `LINE_VMAX` and optional `Segment.speedLimit`. `computeSpeedSigns()` derives lineside speed boards and 250 m advance warning boards from limit changes.
-- Segment geometry is derived and rebuilt from nodes. It is never saved.
+- Segment geometry is derived and rebuilt from nodes. It is never saved. `Network` maintains a 64 m spatial grid for `nearest()` and `nearestNode()`, plus per-segment bounds (`segBounds`) and incremental dirty sets (`dirty`, `dirtyNodes`, `dirtyStationSigns`, `speedSignsDirty`, `dirtyBounds`). Throwing points does not bump `version`.
 
 ## Simulation
 
@@ -61,14 +61,14 @@ Defined in `src/rail/network.ts`.
 Defined in `src/world/heightfield.ts`, on a 512-cell grid over 3200 m.
 
 - `pristine` is the generated noise, `base` adds brush edits, and `h` adds track grading on top. `h` is what gets drawn.
-- `grade()` recomputes `h` from `base` and the network. Call it after any track or terrain change.
+- `grade()` incrementally recomputes `h` from `base` and the network over the cell rectangle touched by brush edits or changed segments and stations. Call it after any track or terrain change.
 - `isBridgeSample()` decides bridge or embankment from `base`, so track rendering and grading always agree. Rendering rebuilds bridges from the same data.
 
 ## Frame and edit flow
 
 Each frame in `Game.frame()`: read input, update the simulation (paused while editing unless the editor's option is on), sync renderers, update the environment, then render through the bloom composer.
 
-Renderers pull changes rather than being told. `net.dirty` flags segments to rebuild, `net.version` triggers a props rebuild, and `hf.dirty` flags terrain chunks.
+Renderers pull incremental changes rather than being told. `net.dirty` triggers per-segment rebuilds merged into world chunks by `TrackRenderer`; `net.dirtyNodes`, `net.dirtyStationSigns` and `net.speedSignsDirty` update `PropsRenderer` per node or sign while sharing network-wide `InstancedMesh` pools; `hf.dirty` refreshes `TerrainRenderer` chunks across their distance LODs (with edge skirts to prevent seams); and `ScatterRenderer` updates only affected `8 × 8` regions across distance LODs while culling `castShadow` to `Environment.shadowFrustum`.
 
 After an edit, call `Game.commitEdit()`, which regrades terrain and calls `Sim.syncTrack()`. That compares segment fingerprints with the last call and re-seats only trains standing on a changed or removed segment, on the nearest track and keeping their speed, platform wait and timetable progress. Other trains are not touched, so an edit that changes no track (scenery, a signal away from them) never slows anyone. Splitting a segment for a signal counts as a change for the trains on it. Call `Game.pushUndo()` before making the edit, and only once something actually changes: selecting must not touch history. Undo stores whole JSON snapshots, limited to 40. An edit that turns out to be invalid calls `Game.abandonEdit()`, which restores the last snapshot without leaving a redo step. Moving, raising or turning a point is checked with `Network.problemAt()`, the same radius and grade rules used when laying track, and refused that way.
 

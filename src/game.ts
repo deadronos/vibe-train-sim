@@ -244,6 +244,7 @@ export class Game {
     this.props.invalidate();
     this.props.sync(net);
     this.scatter.rebuild(hf, net);
+    net.dirtyBounds = null;
     this.driven = null;
     this.history.clear();
     this.hud.syncUndo();
@@ -481,6 +482,7 @@ export class Game {
     net.dirty = new Set(net.segs.keys());
     this.scatter.placed = [...d.placed];
     this.scatter.exclusions = [...(d.exclusions ?? [])];
+    this.scatter.markAllDirty();
     this.props.invalidate();
     this.scatterTimer = 0.01;
     this.editor.selected = null;
@@ -501,9 +503,18 @@ export class Game {
   }
 
   /** Call after any change to the map. Keeps terrain and trains consistent with the new track. */
-  commitEdit(opts: { scenery?: boolean } = {}) {
+  commitEdit(opts: { scenery?: boolean; bounds?: { minX: number; minZ: number; maxX: number; maxZ: number } } = {}) {
     this.hf.grade(this.net);
     for (const t of this.sim.syncTrack()) this.removeTrain(t);
+    if (this.net.dirtyBounds) {
+      const b = this.net.dirtyBounds;
+      this.scatter.markBoundsDirty(b.minX - 40, b.minZ - 40, b.maxX + 40, b.maxZ + 40, true);
+      this.net.dirtyBounds = null;
+    }
+    if (opts.bounds) {
+      const b = opts.bounds;
+      this.scatter.markBoundsDirty(b.minX, b.minZ, b.maxX, b.maxZ, true);
+    }
     if (opts.scenery) this.scatterTimer = 0.25;
     this.hud.syncTrains();
   }
@@ -518,6 +529,7 @@ export class Game {
 
   addPlacedScenery(item: PlacedItem) {
     this.scatter.placed.push(item);
+    this.scatter.markPlacedDirty(item.x, item.z);
   }
 
   placedSceneryNear(x: number, z: number, radius: number) {
@@ -525,7 +537,8 @@ export class Game {
   }
 
   removePlacedScenery(index: number) {
-    this.scatter.placed.splice(index, 1);
+    const [removed] = this.scatter.placed.splice(index, 1);
+    if (removed) this.scatter.markPlacedDirty(removed.x, removed.z);
   }
 
   generatedSceneryNear(x: number, z: number, radius: number) {
@@ -534,6 +547,7 @@ export class Game {
 
   addSceneryExclusion(ex: SceneryExclusion) {
     this.scatter.exclusions.push(ex);
+    this.scatter.markExclusionDirty(ex);
   }
 
   /** Adds and places a train on track; returns any existing train blocking it if there is no room. */
@@ -775,7 +789,7 @@ export class Game {
     this.props.sync(this.net);
     if (this.scatterTimer > 0) {
       this.scatterTimer -= dt;
-      if (this.scatterTimer <= 0) this.scatter.rebuild(this.hf, this.net);
+      if (this.scatterTimer <= 0) this.scatter.sync(this.hf, this.net);
     }
     this.trainsR.sync(this.sim);
 
@@ -787,6 +801,9 @@ export class Game {
       this.focus.copy(this.rig.focus);
     }
     this.env.update(dt, this.focus, this.trainSpeed);
+    const shadowFrustum = this.env.sun.castShadow && this.renderer.shadowMap.enabled ? this.env.shadowFrustum : null;
+    this.terrain.updateLOD(this.camera.position, shadowFrustum);
+    this.scatter.updateLOD(this.camera.position, shadowFrustum, this.focus);
     this.assets.setNight(this.env.night);
     this.props.update(this.sim, this.camera, this.env.night);
     this.trainsR.updateHeadlight(this.sim, this.driven, this.env.night);

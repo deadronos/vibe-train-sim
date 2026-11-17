@@ -1,13 +1,14 @@
-// Builds rails, sleepers, ballast and bridges for each segment by sweeping profiles along its curve.
+// Builds rails, sleepers, ballast and bridges by sweeping profiles per segment and merging into world chunks.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 import type { Network, SegGeom } from '../rail/network';
 import { DIAMOND_MAX_DY } from '../rail/network';
 import type { Heightfield } from '../world/heightfield';
-import { WATER_LEVEL } from '../world/heightfield';
+import { WATER_LEVEL, WORLD_SIZE } from '../world/heightfield';
 import type { Assets } from './assets';
 
+const CHUNKS = 8;
 type Profile = [number, number][];
 
 const RAIL: Profile = [
@@ -150,19 +151,48 @@ const MATS = () => ({
   sleeper: new THREE.MeshStandardMaterial({ color: 0x4d4a45, roughness: 0.9 }),
   deck: new THREE.MeshStandardMaterial({ color: 0x77756f, roughness: 0.88 }),
   girder: new THREE.MeshStandardMaterial({ color: 0x31434c, metalness: 0.6, roughness: 0.52 }),
-  ruststeel: new THREE.MeshStandardMaterial({ color: 0x5a3f2e, metalness: 0.55, roughness: 0.62 }),
 });
 
-interface SegMesh {
+interface SegCache {
+  chunk: number;
+  ballast: THREE.BufferGeometry | null;
+  rail: THREE.BufferGeometry | null;
+  deck: THREE.BufferGeometry | null;
+  girder: THREE.BufferGeometry | null;
+  sleepers: THREE.Matrix4[];
+  piers: THREE.Matrix4[];
+  abutments: THREE.Matrix4[];
+  struts: THREE.Matrix4[];
+}
+
+interface ChunkMesh {
   group: THREE.Group;
   disposables: THREE.BufferGeometry[];
+  instanced: THREE.InstancedMesh[];
+}
+
+function chunkOfPoint(x: number, z: number): number {
+  const half = WORLD_SIZE / 2;
+  const cx = Math.max(0, Math.min(CHUNKS - 1, Math.floor(((x + half) / WORLD_SIZE) * CHUNKS)));
+  const cz = Math.max(0, Math.min(CHUNKS - 1, Math.floor(((z + half) / WORLD_SIZE) * CHUNKS)));
+  return cz * CHUNKS + cx;
+}
+
+function mergeList(geos: THREE.BufferGeometry[]): THREE.BufferGeometry | null {
+  if (!geos.length) return null;
+  if (geos.length === 1) return geos[0].clone();
+  return mergeGeometries(geos, false);
 }
 
 export class TrackRenderer {
   group = new THREE.Group();
+  readonly stats = { segRebuilds: 0, chunkRebuilds: 0 };
   private crossingGroup = new THREE.Group();
   private lastCrossingVersion = -1;
-  private meshes = new Map<number, SegMesh>();
+  private segCache = new Map<number, SegCache>();
+  private chunkSegs = new Map<number, Set<number>>();
+  private chunkMeshes = new Map<number, ChunkMesh>();
+  private dirtyChunks = new Set<number>();
   private mats = MATS();
   private frogMat = new THREE.MeshStandardMaterial({ color: 0x2c3033, metalness: 0.85, roughness: 0.4 });
   private sleeperGeo = new THREE.BoxGeometry(2.5, 0.14, 0.26);
@@ -181,7 +211,10 @@ export class TrackRenderer {
   }
 
   clear() {
-    for (const id of [...this.meshes.keys()]) this.remove(id);
+    for (const id of [...this.segCache.keys()]) this.removeSegCache(id);
+    for (const cid of [...this.chunkMeshes.keys()]) this.clearChunkMesh(cid);
+    this.chunkSegs.clear();
+    this.dirtyChunks.clear();
     this.clearCrossings();
     this.lastCrossingVersion = -1;
   }
@@ -193,29 +226,144 @@ export class TrackRenderer {
     }
   }
 
-  private remove(id: number) {
-    const m = this.meshes.get(id);
-    if (!m) return;
-    this.group.remove(m.group);
-    for (const g of m.disposables) g.dispose();
-    m.group.traverse((o) => {
-      if ((o as THREE.InstancedMesh).isInstancedMesh) (o as THREE.InstancedMesh).dispose();
-    });
-    this.meshes.delete(id);
+  private removeSegCache(id: number) {
+    const s = this.segCache.get(id);
+    if (!s) return;
+    s.ballast?.dispose();
+    s.rail?.dispose();
+    s.deck?.dispose();
+    s.girder?.dispose();
+    const set = this.chunkSegs.get(s.chunk);
+    if (set) {
+      set.delete(id);
+      if (set.size === 0) this.chunkSegs.delete(s.chunk);
+    }
+    this.dirtyChunks.add(s.chunk);
+    this.segCache.delete(id);
   }
 
-  /** Rebuilds every segment flagged dirty on the network, plus shared diamond crossings. */
+  private clearChunkMesh(cid: number) {
+    const cm = this.chunkMeshes.get(cid);
+    if (!cm) return;
+    this.group.remove(cm.group);
+    for (const g of cm.disposables) g.dispose();
+    for (const im of cm.instanced) im.dispose();
+    this.chunkMeshes.delete(cid);
+  }
+
+  /** Rebuilds every segment flagged dirty on the network, merging dirty world chunks and crossings. */
   sync(net: Network, hf: Heightfield) {
     const hadDirty = net.dirty.size > 0;
     for (const id of net.dirty) {
-      this.remove(id);
-      if (net.segs.has(id)) this.build(net, hf, id);
+      this.removeSegCache(id);
+      if (net.segs.has(id)) {
+        const cache = this.buildSegCache(net, hf, id);
+        this.segCache.set(id, cache);
+        let set = this.chunkSegs.get(cache.chunk);
+        if (!set) this.chunkSegs.set(cache.chunk, (set = new Set()));
+        set.add(id);
+        this.dirtyChunks.add(cache.chunk);
+        this.stats.segRebuilds++;
+      }
     }
     net.dirty.clear();
+
+    if (this.dirtyChunks.size > 0) {
+      for (const cid of this.dirtyChunks) {
+        this.rebuildChunk(cid);
+        this.stats.chunkRebuilds++;
+      }
+      this.dirtyChunks.clear();
+    }
+
     if (hadDirty || this.lastCrossingVersion !== net.version) {
       this.lastCrossingVersion = net.version;
       this.rebuildCrossings(net);
     }
+  }
+
+  private rebuildChunk(cid: number) {
+    this.clearChunkMesh(cid);
+    const segIds = this.chunkSegs.get(cid);
+    if (!segIds || segIds.size === 0) return;
+
+    const ballastGeos: THREE.BufferGeometry[] = [];
+    const railGeos: THREE.BufferGeometry[] = [];
+    const deckGeos: THREE.BufferGeometry[] = [];
+    const girderGeos: THREE.BufferGeometry[] = [];
+    const sleeperMats: THREE.Matrix4[] = [];
+    const pierMats: THREE.Matrix4[] = [];
+    const abutmentMats: THREE.Matrix4[] = [];
+    const strutMats: THREE.Matrix4[] = [];
+
+    for (const id of segIds) {
+      const c = this.segCache.get(id);
+      if (!c) continue;
+      if (c.ballast) ballastGeos.push(c.ballast);
+      if (c.rail) railGeos.push(c.rail);
+      if (c.deck) deckGeos.push(c.deck);
+      if (c.girder) girderGeos.push(c.girder);
+      for (let i = 0; i < c.sleepers.length; i++) sleeperMats.push(c.sleepers[i]);
+      for (let i = 0; i < c.piers.length; i++) pierMats.push(c.piers[i]);
+      for (let i = 0; i < c.abutments.length; i++) abutmentMats.push(c.abutments[i]);
+      for (let i = 0; i < c.struts.length; i++) strutMats.push(c.struts[i]);
+    }
+
+    const group = new THREE.Group();
+    const disposables: THREE.BufferGeometry[] = [];
+    const instanced: THREE.InstancedMesh[] = [];
+
+    const addMerged = (geos: THREE.BufferGeometry[], mat: THREE.Material, castShadow: boolean) => {
+      const merged = mergeList(geos);
+      if (!merged) return;
+      merged.computeBoundingBox();
+      merged.computeBoundingSphere();
+      const mesh = new THREE.Mesh(merged, mat);
+      mesh.castShadow = castShadow;
+      mesh.receiveShadow = true;
+      mesh.frustumCulled = true;
+      group.add(mesh);
+      disposables.push(merged);
+    };
+
+    addMerged(ballastGeos, this.mats.ballast, false);
+    addMerged(railGeos, this.mats.rail, false);
+    addMerged(deckGeos, this.mats.deck, true);
+    addMerged(girderGeos, this.mats.girder, true);
+
+    const addInst = (
+      geo: THREE.BufferGeometry,
+      mat: THREE.Material,
+      list: THREE.Matrix4[],
+      castShadow: boolean,
+      receiveShadow: boolean,
+    ) => {
+      if (!list.length) return;
+      const inst = new THREE.InstancedMesh(geo, mat, list.length);
+      for (let i = 0; i < list.length; i++) inst.setMatrixAt(i, list[i]);
+      inst.instanceMatrix.needsUpdate = true;
+      inst.castShadow = castShadow;
+      inst.receiveShadow = receiveShadow;
+      inst.frustumCulled = true;
+      inst.computeBoundingBox();
+      inst.computeBoundingSphere();
+      group.add(inst);
+      instanced.push(inst);
+    };
+
+    addInst(this.sleeperGeo, this.mats.sleeper, sleeperMats, false, true);
+    if (pierMats.length) {
+      for (const prim of this.assets.primitives('pier')) addInst(prim.geometry, prim.material, pierMats, true, true);
+    }
+    if (abutmentMats.length) {
+      for (const prim of this.assets.primitives('abutment')) {
+        addInst(prim.geometry, prim.material, abutmentMats, true, true);
+      }
+    }
+    addInst(this.strutGeo, this.mats.girder, strutMats, true, false);
+
+    this.group.add(group);
+    this.chunkMeshes.set(cid, { group, disposables, instanced });
   }
 
   private rebuildCrossings(net: Network) {
@@ -280,8 +428,11 @@ export class TrackRenderer {
       if (!list.length) return;
       const inst = new THREE.InstancedMesh(geo, mat, list.length);
       list.forEach((m, i) => inst.setMatrixAt(i, m));
+      inst.instanceMatrix.needsUpdate = true;
       inst.receiveShadow = true;
-      inst.frustumCulled = false;
+      inst.frustumCulled = true;
+      inst.computeBoundingBox();
+      inst.computeBoundingSphere();
       this.crossingGroup.add(inst);
     };
     emit(this.frogGeo, this.frogMat, frogs);
@@ -289,11 +440,12 @@ export class TrackRenderer {
     emit(this.crossTimberGeo, this.mats.sleeper, timbers);
   }
 
-  private build(net: Network, hf: Heightfield, id: number) {
+  private buildSegCache(net: Network, hf: Heightfield, id: number): SegCache {
     const seg = net.segs.get(id)!;
     const g = net.geom.get(id) as SegGeom;
-    const group = new THREE.Group();
-    const disposables: THREE.BufferGeometry[] = [];
+    const mid = Math.floor(g.n / 2);
+    const chunk = chunkOfPoint(g.pos[mid * 3], g.pos[mid * 3 + 2]);
+
     const stride = g.minRadius > 400 ? 2 : 1;
     const frames: Frame[] = [];
     const idxs: number[] = [];
@@ -335,11 +487,9 @@ export class TrackRenderer {
     const ballastGeos: THREE.BufferGeometry[] = [];
     const deckGeos: THREE.BufferGeometry[] = [];
     const girderGeos: THREE.BufferGeometry[] = [];
-    const steelGeos: THREE.BufferGeometry[] = [];
     const piers: Frame[] = [];
     const abutments: { f: Frame; flip: boolean }[] = [];
     const struts: [THREE.Vector3, THREE.Vector3][] = [];
-    const hasBridge = bridge.some(Boolean);
 
     let i = 0;
     while (i < frames.length) {
@@ -354,10 +504,10 @@ export class TrackRenderer {
         } else {
           deckGeos.push(sweep(run, DECK));
           const overWater = water.slice(i, end + 1).filter(Boolean).length > run.length * 0.2;
-          if (overWater) this.addTruss(run, steelGeos, struts);
+          if (overWater) this.addTruss(run, girderGeos, struts);
           else girderGeos.push(sweep(run, GIRDER));
           // Railings on both sides.
-          steelGeos.push(sweep(run, BOX(-2.85, 0.75, 0.03, 0.03)), sweep(run, BOX(2.85, 0.75, 0.03, 0.03)));
+          girderGeos.push(sweep(run, BOX(-2.85, 0.75, 0.03, 0.03)), sweep(run, BOX(2.85, 0.75, 0.03, 0.03)));
           let acc = 0;
           const spacing = overWater ? 36 : 24;
           let nextPier = spacing * 0.5;
@@ -376,24 +526,21 @@ export class TrackRenderer {
       i = j + 1;
     }
 
-    const addMerged = (geos: THREE.BufferGeometry[], mat: THREE.Material, castShadow: boolean, yOff = 0) => {
-      if (!geos.length) return;
+    const collapse = (geos: THREE.BufferGeometry[], yOff = 0): THREE.BufferGeometry | null => {
+      if (!geos.length) return null;
       const merged = geos.length === 1 ? geos[0] : mergeGeometries(geos, false);
       if (geos.length > 1) for (const x of geos) x.dispose();
-      const mesh = new THREE.Mesh(merged, mat);
-      if (yOff) mesh.position.y = yOff;
-      mesh.castShadow = castShadow;
-      mesh.receiveShadow = true;
-      group.add(mesh);
-      disposables.push(merged);
+      if (yOff) merged.translate(0, yOff, 0);
+      return merged;
     };
+
     const crossings = net.crossingsOn(id).filter((c) => Math.abs(c.y1 - c.y2) <= DIAMOND_MAX_DY);
     const sinkBallast = crossings.some((c) => c.seg2 === id) ? -0.014 : 0;
-    addMerged(ballastGeos, this.mats.ballast, false, sinkBallast);
-    addMerged(deckGeos, this.mats.deck, true);
-    addMerged(girderGeos, this.mats.girder, true);
-    addMerged(steelGeos, this.mats.girder, true);
-    const rails = [
+
+    const ballast = collapse(ballastGeos, sinkBallast);
+    const deck = collapse(deckGeos);
+    const girder = collapse(girderGeos);
+    const rail = collapse([
       sweep(
         frames,
         RAIL.map(([a, b]) => [a - 0.7175, b]),
@@ -402,14 +549,12 @@ export class TrackRenderer {
         frames,
         RAIL.map(([a, b]) => [a + 0.7175, b]),
       ),
-    ];
-    addMerged(rails, this.mats.rail, false);
+    ]);
 
-    // Sleepers, skipping the shared diamond crossing core where crossing timbers sit.
+    const t = this.tmp;
+    const sleepers: THREE.Matrix4[] = [];
     const spacing = 0.72;
     const count = Math.max(1, Math.floor(g.length / spacing));
-    const sleeperMats: THREE.Matrix4[] = [];
-    const t = this.tmp;
     for (let k = 0; k < count; k++) {
       const sAlong = (k + 0.5) * spacing;
       if (crossings.some((c) => Math.abs(sAlong - (c.seg1 === id ? c.s1 : c.s2)) < 2.2)) continue;
@@ -418,20 +563,47 @@ export class TrackRenderer {
       t.rotation.set(0, Math.atan2(p.tx, p.tz), 0);
       t.scale.set(1, 1, 1);
       t.updateMatrix();
-      sleeperMats.push(t.matrix.clone());
-    }
-    if (sleeperMats.length) {
-      const sleepers = new THREE.InstancedMesh(this.sleeperGeo, this.mats.sleeper, sleeperMats.length);
-      sleeperMats.forEach((m, k) => sleepers.setMatrixAt(k, m));
-      sleepers.receiveShadow = true;
-      sleepers.frustumCulled = true;
-      sleepers.computeBoundingSphere();
-      group.add(sleepers);
+      sleepers.push(t.matrix.clone());
     }
 
-    if (hasBridge) this.addBridgeInstances(group, piers, abutments, struts);
-    this.group.add(group);
-    this.meshes.set(id, { group, disposables });
+    const pierMats: THREE.Matrix4[] = [];
+    for (const f of piers) {
+      t.position.set(f.x, f.y - 0.62, f.z);
+      t.rotation.set(0, Math.atan2(f.rx, f.rz) - Math.PI / 2, 0);
+      t.scale.set(1, 1, 1);
+      t.updateMatrix();
+      pierMats.push(t.matrix.clone());
+    }
+
+    const abutmentMats: THREE.Matrix4[] = [];
+    for (const { f, flip } of abutments) {
+      t.position.set(f.x, f.y - 0.62, f.z);
+      t.rotation.set(0, Math.atan2(f.rx, f.rz) - Math.PI / 2 + (flip ? Math.PI : 0), 0);
+      t.scale.set(1, 1, 1);
+      t.updateMatrix();
+      abutmentMats.push(t.matrix.clone());
+    }
+
+    const strutMats: THREE.Matrix4[] = [];
+    for (const [a, b] of struts) {
+      t.position.copy(a).add(b).multiplyScalar(0.5);
+      t.scale.set(1, 1, a.distanceTo(b));
+      t.lookAt(b);
+      t.updateMatrix();
+      strutMats.push(t.matrix.clone());
+    }
+
+    return {
+      chunk,
+      ballast,
+      rail,
+      deck,
+      girder,
+      sleepers,
+      piers: pierMats,
+      abutments: abutmentMats,
+      struts: strutMats,
+    };
   }
 
   /** Through-truss for river crossings: top chords, verticals and alternating diagonals. */
@@ -463,50 +635,6 @@ export class TrackRenderer {
       struts.push([point(f, -X, H), point(f, X, H)]);
       last = f;
       idx++;
-    }
-  }
-
-  private addBridgeInstances(
-    group: THREE.Group,
-    piers: Frame[],
-    abutments: { f: Frame; flip: boolean }[],
-    struts: [THREE.Vector3, THREE.Vector3][],
-  ) {
-    const t = this.tmp;
-    const place = (name: string, list: { f: Frame; flip?: boolean }[]) => {
-      if (!list.length) return;
-      for (const prim of this.assets.primitives(name)) {
-        const inst = new THREE.InstancedMesh(prim.geometry, prim.material, list.length);
-        list.forEach(({ f, flip }, k) => {
-          t.position.set(f.x, f.y - 0.62, f.z);
-          t.rotation.set(0, Math.atan2(f.rx, f.rz) - Math.PI / 2 + (flip ? Math.PI : 0), 0);
-          t.scale.set(1, 1, 1);
-          t.updateMatrix();
-          inst.setMatrixAt(k, t.matrix);
-        });
-        inst.castShadow = true;
-        inst.receiveShadow = true;
-        inst.frustumCulled = false;
-        group.add(inst);
-      }
-    };
-    place(
-      'pier',
-      piers.map((f) => ({ f })),
-    );
-    place('abutment', abutments);
-    if (struts.length) {
-      const inst = new THREE.InstancedMesh(this.strutGeo, this.mats.girder, struts.length);
-      struts.forEach(([a, b], k) => {
-        t.position.copy(a).add(b).multiplyScalar(0.5);
-        t.scale.set(1, 1, a.distanceTo(b));
-        t.lookAt(b);
-        t.updateMatrix();
-        inst.setMatrixAt(k, t.matrix);
-      });
-      inst.castShadow = true;
-      inst.frustumCulled = false;
-      group.add(inst);
     }
   }
 }

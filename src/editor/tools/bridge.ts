@@ -19,7 +19,9 @@ export const bridgeTool: EditorTool = {
       return;
     }
     const seg = host.net.segs.get(near.seg)!;
-    ctx.edit({ scenery: true }, () => {
+    const sb = host.net.segBounds.get(seg.id);
+    const bounds = sb ? { minX: sb.minX - 66, minZ: sb.minZ - 66, maxX: sb.maxX + 66, maxZ: sb.maxZ + 66 } : undefined;
+    ctx.edit({ scenery: true, bounds }, () => {
       seg.bridge = BRIDGE_NEXT[seg.bridge];
       host.net.dirty.add(seg.id);
       host.net.version++;

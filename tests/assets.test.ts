@@ -36,6 +36,12 @@ describe('assetpack.glb contract', () => {
     const required = [
       ...Object.keys(VEHICLES),
       ...Object.keys(SCENERY_TYPES),
+      'tree_pine_lod1',
+      'tree_pine_lod2',
+      'tree_oak_lod1',
+      'tree_oak_lod2',
+      'tree_birch_lod1',
+      'tree_birch_lod2',
       'bogie',
       'pier',
       'abutment',

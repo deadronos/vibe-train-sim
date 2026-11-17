@@ -50,6 +50,7 @@ export type SceneryExclusion =
 
 const GRID_CELLS = 80;
 const CANDIDATES_PER_CELL = 5;
+const MASK_SIZE = 400;
 
 const MIX: Record<Preset, { density: number; types: [SceneryType, number][] }> = {
   alpine: {
@@ -110,28 +111,17 @@ export function isSceneryExcluded(x: number, z: number, exclusions: readonly Sce
   return false;
 }
 
-/**
- * Generates procedural trees and rocks using an independent per-cell spatial seed so terrain or track
- * edits in one area never reshuffle distant scenery.
- */
-export function generateScenery(
-  hf: Heightfield,
-  net: Network,
-  density = 1,
-  exclusions: readonly SceneryExclusion[] = [],
-): PlacedItem[] {
-  if (density <= 0) return [];
+/** Builds a coarse ground mask reserved for tracks and stations. */
+export function buildTrackMask(net: Network): Uint8Array {
   const half = WORLD_SIZE / 2;
-  // Coarse mask of ground reserved for the railway.
-  const MS = 400;
-  const cell = WORLD_SIZE / MS;
-  const mask = new Uint8Array(MS * MS);
+  const cell = WORLD_SIZE / MASK_SIZE;
+  const mask = new Uint8Array(MASK_SIZE * MASK_SIZE);
   const stampMask = (x: number, z: number, r: number) => {
     const cx = Math.floor((x + half) / cell);
     const cz = Math.floor((z + half) / cell);
     const R = Math.ceil(r / cell);
-    for (let j = Math.max(0, cz - R); j <= Math.min(MS - 1, cz + R); j++) {
-      for (let i = Math.max(0, cx - R); i <= Math.min(MS - 1, cx + R); i++) mask[j * MS + i] = 1;
+    for (let j = Math.max(0, cz - R); j <= Math.min(MASK_SIZE - 1, cz + R); j++) {
+      for (let i = Math.max(0, cx - R); i <= Math.min(MASK_SIZE - 1, cx + R); i++) mask[j * MASK_SIZE + i] = 1;
     }
   };
   for (const g of net.geom.values()) {
@@ -142,14 +132,28 @@ export function generateScenery(
     if (!n) continue;
     for (let d = -st.length / 2; d <= st.length / 2; d += 10) stampMask(n.x + n.dx * d, n.z + n.dz * d, 34);
   }
+  return mask;
+}
 
+function generateCells(
+  hf: Heightfield,
+  mask: Uint8Array,
+  density: number,
+  exclusions: readonly SceneryExclusion[],
+  cx0: number,
+  cz0: number,
+  cx1: number,
+  cz1: number,
+  out: PlacedItem[],
+) {
+  const half = WORLD_SIZE / 2;
+  const maskCell = WORLD_SIZE / MASK_SIZE;
   const mix = MIX[hf.preset];
   const threshold = mix.density * density;
   const gridStep = WORLD_SIZE / GRID_CELLS;
-  const out: PlacedItem[] = [];
 
-  for (let cz = 0; cz < GRID_CELLS; cz++) {
-    for (let cx = 0; cx < GRID_CELLS; cx++) {
+  for (let cz = cz0; cz < cz1; cz++) {
+    for (let cx = cx0; cx < cx1; cx++) {
       const rng = mulberry(cellSeed(hf.seed, cx, cz));
       for (let slot = 0; slot < CANDIDATES_PER_CELL; slot++) {
         // Draw all candidate numbers unconditionally so local height edits cannot shift neighbouring slots.
@@ -168,9 +172,9 @@ export function generateScenery(
         if (forest < 0.47) continue;
         const y = hf.height(x, z);
         if (y < WATER_LEVEL + 2.2) continue;
-        const mx = Math.min(MS - 1, Math.max(0, Math.floor((x + half) / cell)));
-        const mz = Math.min(MS - 1, Math.max(0, Math.floor((z + half) / cell)));
-        if (mask[mz * MS + mx]) continue;
+        const mx = Math.min(MASK_SIZE - 1, Math.max(0, Math.floor((x + half) / maskCell)));
+        const mz = Math.min(MASK_SIZE - 1, Math.max(0, Math.floor((z + half) / maskCell)));
+        if (mask[mz * MASK_SIZE + mx]) continue;
         if (hf.normalY(x, z) < 0.86) continue;
         let acc = 0;
         let type: SceneryType = mix.types[0][0];
@@ -188,5 +192,48 @@ export function generateScenery(
       }
     }
   }
+}
+
+/** Generates procedural scenery for one region of an evenly divided region grid. */
+export function generateSceneryRegion(
+  hf: Heightfield,
+  net: Network,
+  rx: number,
+  rz: number,
+  regions: number,
+  density = 1,
+  exclusions: readonly SceneryExclusion[] = [],
+  mask?: Uint8Array,
+): PlacedItem[] {
+  if (density <= 0) return [];
+  const step = GRID_CELLS / regions;
+  const out: PlacedItem[] = [];
+  generateCells(
+    hf,
+    mask ?? buildTrackMask(net),
+    density,
+    exclusions,
+    rx * step,
+    rz * step,
+    (rx + 1) * step,
+    (rz + 1) * step,
+    out,
+  );
+  return out;
+}
+
+/**
+ * Generates procedural trees and rocks using an independent per-cell spatial seed so terrain or track
+ * edits in one area never reshuffle distant scenery.
+ */
+export function generateScenery(
+  hf: Heightfield,
+  net: Network,
+  density = 1,
+  exclusions: readonly SceneryExclusion[] = [],
+): PlacedItem[] {
+  if (density <= 0) return [];
+  const out: PlacedItem[] = [];
+  generateCells(hf, buildTrackMask(net), density, exclusions, 0, 0, GRID_CELLS, GRID_CELLS, out);
   return out;
 }

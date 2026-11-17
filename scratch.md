@@ -9,24 +9,14 @@ Suggested order and batches for the remaining review issues, updated on 2026-11-
 - **Driving & signalling gameplay:** [#40](https://github.com/deadronos/vibe-train-sim/issues/40), [#41](https://github.com/deadronos/vibe-train-sim/issues/41), [#44](https://github.com/deadronos/vibe-train-sim/issues/44), [#55](https://github.com/deadronos/vibe-train-sim/issues/55)–[#63](https://github.com/deadronos/vibe-train-sim/issues/63), [#66](https://github.com/deadronos/vibe-train-sim/issues/66), [#67](https://github.com/deadronos/vibe-train-sim/issues/67) (#73, #74, #78, #79, #84, #85, #86, #88).
 - **UI, accessibility, sound basics & allocation cleanup:** [#20](https://github.com/deadronos/vibe-train-sim/issues/20), [#42](https://github.com/deadronos/vibe-train-sim/issues/42), [#46](https://github.com/deadronos/vibe-train-sim/issues/46), [#47](https://github.com/deadronos/vibe-train-sim/issues/47), [#49](https://github.com/deadronos/vibe-train-sim/issues/49), [#50](https://github.com/deadronos/vibe-train-sim/issues/50) (#75, #80, #82, #87, #89).
 
+- **Batch 1 — Editor clarity, camera feel and adaptive quality:** [#39](https://github.com/deadronos/vibe-train-sim/issues/39), [#45](https://github.com/deadronos/vibe-train-sim/issues/45), and [#19](https://github.com/deadronos/vibe-train-sim/issues/19) (partial; physical low-end device measurements remain open on `#19`).
+- **Batch 2 — Rendering and edit scalability:** [#15](https://github.com/deadronos/vibe-train-sim/issues/15) (per-node prop rebuilds and station sign updates), [#16](https://github.com/deadronos/vibe-train-sim/issues/16) (incremental grading, spatial grid in `Network`, per-region scatter, brush-area track dirtying), [#17](https://github.com/deadronos/vibe-train-sim/issues/17) (chunk-merged track, shared network prop instancing, instanced bounds for culling), and [#18](https://github.com/deadronos/vibe-train-sim/issues/18) (terrain LODs with skirts, tree LOD1/LOD2 variants, shadow-frustum culling).
+
 ---
 
-## Batch 1: Editor clarity, camera feel and finishing adaptive quality
+## Batch 1 remaining item (tracked on #19)
 
-Self-contained improvements to everyday usability and diagnostics.
-
-- [#39](https://github.com/deadronos/vibe-train-sim/issues/39): **Show what an editor click will do before it happens** (`area: ui-ux`) — Unified hover/click hit-tests and status previews, single-signal delete, box-select removal, dynamic track-node handle buffer growth, and per-cell deterministic scenery seeds with saved exclusion zones.
-- [#45](https://github.com/deadronos/vibe-train-sim/issues/45): **Free camera and smooth camera changes** (`area: ui-ux`) — Smooth camera & mode transitions (respecting `prefers-reduced-motion`), cinematic and free-fly camera modes while trains keep running, and wheel FOV zoom in cab view.
-- [#19](https://github.com/deadronos/vibe-train-sim/issues/19): **Finish adaptive quality and performance measurements** (`area: performance`, partly done in #81) — Added live separate Shadows and Scenery density controls in the Graphics dialog, evaluated and switched off `logarithmicDepthBuffer` in favor of `near: 0.8, far: 10000`, and recorded local SwiftShader / Apple M4 Metal ANGLE + IBL measurements; physical low-end laptop and phone hardware measurements still tracked on `#19`.
-
-## Batch 2: Rendering and edit scalability
-
-Protects large player-built maps; measure each change with the `?debug` overlay.
-
-- [#15](https://github.com/deadronos/vibe-train-sim/issues/15): **Rebuild only the props that changed** (`area: performance`) — Avoid bumping `net.version` on switch throws, track dirty nodes for props, and update station signs without full prop rebuilds.
-- [#16](https://github.com/deadronos/vibe-train-sim/issues/16): **Make map edits incremental** (`area: performance`) — Regrade and rebuild only affected terrain chunks, nearby track segments, and local scatter regions instead of the full map.
-- [#17](https://github.com/deadronos/vibe-train-sim/issues/17): **Reduce draw calls for track and scenery** (`area: performance`) — Merge track geometry into chunks by material, share lineside instancing across the network, and add bounds for bridge/platform frustum culling.
-- [#18](https://github.com/deadronos/vibe-train-sim/issues/18): **Level of detail for terrain and scenery** (`area: performance`) — Distance LODs for terrain chunks with skirts/stitching, low-poly/billboard tree variants in `build_assetpack.py`, and shadow-caster culling.
+- [#19](https://github.com/deadronos/vibe-train-sim/issues/19): **Finish adaptive quality and performance measurements** (`area: performance`, partly done in #81 and #95) — Physical low-end laptop and phone hardware measurements still tracked on `#19`.
 
 ## Batch 3: Bring trains and cabs to life (visuals + core sound)
 

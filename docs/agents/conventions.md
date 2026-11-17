@@ -23,7 +23,7 @@
 - Change models by editing `tools/blender/build_assetpack.py` and running `npm run assets`. Never hand-edit the GLB, and commit the regenerated file with the script change.
 - Vehicles and signals face Blender `-Y`, which exports as `+Z`, the forward direction for three.js `lookAt`.
 - Origins sit on the rail head or ground, at the centre of the footprint.
-- Asset names are looked up by string in the game, so renaming one means updating its users.
+- Asset names are looked up by string in the game, so renaming one means updating its users. Tree LOD variants follow `<name>_lod1` (low-poly 3D) and `<name>_lod2` (crossed-quad silhouette cards with upward-biased normals).
 - Materials named `glow_*` are lit at night using colours set in the `GLOW` table in `src/render/assets.ts`.
 - Signal lenses stay separate objects named `lamp_red`, `lamp_amber` and `lamp_green` so they can be lit individually.
 - Models must be original. Don't copy specific real games or operators.

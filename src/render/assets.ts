@@ -3,6 +3,7 @@ import type * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 export interface Prim {
+  name: string;
   geometry: THREE.BufferGeometry;
   material: THREE.MeshStandardMaterial;
 }
@@ -70,7 +71,7 @@ export class Assets {
       if (!mesh.isMesh) return;
       const g = mesh.geometry.clone();
       g.applyMatrix4(mesh.matrixWorld);
-      out.push({ geometry: g, material: mesh.material as THREE.MeshStandardMaterial });
+      out.push({ name: o.name, geometry: g, material: mesh.material as THREE.MeshStandardMaterial });
     });
     this.prims.set(name, out);
     return out;
