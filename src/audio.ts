@@ -215,6 +215,8 @@ export interface AmbienceInput {
   riverDist: number;
   night: number;
   cab: boolean;
+  rain?: number;
+  snow?: number;
 }
 
 export interface AmbienceParams {
@@ -223,6 +225,7 @@ export interface AmbienceParams {
   windQ: number;
   riverGain: number;
   coastGain: number;
+  rainGain: number;
   birdLevel: number;
   cricketLevel: number;
 }
@@ -310,15 +313,19 @@ export function computeAmbienceParams(input: AmbienceInput): AmbienceParams {
   const coastNear = clamp01((WATER_LEVEL + 4 - coastLevel) / 7) * waterFade;
   const coastAmt = Math.max(0, coastNear - riverNear * 0.85);
 
-  const dayAmt = clamp01(1 - night * 1.4) * groundProx;
-  const nightAmt = clamp01((night - 0.25) / 0.65) * groundProx;
+  const rain = clamp01(input.rain ?? 0);
+  const snow = clamp01(input.snow ?? 0);
+  const wildlifeFade = clamp01(1 - rain * 0.95 - snow * 0.85);
+  const dayAmt = clamp01(1 - night * 1.4) * groundProx * wildlifeFade;
+  const nightAmt = clamp01((night - 0.25) / 0.65) * groundProx * wildlifeFade;
 
   return {
-    windGain,
+    windGain: windGain * (1 + rain * 0.25),
     windFreq,
     windQ: cfg.windQ,
     riverGain: riverNear * cfg.riverScale * cabScale,
     coastGain: coastAmt * cfg.coastScale * cabScale,
+    rainGain: rain * 0.055 * (input.cab ? 0.45 : 1),
     birdLevel: cfg.bird * dayAmt * cabScale,
     cricketLevel: cfg.cricket * nightAmt * cabScale,
   };
@@ -465,6 +472,8 @@ export class SimAudio {
   private windGain!: GainNode;
   private riverGain!: GainNode;
   private coastGain!: GainNode;
+  private rainFilter!: BiquadFilterNode;
+  private rainGain!: GainNode;
   private birdTimer = 1.2;
   private cricketTimer = 0.6;
 
@@ -667,6 +676,9 @@ export class SimAudio {
     this.windGain = wind.gain;
     this.riverGain = ambientBand(1.3, 720, 1.1, 0.43, 0.14).gain;
     this.coastGain = ambientBand(2.5, 310, 0.85, 0.16, 0.42).gain;
+    const rain = ambientBand(3.1, 1450, 0.65, 0.27, 0.12);
+    this.rainFilter = rain.filter;
+    this.rainGain = rain.gain;
 
     this.hornGain = ctx.createGain();
     this.hornGain.gain.value = 0;
@@ -1006,7 +1018,35 @@ export class SimAudio {
     }
   }
 
-  /** Updates wind, river/coast water, and day birds vs night crickets from camera & landscape state. */
+  /** Distant rolling thunderclap synced to storm lightning. */
+  playThunder(strength = 0.7) {
+    const ctx = this.ctx;
+    if (!ctx || ctx.state !== 'running' || this.settings.muted || this.settings.ambience <= 0.01) return;
+    const amp = Math.max(0.25, Math.min(1, strength));
+    const t = ctx.currentTime;
+    const rumble = (delay: number, f0: number, f1: number, dur: number, peak: number) => {
+      const src = ctx.createBufferSource();
+      src.buffer = this.noise;
+      src.loop = true;
+      const f = ctx.createBiquadFilter();
+      f.type = 'lowpass';
+      f.frequency.setValueAtTime(f0, t + delay);
+      f.frequency.exponentialRampToValueAtTime(f1, t + delay + dur * 0.85);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0008, t + delay);
+      g.gain.linearRampToValueAtTime(peak * amp, t + delay + 0.09);
+      g.gain.exponentialRampToValueAtTime(0.0008, t + delay + dur);
+      src.connect(f);
+      f.connect(g);
+      g.connect(this.ambienceBus);
+      src.start(t + delay, Math.random() * 2);
+      src.stop(t + delay + dur + 0.05);
+    };
+    rumble(0, 420, 90, 2.4, 0.34);
+    rumble(0.38, 220, 68, 2.1, 0.24);
+  }
+
+  /** Updates wind, river/coast water, rain patter, and day birds vs night crickets from camera & landscape state. */
   updateAmbience(input: AmbienceInput, dt: number) {
     if (!this.ctx || this.ctx.state !== 'running') return;
     const p = computeAmbienceParams(input);
@@ -1016,6 +1056,8 @@ export class SimAudio {
     this.windGain.gain.setTargetAtTime(p.windGain, t, 0.3);
     this.riverGain.gain.setTargetAtTime(p.riverGain, t, 0.3);
     this.coastGain.gain.setTargetAtTime(p.coastGain, t, 0.3);
+    this.rainFilter.frequency.setTargetAtTime(input.cab ? 680 : 1450, t, 0.25);
+    this.rainGain.gain.setTargetAtTime(p.rainGain, t, 0.3);
 
     if (this.settings.muted || this.settings.ambience <= 0.01) return;
 

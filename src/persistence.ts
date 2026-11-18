@@ -7,6 +7,7 @@ import type { SaveData } from './saveData';
 import { parseSave } from './saveData';
 import { Heightfield } from './world/heightfield';
 import type { PlacedItem, SceneryExclusion } from './world/scenery';
+import type { Weather } from './world/weather';
 
 /** auto starts at high and lowers resolution, then effects, while frames run slow. */
 export type Quality = 'auto' | 'high' | 'low';
@@ -31,6 +32,7 @@ export interface WorldState {
   placed: PlacedItem[];
   exclusions?: SceneryExclusion[];
   hours: number;
+  weather?: Weather;
   drivenId: number | null;
 }
 
@@ -63,6 +65,7 @@ export function captureSave(w: WorldState): SaveData {
     placed: w.placed,
     ...(w.exclusions?.length ? { exclusions: w.exclusions } : {}),
     hours: w.hours,
+    ...(w.weather && w.weather !== 'clear' ? { weather: w.weather } : {}),
     drivenId: w.drivenId,
     trains,
   };

@@ -189,6 +189,31 @@ float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
 float fb(vec2 p){ float a = 0.5, s = 0.0; for(int i=0;i<4;i++){ s += a*vn(p); p = p*2.03+vec2(17.1,9.2); a *= 0.5; } return s; }
 `;
 
+const WEATHER_PARS_GLSL = `
+uniform float uNight, uValleyMist, uCloudShadow;
+uniform vec2 uCloudDrift;
+uniform vec3 uMistColor;
+`;
+
+const CLOUD_SHADOW_GLSL = `
+#include <lights_fragment_end>
+float cloudField = fb(vWPos.xz * 0.0018 + uCloudDrift);
+float cloudShadow = mix(1.0, 0.34, smoothstep(0.41, 0.7, cloudField) * uCloudShadow * (1.0 - uNight * 0.85));
+reflectedLight.directDiffuse *= cloudShadow;
+reflectedLight.directSpecular *= cloudShadow;
+`;
+
+const VALLEY_MIST_GLSL = `
+if (uValleyMist > 0.005) {
+  float mistDist = length(cameraPosition - vWPos);
+  float mistNoise = 0.72 + 0.28 * fb(vWPos.xz * 0.0038 + uCloudDrift * 0.65);
+  float mistHeight = exp(-max(0.0, vWPos.y - 8.0) * 0.014);
+  float mistAmt = clamp((1.0 - exp(-mistDist * 0.0068 * uValleyMist)) * mistHeight * mistNoise * uValleyMist, 0.0, 0.9);
+  gl_FragColor.rgb = mix(gl_FragColor.rgb, uMistColor, mistAmt);
+}
+#include <fog_fragment>
+`;
+
 const HEIGHT_MIN = -16;
 const HEIGHT_SPAN = 28;
 
@@ -263,6 +288,13 @@ export class TerrainRenderer {
     uSnow: { value: new THREE.Color() },
     uEmbankment: { value: new THREE.Color() },
     uSnowLine: { value: 200 },
+    uWetness: { value: 0 },
+    uSnowCover: { value: 0 },
+    uNight: { value: 0 },
+    uValleyMist: { value: 0 },
+    uCloudShadow: { value: 0 },
+    uCloudDrift: { value: new THREE.Vector2() },
+    uMistColor: { value: new THREE.Color(0x9ab4c8) },
   };
   private water: THREE.Mesh;
   private waterNormal: THREE.Texture;
@@ -298,6 +330,11 @@ export class TerrainRenderer {
     uSunDir: { value: THREE.Vector3 };
     uSunColor: { value: THREE.Color };
     uNight: { value: number };
+    uRain: { value: number };
+    uValleyMist: { value: number };
+    uCloudShadow: { value: number };
+    uCloudDrift: { value: THREE.Vector2 };
+    uMistColor: { value: THREE.Color };
     uReflectionMap: { value: THREE.Texture };
     uTextureMatrix: { value: THREE.Matrix4 };
     uHasPlanar: { value: number };
@@ -330,6 +367,11 @@ export class TerrainRenderer {
       uSunDir: { value: new THREE.Vector3(0.4, 0.7, 0.3).normalize() },
       uSunColor: { value: new THREE.Color(1, 0.95, 0.88) },
       uNight: { value: 0 },
+      uRain: { value: 0 },
+      uValleyMist: { value: 0 },
+      uCloudShadow: { value: 0 },
+      uCloudDrift: { value: new THREE.Vector2() },
+      uMistColor: { value: new THREE.Color(0x9ab4c8) },
       uReflectionMap: { value: this.dummyTex },
       uTextureMatrix: { value: new THREE.Matrix4() },
       uHasPlanar: { value: 0 },
@@ -406,7 +448,8 @@ export class TerrainRenderer {
           varying vec3 vWNorm;
           varying float vGrade;
           uniform vec3 uGrass, uGrass2, uDirt, uRock, uSand, uSnow, uEmbankment;
-          uniform float uSnowLine;
+          uniform float uSnowLine, uWetness, uSnowCover;
+          ${WEATHER_PARS_GLSL}
           ${NOISE_GLSL}
           `,
         )
@@ -445,14 +488,28 @@ export class TerrainRenderer {
           vec3 sandC = uSand * (0.86 + 0.24 * fine) * mix(1.0, 0.88 + 0.24 * detail, detailFade);
           c = mix(c, sandC, shore);
 
-          // Snow settles on the flatter high ground.
-          float snow = smoothstep(uSnowLine - 26.0, uSnowLine + 34.0, vWPos.y + (mid - 0.5) * 70.0) * (1.0 - smoothstep(0.26, 0.5, slope));
-          c = mix(c, uSnow, snow);
+          // Snow settles on the flatter high ground, plus dynamic snowfall accumulation.
+          float highSnow = smoothstep(uSnowLine - 26.0, uSnowLine + 34.0, vWPos.y + (mid - 0.5) * 70.0) * (1.0 - smoothstep(0.26, 0.5, slope));
+          float landAboveWater = smoothstep(0.05, 1.25, vWPos.y);
+          float stormSnow = uSnowCover * landAboveWater * (1.0 - smoothstep(0.28, 0.64, slope + (mid - 0.5) * 0.14)) * (1.0 - gradeBed * 0.42);
+          float snowMask = clamp(max(highSnow, stormSnow), 0.0, 1.0);
+          c = mix(c, uSnow * (0.94 + 0.06 * fine), snowMask);
 
-          // Wet and dark near and below the waterline.
-          float wet = smoothstep(-1.4, 0.75 + fine * 0.35, vWPos.y);
-          c *= mix(0.54, 1.0, wet);
+          // Wet and dark near/below the waterline, plus rain-slicked ground and puddles.
+          float shoreWet = 1.0 - smoothstep(-1.4, 0.75 + fine * 0.35, vWPos.y);
+          float puddleNoise = fb(vWPos.xz * 0.13) * 0.72 + fb(vWPos.xz * 0.52) * 0.28;
+          float puddleMask = smoothstep(0.42, 0.72, puddleNoise) * (1.0 - smoothstep(0.06, 0.22, slope)) * landAboveWater;
+          float rainWet = uWetness * (1.0 - snowMask) * landAboveWater;
+          c *= mix(1.0, 0.54, shoreWet);
+          c *= mix(1.0, 0.72 - 0.14 * puddleMask, rainWet);
           diffuseColor.rgb = c;
+          `,
+        )
+        .replace(
+          '#include <roughnessmap_fragment>',
+          `#include <roughnessmap_fragment>
+          roughnessFactor = mix(roughnessFactor, 0.88, snowMask * 0.65);
+          roughnessFactor = mix(roughnessFactor, mix(0.36, 0.1, puddleMask), rainWet);
           `,
         )
         .replace(
@@ -470,9 +527,12 @@ export class TerrainRenderer {
             float dz = fb((vWPos.xz + vec2(0.0, ed)) * 2.4);
             bump += vec3(d0 - dx, 0.0, d0 - dz) * (0.85 * detailFade);
           }
+          bump *= (1.0 - rainWet * puddleMask * 0.78);
           normal = normalize(normal + (viewMatrix * vec4(bump, 0.0)).xyz);
           `,
-        );
+        )
+        .replace('#include <lights_fragment_end>', CLOUD_SHADOW_GLSL)
+        .replace('#include <fog_fragment>', VALLEY_MIST_GLSL);
     };
     return mat;
   }
@@ -508,7 +568,8 @@ export class TerrainRenderer {
           `#include <common>
           varying vec3 vWPos;
           varying vec4 vReflUv;
-          uniform float uTime, uNight, uHasPlanar;
+          uniform float uTime, uHasPlanar, uRain;
+          ${WEATHER_PARS_GLSL}
           uniform sampler2D uHeightMap, uWaterNormal, uReflectionMap;
           uniform vec3 uWaterShallow, uWaterDeep, uFoamColor, uSkyHorizon, uSkyZenith, uSunDir, uSunColor;
           ${NOISE_GLSL}
@@ -556,10 +617,15 @@ export class TerrainRenderer {
           vec2 flowShift = flowDir * (-uTime * 0.055 * riverMask);
           vec3 wn1 = unpackWaterN(vWPos.xz * 0.022 + flowShift + vec2(uTime * 0.016, uTime * 0.01));
           vec3 wn2 = unpackWaterN(vWPos.xz * 0.053 + flowShift * 1.4 - vec2(uTime * 0.011, -uTime * 0.014));
-          vec3 wNorm = normalize(vec3(0.0, 1.0, 0.0) + (wn1 + wn2) * (0.19 * (1.0 - foam * 0.7)));
+          vec2 rainChop = vec2(
+            vn(vWPos.xz * 2.6 + vec2(uTime * 6.5, -uTime * 5.2)) - 0.5,
+            vn(vWPos.xz * 2.6 + vec2(-uTime * 5.8, uTime * 6.1) + 19.3) - 0.5
+          ) * (uRain * 0.22);
+          vec3 wNorm = normalize(vec3(rainChop.x, 1.0, rainChop.y) + (wn1 + wn2) * (0.19 * (1.0 - foam * 0.7)));
           normal = normalize((viewMatrix * vec4(wNorm, 0.0)).xyz);
           `,
         )
+        .replace('#include <lights_fragment_end>', CLOUD_SHADOW_GLSL)
         .replace(
           '#include <opaque_fragment>',
           `vec3 V = normalize(cameraPosition - vWPos);
@@ -567,7 +633,7 @@ export class TerrainRenderer {
           float fresnel = 0.04 + 0.96 * pow(1.0 - ndv, 4.5);
           vec3 R = reflect(-V, wNorm);
           vec3 skyRefl = mix(uSkyHorizon, uSkyZenith, pow(clamp(R.y, 0.0, 1.0), 0.55));
-          float sunSpec = pow(max(dot(R, uSunDir), 0.0), 180.0) * smoothstep(-0.02, 0.25, uSunDir.y);
+          float sunSpec = pow(max(dot(R, uSunDir), 0.0), 180.0) * smoothstep(-0.02, 0.25, uSunDir.y) * (1.0 - uRain * 0.65);
           skyRefl += uSunColor * sunSpec * 0.75;
           vec3 reflColor = skyRefl;
           if (uHasPlanar > 0.5 && vReflUv.w > 0.05) {
@@ -578,7 +644,8 @@ export class TerrainRenderer {
           outgoingLight = mix(outgoingLight, reflColor, fresnel * (1.0 - foam * 0.85) * 0.82);
           #include <opaque_fragment>
           `,
-        );
+        )
+        .replace('#include <fog_fragment>', VALLEY_MIST_GLSL);
     };
     return mat;
   }
@@ -837,8 +904,23 @@ export class TerrainRenderer {
   update(time: number, env?: Environment) {
     this.waterUniforms.uTime.value = time;
     if (!env) return;
+    const ws = env.weatherState;
+    const fogColor = (this.scene.fog as THREE.FogExp2).color;
+    this.uniforms.uWetness.value = ws.wetness;
+    this.uniforms.uSnowCover.value = ws.snowCover;
+    this.uniforms.uNight.value = env.night;
+    this.uniforms.uValleyMist.value = ws.valleyMist;
+    this.uniforms.uCloudShadow.value = ws.cloudShadow;
+    this.uniforms.uCloudDrift.value.copy(env.cloudDrift);
+    this.uniforms.uMistColor.value.copy(env.mistColor);
+
     this.waterUniforms.uNight.value = env.night;
-    this.waterUniforms.uSkyHorizon.value.copy((this.scene.fog as THREE.FogExp2).color);
+    this.waterUniforms.uRain.value = ws.rain;
+    this.waterUniforms.uValleyMist.value = ws.valleyMist;
+    this.waterUniforms.uCloudShadow.value = ws.cloudShadow;
+    this.waterUniforms.uCloudDrift.value.copy(env.cloudDrift);
+    this.waterUniforms.uMistColor.value.copy(env.mistColor);
+    this.waterUniforms.uSkyHorizon.value.copy(fogColor);
     this.waterUniforms.uSkyZenith.value.copy(env.hemi.color).multiplyScalar(0.55 + (1 - env.night) * 0.65);
     this.waterUniforms.uSunDir.value.copy(env.sun.position).sub(env.sun.target.position).normalize();
     this.waterUniforms.uSunColor.value.copy(env.sun.color).multiplyScalar(Math.min(2, env.sun.intensity * 0.45));

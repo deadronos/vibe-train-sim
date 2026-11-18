@@ -17,6 +17,9 @@ export interface TrainRenderOpts {
   cabActive?: boolean;
   cabLever?: number;
   night?: number;
+  rain?: number;
+  snow?: number;
+  time?: number;
   reducedMotion?: boolean;
 }
 
@@ -211,6 +214,20 @@ export class TrainRenderer {
   private cabNeedle: THREE.Object3D | null = null;
   private cabLever: THREE.Object3D | null = null;
   private cabBodyHidden: THREE.Object3D | null = null;
+  private cabWiperL: THREE.Group;
+  private cabWiperR: THREE.Group;
+  private cabGlass: THREE.Mesh;
+  private cabGlassUniforms = {
+    uTime: { value: 0 },
+    uRain: { value: 0 },
+    uSnow: { value: 0 },
+    uNight: { value: 0 },
+    uWiperAngle: { value: 0 },
+    uWiping: { value: 0 },
+    uReduced: { value: 0 },
+  };
+  private wiperPhase = 0;
+  private lastWiperT = -1;
 
   constructor(
     private scene: THREE.Scene,
@@ -239,6 +256,110 @@ export class TrainRenderer {
     });
     this.cabNeedle = this.cabMesh.getObjectByName('cab_dial_needle') ?? null;
     this.cabLever = this.cabMesh.getObjectByName('cab_lever') ?? null;
+
+    // Windscreen rain/frost overlay and twin wipers attached inside the front window aperture.
+    const wiperMat = new THREE.MeshStandardMaterial({ color: 0x16191d, roughness: 0.55, metalness: 0.4 });
+    const hubGeo = new THREE.CylinderGeometry(0.022, 0.026, 0.03, 10);
+    hubGeo.rotateX(Math.PI / 2);
+    const armGeo = new THREE.BoxGeometry(0.018, 0.68, 0.016);
+    armGeo.translate(0, 0.34, 0);
+    const makeWiper = (x: number, parkAngle: number) => {
+      const g = new THREE.Group();
+      g.position.set(x, 2.5, 1.245);
+      g.rotation.z = parkAngle;
+      const hub = new THREE.Mesh(hubGeo, wiperMat);
+      const arm = new THREE.Mesh(armGeo, wiperMat);
+      arm.position.z = 0.01;
+      g.add(hub, arm);
+      this.cabMesh.add(g);
+      return g;
+    };
+    this.cabWiperL = makeWiper(-0.52, 1.08);
+    this.cabWiperR = makeWiper(0.52, -1.08);
+
+    const glassGeo = new THREE.PlaneGeometry(2.38, 1.08);
+    const glassMat = new THREE.ShaderMaterial({
+      uniforms: this.cabGlassUniforms,
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      vertexShader: /* glsl */ `
+        varying vec2 vLocal;
+        void main() {
+          vLocal = position.xy;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: /* glsl */ `
+        uniform float uTime, uRain, uSnow, uNight, uWiperAngle, uWiping, uReduced;
+        varying vec2 vLocal;
+
+        float h21(vec2 p) {
+          p = fract(p * vec2(127.1, 311.7));
+          p += dot(p, p + 34.45);
+          return fract(p.x * p.y);
+        }
+
+        float dropletLayer(vec2 uv, float scale, float speed, float snowMode) {
+          vec2 st = uv * scale;
+          float colId = floor(st.x);
+          st.y += mix(uTime * speed * (0.45 + 0.55 * h21(vec2(colId, 3.1))), 0.0, snowMode);
+          vec2 id = floor(st);
+          vec2 gv = fract(st) - 0.5;
+          float r1 = h21(id);
+          float r2 = h21(id + 19.37);
+          vec2 off = vec2(r1 - 0.5, r2 - 0.5) * 0.54;
+          float d = length(gv - off);
+          float rad = mix(0.08, 0.21, fract(r1 * 17.3));
+          float drop = 1.0 - smoothstep(rad * 0.45, rad, d);
+          return drop * step(0.32, r2);
+        }
+
+        float wipeMask(vec2 p, vec2 pivot) {
+          vec2 d = p - pivot;
+          float r = length(d);
+          if (r < 0.08 || r > 0.72 || d.y < 0.02) return 0.0;
+          float ang = -atan(d.x, d.y);
+          float sector = smoothstep(-0.88, -0.78, ang) * (1.0 - smoothstep(0.78, 0.88, ang));
+          float radial = smoothstep(0.08, 0.14, r) * (1.0 - smoothstep(0.68, 0.72, r));
+          float behind = clamp(1.0 - abs(ang - uWiperAngle) * 0.58, 0.25, 1.0);
+          return sector * radial * mix(0.68, 1.0, behind);
+        }
+
+        void main() {
+          float precip = clamp(max(uRain, uSnow), 0.0, 1.0);
+          if (precip <= 0.01) discard;
+          float snowMode = uSnow / max(0.001, uRain + uSnow);
+          float dripT = 1.0 - uReduced * 0.85;
+
+          // Coordinates relative to wiper pivots at (+/-0.52, 2.50 - 3.03 = -0.53).
+          float cleared = max(wipeMask(vLocal, vec2(-0.52, -0.53)), wipeMask(vLocal, vec2(0.52, -0.53)));
+          cleared *= uWiping;
+
+          float dropsA = dropletLayer(vLocal, 12.0, 0.28 * dripT, snowMode);
+          float dropsB = dropletLayer(vLocal + vec2(3.7, 1.9), 22.0, 0.18 * dripT, snowMode);
+          float pattern = clamp(dropsA * 0.82 + dropsB * 0.62, 0.0, 1.0) * precip;
+          pattern *= (1.0 - cleared * 0.92);
+
+          // Subtle perimeter misting outside the wiped arcs.
+          float edge = smoothstep(0.72, 1.22, abs(vLocal.x)) + smoothstep(0.34, 0.54, vLocal.y);
+          float sheen = clamp(edge * 0.22 * precip * (1.0 - cleared * 0.85), 0.0, 0.28);
+
+          float alpha = clamp(pattern * mix(0.48, 0.56, snowMode) + sheen, 0.0, 0.62);
+          if (alpha <= 0.01) discard;
+
+          vec3 rainCol = mix(vec3(0.76, 0.84, 0.92), vec3(0.28, 0.34, 0.46), uNight);
+          vec3 frostCol = mix(vec3(0.9, 0.94, 0.99), vec3(0.38, 0.44, 0.58), uNight);
+          vec3 col = mix(rainCol, frostCol, snowMode);
+          gl_FragColor = vec4(col, alpha);
+        }
+      `,
+    });
+    this.cabGlass = new THREE.Mesh(glassGeo, glassMat);
+    this.cabGlass.position.set(0, 3.03, 1.242);
+    this.cabGlass.visible = false;
+    this.cabMesh.add(this.cabGlass);
+
     scene.add(this.cabMesh);
   }
 
@@ -483,6 +604,38 @@ export class TrainRenderer {
         : (opts.cabLever ?? t.throttle - Math.max(t.brake, t.dynamic));
       this.cabLever.rotation.x = Math.max(-1, Math.min(1, lever)) * 0.55;
     }
+
+    const rain = opts.rain ?? 0;
+    const snow = opts.snow ?? 0;
+    const wetPrecip = rain > 0.03 || snow > 0.03;
+    const time = opts.time ?? 0;
+    const dt = this.lastWiperT >= 0 ? Math.max(0, Math.min(0.1, time - this.lastWiperT)) : 0;
+    this.lastWiperT = time;
+
+    this.cabGlass.visible = wetPrecip;
+    if (wetPrecip && !reduced) {
+      const rate = rain > snow ? 2.4 + rain * 1.1 : 1.5 + snow * 0.6;
+      this.wiperPhase = (this.wiperPhase + dt * rate) % (Math.PI * 2);
+      const angle = Math.sin(this.wiperPhase) * 0.78;
+      this.cabWiperL.rotation.z = angle;
+      this.cabWiperR.rotation.z = angle;
+      this.cabGlassUniforms.uWiperAngle.value = angle;
+      this.cabGlassUniforms.uWiping.value = 1;
+    } else if (wetPrecip) {
+      this.cabWiperL.rotation.z = 0;
+      this.cabWiperR.rotation.z = 0;
+      this.cabGlassUniforms.uWiperAngle.value = 0;
+      this.cabGlassUniforms.uWiping.value = 1;
+    } else {
+      this.cabWiperL.rotation.z = 1.08;
+      this.cabWiperR.rotation.z = -1.08;
+      this.cabGlassUniforms.uWiping.value = 0;
+    }
+    this.cabGlassUniforms.uTime.value = time;
+    this.cabGlassUniforms.uRain.value = rain;
+    this.cabGlassUniforms.uSnow.value = snow;
+    this.cabGlassUniforms.uNight.value = opts.night ?? 0;
+    this.cabGlassUniforms.uReduced.value = reduced ? 1 : 0;
   }
 
   private assignVisuals(t: Train, v: TrainVisual): CarVisual[] {

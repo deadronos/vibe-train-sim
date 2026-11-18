@@ -574,3 +574,32 @@ test('keeps starter-map draw calls and triangles below budget and performs incre
   await page.evaluate(() => window.__game.setQuality('high'));
   await frames(page, 3);
 });
+
+test('switches weather presets cleanly, drives cab wipers, and persists across reload', async ({ page }) => {
+  await load(page);
+  const select = page.locator('#weather-select');
+  await expect(select).toHaveValue('clear');
+
+  await select.selectOption('rain');
+  await page.keyboard.press('KeyC');
+  await expect.poll(() => page.evaluate(() => window.__game.env.weatherState.rain)).toBeGreaterThan(0.5);
+  await frames(page, 4);
+
+  const checkWeather = async (w: 'snow' | 'mist' | 'overcast') => {
+    await select.selectOption(w);
+    expect(await page.evaluate(() => window.__game.env.weather)).toBe(w);
+    await frames(page, 3);
+  };
+  await checkWeather('snow');
+  await checkWeather('mist');
+  await checkWeather('overcast');
+  await checkWeather('snow');
+
+  await page.evaluate(() => window.__game.setQuality('low'));
+  await frames(page, 3);
+
+  await page.reload();
+  await expect(page.locator('#loading')).toHaveClass(/gone/);
+  await expect(select).toHaveValue('snow');
+  expect(await page.evaluate(() => window.__game.env.weather)).toBe('snow');
+});

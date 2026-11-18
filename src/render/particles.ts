@@ -1,4 +1,4 @@
-// Pooled, allocation-free instanced particle effects for diesel exhaust, brake sparks, desert dust and impacts.
+// Pooled, allocation-free instanced particle effects for diesel exhaust, brake sparks, desert dust, impacts, and 3D rain/snow.
 import * as THREE from 'three';
 
 import type { Sim } from '../rail/sim';
@@ -7,6 +7,8 @@ import type { Heightfield } from '../world/heightfield';
 
 const SMOKE_CAP = 420;
 const SPARK_CAP = 180;
+const WEATHER_CAP = 1800;
+const WEATHER_LOW_CAP = 460;
 
 class ParticlePool {
   readonly mesh: THREE.InstancedMesh;
@@ -178,6 +180,144 @@ class ParticlePool {
   }
 }
 
+function createWeatherCurtain(scene: THREE.Scene) {
+  const base = new THREE.PlaneGeometry(1, 1);
+  const geo = new THREE.InstancedBufferGeometry();
+  geo.index = base.index;
+  geo.setAttribute('position', base.getAttribute('position'));
+  geo.setAttribute('uv', base.getAttribute('uv'));
+  base.dispose();
+
+  const seeds = new Float32Array(WEATHER_CAP * 4);
+  let rng = 0x51a7b39d;
+  const next = () => {
+    rng = (Math.imul(rng, 1664525) + 1013904223) >>> 0;
+    return rng / 4294967296;
+  };
+  for (let i = 0; i < WEATHER_CAP; i++) {
+    seeds[i * 4] = next();
+    seeds[i * 4 + 1] = next();
+    seeds[i * 4 + 2] = next();
+    seeds[i * 4 + 3] = next();
+  }
+  geo.setAttribute('aSeed', new THREE.InstancedBufferAttribute(seeds, 4));
+  geo.instanceCount = WEATHER_CAP;
+
+  const uniforms = {
+    uCamPos: { value: new THREE.Vector3() },
+    uFogColor: { value: new THREE.Color(0x9fb8cc) },
+    uTime: { value: 0 },
+    uRain: { value: 0 },
+    uSnow: { value: 0 },
+    uNight: { value: 0 },
+    uCab: { value: 0 },
+    uFogDensity: { value: 0.002 },
+    uReduced: { value: 0 },
+  };
+
+  const mat = new THREE.ShaderMaterial({
+    uniforms,
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    vertexShader: /* glsl */ `
+      attribute vec4 aSeed;
+      uniform vec3 uCamPos;
+      uniform float uTime, uRain, uSnow, uCab, uReduced;
+      varying vec2 vUv;
+      varying float vSnow;
+      varying float vAlpha;
+      varying float vDist;
+
+      void main() {
+        vUv = uv;
+        float total = max(0.001, uRain + uSnow);
+        vSnow = uSnow / total;
+        float isRain = 1.0 - vSnow;
+
+        vec3 boxSize = vec3(mix(50.0, 62.0, vSnow), mix(26.0, 24.0, vSnow), mix(50.0, 62.0, vSnow));
+        float fallSpeed = mix(19.0 + aSeed.w * 7.0, 1.55 + aSeed.w * 0.85, vSnow);
+        vec2 wind = mix(vec2(2.6, 1.4), vec2(1.4, 0.7), vSnow);
+        float driftPhase = aSeed.w * 6.2831853 + uTime * (1.1 + aSeed.z * 1.2) * (1.0 - uReduced * 0.75);
+        vec2 flutter = vec2(sin(driftPhase), cos(driftPhase * 0.83)) * (0.9 * vSnow);
+
+        vec3 scroll = vec3(wind.x * uTime + flutter.x, -fallSpeed * uTime, wind.y * uTime + flutter.y);
+        vec3 wrapped = fract(aSeed.xyz + (scroll - uCamPos) / boxSize);
+        vec3 rel = (wrapped - 0.5) * boxSize;
+        vec3 worldPos = uCamPos + rel;
+
+        vec3 toCam = uCamPos - worldPos;
+        float dist = length(toCam);
+        vDist = dist;
+
+        vec3 camRight = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
+        vec3 camUp = vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]);
+
+        // Rain elongates along fall velocity and faces the camera around its streak axis.
+        vec3 velDir = normalize(vec3(wind.x, -fallSpeed, wind.y));
+        vec3 viewDir = dist > 0.001 ? toCam / dist : vec3(0.0, 0.0, 1.0);
+        vec3 streakRight = cross(velDir, viewDir);
+        float srLen = length(streakRight);
+        streakRight = srLen > 0.01 ? streakRight / srLen : camRight;
+
+        float rainW = mix(0.03, 0.06, smoothstep(4.0, 26.0, dist));
+        float rainH = mix(0.75, 1.25, aSeed.w);
+        float flakeS = mix(0.075, 0.145, aSeed.w) * mix(1.0, 1.25, smoothstep(8.0, 28.0, dist));
+
+        vec3 right = mix(streakRight, camRight, vSnow);
+        vec3 up = mix(-velDir, camUp, vSnow);
+        float w = mix(rainW, flakeS, vSnow);
+        float h = mix(rainH, flakeS, vSnow);
+
+        worldPos += right * (position.x * w) + up * (position.y * h);
+
+        // Soft fade at box top/bottom, close lens, cab interior, and low density cutoffs.
+        float vFade = 1.0 - smoothstep(0.36, 0.5, abs(wrapped.y - 0.5));
+        float hFade = 1.0 - smoothstep(0.38, 0.5, max(abs(wrapped.x - 0.5), abs(wrapped.z - 0.5)));
+        float nearFade = smoothstep(0.9, 2.2, dist);
+        float cabMask = mix(1.0, smoothstep(2.1, 4.1, dist), uCab);
+        float density = clamp(max(uRain, uSnow), 0.0, 1.0);
+        float dropKeep = step(aSeed.z, mix(0.28, 1.0, density) * mix(0.85, 1.0, isRain));
+        vAlpha = vFade * hFade * nearFade * cabMask * dropKeep * clamp(density * 1.15, 0.0, 1.0);
+
+        gl_Position = projectionMatrix * viewMatrix * vec4(worldPos, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform vec3 uFogColor;
+      uniform float uNight, uFogDensity;
+      varying vec2 vUv;
+      varying float vSnow;
+      varying float vAlpha;
+      varying float vDist;
+
+      void main() {
+        if (vAlpha <= 0.005) discard;
+        vec2 c = vUv - 0.5;
+        float streak = exp(-c.x * c.x * 26.0) * sin(vUv.y * 3.14159265);
+        float flake = 1.0 - smoothstep(0.14, 0.5, length(c));
+        float shape = mix(streak, flake, vSnow);
+        float distFade = exp(-vDist * max(0.018, uFogDensity * 4.5));
+        float alpha = vAlpha * shape * mix(0.68, 0.94, vSnow) * distFade;
+        if (alpha <= 0.01) discard;
+
+        vec3 rainCol = mix(vec3(0.84, 0.9, 0.96), vec3(0.42, 0.49, 0.62), uNight);
+        vec3 snowCol = mix(vec3(0.97, 0.99, 1.0), vec3(0.48, 0.54, 0.68), uNight);
+        vec3 col = mix(rainCol, snowCol, vSnow);
+        col = mix(col, uFogColor, clamp(1.0 - distFade, 0.0, 0.45));
+        gl_FragColor = vec4(col, alpha);
+      }
+    `,
+  });
+
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.visible = false;
+  mesh.frustumCulled = false;
+  mesh.renderOrder = 2;
+  scene.add(mesh);
+  return { mesh, geo, mat, uniforms };
+}
+
 export class ParticleRenderer {
   group = new THREE.Group();
   enabled = true;
@@ -198,6 +338,7 @@ export class ParticleRenderer {
   });
   private smoke: ParticlePool;
   private sparks: ParticlePool;
+  private weather: ReturnType<typeof createWeatherCurtain>;
 
   private exhaustAcc = new Map<number, number>();
   private sparkAcc = new Map<number, number>();
@@ -206,6 +347,7 @@ export class ParticleRenderer {
   constructor(scene: THREE.Scene) {
     this.smoke = new ParticlePool(this.group, SMOKE_CAP, this.smokeGeo, this.smokeMat, 0.45, 0.85);
     this.sparks = new ParticlePool(this.group, SPARK_CAP, this.sparkGeo, this.sparkMat, -9.8, 0.4);
+    this.weather = createWeatherCurtain(scene);
     scene.add(this.group);
   }
 
@@ -214,6 +356,38 @@ export class ParticleRenderer {
     this.enabled = enabled;
     this.group.visible = enabled;
     if (!enabled) this.clear();
+  }
+
+  /** Scales weather precipitation count on low graphics quality while keeping weather visible. */
+  setWeatherLow(low: boolean) {
+    this.weather.geo.instanceCount = low ? WEATHER_LOW_CAP : WEATHER_CAP;
+  }
+
+  /** Updates the GPU-wrapped 3D rain and snow curtain around the camera. */
+  updateWeather(opts: {
+    cameraPos: THREE.Vector3;
+    elapsed: number;
+    rain: number;
+    snow: number;
+    cab: boolean;
+    fogColor: THREE.Color;
+    fogDensity: number;
+    night: number;
+    reducedMotion: boolean;
+  }) {
+    const active = opts.rain > 0.01 || opts.snow > 0.01;
+    this.weather.mesh.visible = active;
+    if (!active) return;
+    const u = this.weather.uniforms;
+    u.uCamPos.value.copy(opts.cameraPos);
+    u.uFogColor.value.copy(opts.fogColor);
+    u.uTime.value = opts.elapsed;
+    u.uRain.value = opts.rain;
+    u.uSnow.value = opts.snow;
+    u.uNight.value = opts.night;
+    u.uCab.value = opts.cab ? 1 : 0;
+    u.uFogDensity.value = opts.fogDensity;
+    u.uReduced.value = opts.reducedMotion ? 1 : 0;
   }
 
   clear() {
@@ -232,6 +406,9 @@ export class ParticleRenderer {
     this.sparkGeo.dispose();
     this.smokeMat.dispose();
     this.sparkMat.dispose();
+    this.weather.mesh.removeFromParent();
+    this.weather.geo.dispose();
+    this.weather.mat.dispose();
   }
 
   /** Spawns a short impact burst of sparks and dust on collisions or buffer-stop hits. */
