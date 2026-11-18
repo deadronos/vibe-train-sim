@@ -338,9 +338,9 @@ export class Environment {
 
     // Image-based lighting comes from the sky itself; regenerated only as the sky changes.
     this.envCooldown -= dt;
-    const changed = Math.abs(el - this.lastEnvElevation) > 0.012 || Math.abs(ws.cloudCover - this.lastEnvCloud) > 0.03;
+    const changed = Math.abs(el - this.lastEnvElevation) > 0.012 || Math.abs(ws.cloudCover - this.lastEnvCloud) > 0.08;
     if (changed && this.envCooldown <= 0) {
-      this.envCooldown = 0.35;
+      this.envCooldown = 0.6;
       this.lastEnvElevation = el;
       this.lastEnvCloud = ws.cloudCover;
       const rt = this.pmrem.fromScene(this.envScene, 0, 1, 10000);
