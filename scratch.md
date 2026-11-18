@@ -1,6 +1,6 @@
 # Next issues
 
-Suggested order and batches for the remaining review issues, updated on 2026-11-17 (v0.4.2). 6 feature issues remain across 4 umbrellas (`#21`, `#32`, `#48`, `#68`).
+Suggested order and batches for the remaining review issues, updated on 2026-11-18. 5 feature issues remain across 4 umbrellas (`#21`, `#32`, `#48`, `#68`).
 
 ## Completed batches (archive)
 
@@ -14,6 +14,7 @@ Suggested order and batches for the remaining review issues, updated on 2026-11-
 - **Batch 3 — Bring trains and cabs to life (visuals + core sound):** [#26](https://github.com/deadronos/vibe-train-sim/issues/26) (instanced rotating wheelsets, body sway/roll/bounce, couplers/gangways, real spotlight + projected AI headlight cones), [#28](https://github.com/deadronos/vibe-train-sim/issues/28) (low-poly `cab_interior` with live dial/lever and reduced-motion-safe head sway), [#29](https://github.com/deadronos/vibe-train-sim/issues/29) (turnout switch blades, frogs, guard rails, blended ballast and smooth blade animation), [#27](https://github.com/deadronos/vibe-train-sim/issues/27) (pooled instanced diesel exhaust, brake sparks, desert dust and impact bursts respecting low quality), and [#51](https://github.com/deadronos/vibe-train-sim/issues/51) (pure Web Audio diesel notches/load/turbo whine, brake squeal/air release, tight-curve flange squeal, node-driven junction clatter, bridge resonance and impact sounds).
 - **Batch 4A — Directional & ambient audio:** [#52](https://github.com/deadronos/vibe-train-sim/issues/52) (camera-anchored `AudioListener`, distance-culled `PannerNode` passing-train voices, Doppler shift, and live editor audio in #105), and [#53](https://github.com/deadronos/vibe-train-sim/issues/53) (altitude wind, river/coast water, per-landscape day birds vs night crickets, point/signal lever clunks, station door chimes, and signal-box UI clicks in #106; rain/thunder hooks deferred to `#30`).
 - **Batch 4B — Water & terrain materials:** [#24](https://github.com/deadronos/vibe-train-sim/issues/24) (heightfield-driven water depth colour, soft shoreline edges and foam, river downstream flow, Fresnel sky reflection and high-quality planar reflections) and [#25](https://github.com/deadronos/vibe-train-sim/issues/25) (per-vertex `gradeWeight` embankment/ballast shading, noise-broken shores and close-up procedural micro-detail).
+- **Batch 4C (started) — Weather:** [#30](https://github.com/deadronos/vibe-train-sim/issues/30) (`clear`/`overcast`/`rain`/`snow`/`mist` weather presets, GPU-wrapped 3D rain/snow curtain, wet terrain puddles & snowfall accumulation, moving cloud shadows, height-based valley mist, cab windscreen droplets/wipers, and storm lightning + rain/thunder audio completion from [#53](https://github.com/deadronos/vibe-train-sim/issues/53)).
 
 ---
 
@@ -21,11 +22,10 @@ Suggested order and batches for the remaining review issues, updated on 2026-11-
 
 - [#19](https://github.com/deadronos/vibe-train-sim/issues/19): **Finish adaptive quality and performance measurements** (`area: performance`, partly done in #81 and #95) — Physical low-end laptop and phone hardware measurements still tracked on `#19`.
 
-## Batch 4C: Weather, landscape life and shadows
+## Batch 4C: Landscape life and shadows
 
 Richer environments day and night once Batch 2 draw budgets and Batch 3 train effects are in place.
 
-- [#30](https://github.com/deadronos/vibe-train-sim/issues/30): **Weather: rain, snow, mist and moving cloud shadows** (`area: visuals`) — pairs with rain/thunder in [#53](https://github.com/deadronos/vibe-train-sim/issues/53).
 - [#31](https://github.com/deadronos/vibe-train-sim/issues/31): **Life in the landscape: wind, ground cover and settlements** (`area: visuals`).
 - [#23](https://github.com/deadronos/vibe-train-sim/issues/23): **Cascaded shadows and ambient occlusion** (`area: visuals`) — Measure GPU cost with `?debug` alongside `#18`/`#19`.
 

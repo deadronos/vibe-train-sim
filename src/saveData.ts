@@ -6,6 +6,8 @@ import type { Preset } from './world/heightfield';
 import { RES } from './world/heightfield';
 import type { PlacedItem, SceneryExclusion } from './world/scenery';
 import { SCENERY_TYPES } from './world/scenery';
+import type { Weather } from './world/weather';
+import { WEATHERS } from './world/weather';
 
 export interface SaveData {
   // Version 1 saves have no train state and load unchanged, with v raised to 2.
@@ -18,6 +20,8 @@ export interface SaveData {
   /** Saved areas where procedurally generated scenery is suppressed. Missing from older saves. */
   exclusions?: SceneryExclusion[];
   hours: number;
+  /** Saved weather preset. Missing from older saves (defaults to clear). */
+  weather?: Weather;
   drivenId: number | null;
   trains: {
     id: number;
@@ -192,6 +196,7 @@ function check(d: Record<string, unknown>): SaveData {
     }
   }
   num(d.hours, 'the time of day is not a number');
+  if (d.weather !== undefined) oneOf(d.weather, WEATHERS, 'the weather setting is unknown');
   const trainIds = new Set<number>();
   for (const t of arr(d.trains, 'the train list is missing')) {
     const o = obj(t, 'a train is not an object');

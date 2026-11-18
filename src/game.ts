@@ -69,6 +69,7 @@ import { Hud } from './ui/hud';
 import type { Preset } from './world/heightfield';
 import { Heightfield, riverCenter, WORLD_SIZE } from './world/heightfield';
 import type { PlacedItem, SceneryExclusion } from './world/scenery';
+import type { Weather } from './world/weather';
 
 const TRAIN_SPEEDS = [0, 1, 2, 4, 8];
 const AUTOSAVE_MS = 60_000;
@@ -322,7 +323,18 @@ export class Game {
     } else {
       this.installWorld(hf, new Network(), []);
     }
+    this.env.setWeather('clear', true);
+    this.hud.syncWeather();
     this.hud.syncTrains();
+  }
+
+  setWeather(weather: Weather, instant = false) {
+    this.env.setWeather(weather, instant);
+    this.hud.syncWeather();
+  }
+
+  setCloudCover(cover: number) {
+    this.env.setCloudCover(cover);
   }
 
   private snapshot(): SaveData {
@@ -333,6 +345,7 @@ export class Game {
       placed: this.scatter.placed,
       exclusions: this.scatter.exclusions,
       hours: this.env.hours,
+      weather: this.env.weather,
       drivenId: this.driven?.id ?? null,
     });
   }
@@ -352,7 +365,11 @@ export class Game {
     this.driven = restoreTrains(this.sim, data);
     this.syncAudioTracking();
     this.hud.syncTrains();
-    if (restoreTime) this.env.hours = data.hours;
+    if (restoreTime) {
+      this.env.hours = data.hours;
+      this.env.setWeather(data.weather ?? 'clear', true);
+      this.hud.syncWeather();
+    }
     if (!this.driven && this.sim.trains.length) this.setDriven(this.sim.trains[0]);
     if (this.driven && !this.driven.ai) this.beginDuty(this.driven);
   }
@@ -497,6 +514,7 @@ export class Game {
     this.appliedSceneryDensity = density;
     this.scatter?.setDensity(density);
     this.particles?.setEnabled(!low);
+    this.particles?.setWeatherLow(low);
     this.terrain?.setPlanarReflections(!low);
     if (rebuildScenery && densityChanged && this.hf) this.scatter.rebuild(this.hf, this.net);
     this.resize();
@@ -881,14 +899,20 @@ export class Game {
       this.rig.update(this.sim, this.driven, this.hf, dt);
       this.focus.copy(this.rig.focus);
     }
+    const reduced = prefersReducedMotion();
     this.tmpTrainOpts.cameraPos = this.camera.position;
     this.tmpTrainOpts.driven = this.driven;
     this.tmpTrainOpts.cabActive = !this.editing && this.rig.cabInteriorActive;
     this.tmpTrainOpts.cabLever = this.input.lever;
     this.tmpTrainOpts.night = this.env.night;
-    this.tmpTrainOpts.reducedMotion = prefersReducedMotion();
+    this.tmpTrainOpts.rain = this.env.weatherState.rain;
+    this.tmpTrainOpts.snow = this.env.weatherState.snow;
+    this.tmpTrainOpts.time = this.elapsed;
+    this.tmpTrainOpts.reducedMotion = reduced;
     this.trainsR.sync(this.sim, this.tmpTrainOpts);
-    this.env.update(dt, this.focus, this.trainSpeed);
+    this.env.update(dt, this.focus, this.trainSpeed, reduced);
+    const thunder = this.env.consumeThunder();
+    if (thunder !== null) this.audio.playThunder(thunder);
     const shadowFrustum = this.env.sun.castShadow && this.renderer.shadowMap.enabled ? this.env.shadowFrustum : null;
     this.terrain.updateLOD(this.camera.position, shadowFrustum);
     this.scatter.updateLOD(this.camera.position, shadowFrustum, this.focus);
@@ -896,6 +920,17 @@ export class Game {
     this.props.update(this.sim, this.camera, this.env.night);
     this.trainsR.updateHeadlight(this.sim, this.driven, this.env.night, this.camera.position);
     this.particles.update(this.sim, this.hf, dt, simDt, this.env.night);
+    this.particles.updateWeather({
+      cameraPos: this.camera.position,
+      elapsed: this.elapsed,
+      rain: this.env.weatherState.rain,
+      snow: this.env.weatherState.snow,
+      cab: this.tmpTrainOpts.cabActive,
+      fogColor: this.env.mistColor,
+      fogDensity: this.env.weatherState.fogDensity,
+      night: this.env.night,
+      reducedMotion: reduced,
+    });
     this.terrain.update(this.elapsed, this.env);
 
     this.updateAudio(dt, simDt > 0);
@@ -991,6 +1026,8 @@ export class Game {
         riverDist,
         night: this.env.night,
         cab,
+        rain: this.env.weatherState.rain,
+        snow: this.env.weatherState.snow,
       },
       dt,
     );

@@ -215,4 +215,18 @@ describe('world ambience model', () => {
     expect(cabDay.windGain).toBeLessThan(day.windGain);
     expect(cabDay.birdLevel).toBeLessThan(day.birdLevel);
   });
+
+  it('activates rain patter in rain, muffles inside cab, and quiets wildlife in rain/snow', () => {
+    const clear = computeAmbienceParams(baseAmbience({ preset: 'plains', night: 0, rain: 0, snow: 0 }));
+    const raining = computeAmbienceParams(baseAmbience({ preset: 'plains', night: 0, rain: 1, snow: 0 }));
+    const rainCab = computeAmbienceParams(baseAmbience({ preset: 'plains', night: 0, rain: 1, snow: 0, cab: true }));
+    const snowing = computeAmbienceParams(baseAmbience({ preset: 'plains', night: 0, rain: 0, snow: 1 }));
+
+    expect(clear.rainGain).toBe(0);
+    expect(raining.rainGain).toBeGreaterThan(0.05);
+    expect(rainCab.rainGain).toBeLessThan(raining.rainGain);
+    expect(raining.birdLevel).toBeLessThan(clear.birdLevel * 0.5);
+    expect(snowing.rainGain).toBe(0);
+    expect(snowing.birdLevel).toBeLessThan(clear.birdLevel);
+  });
 });

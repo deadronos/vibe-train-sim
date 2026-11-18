@@ -130,8 +130,19 @@ describe('parseSave', () => {
     ['exclusion bad radius', (d: SaveData) => (d.exclusions = [{ x: 1, z: 2, r: 0 }])],
     ['exclusion bad bounds', (d: SaveData) => (d.exclusions = [{ minX: 10, minZ: 0, maxX: 5, maxZ: 5 }])],
     ['exclusion missing fields', (d: SaveData) => (d.exclusions = [{ x: 1, z: 2 } as never])],
+    ['weather preset', (d: SaveData) => (d.weather = 'hurricane' as never)],
   ])('rejects a wrong %s', (_name, fn) => {
     const r = mutate(fn);
     expect(r).toEqual({ ok: false, reason: expect.stringMatching(/\S/) });
+  });
+
+  it('accepts valid weather presets and optional omitted weather', () => {
+    for (const weather of ['clear', 'overcast', 'rain', 'snow', 'mist'] as const) {
+      const r = mutate((d) => (d.weather = weather));
+      expect(r).toMatchObject({ ok: true, data: { weather } });
+    }
+    const omitted = mutate((d) => delete d.weather);
+    expect(omitted.ok).toBe(true);
+    expect((omitted as { data: SaveData }).data.weather).toBeUndefined();
   });
 });

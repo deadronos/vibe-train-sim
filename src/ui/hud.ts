@@ -11,6 +11,7 @@ import type { DeskInfo, SimEvent, Train, TrainStatus } from '../rail/sim';
 import { clockText } from '../rail/sim';
 import { CAM_LABEL } from '../render/cameraRig';
 import type { Preset } from '../world/heightfield';
+import type { Weather } from '../world/weather';
 import { Guide } from './guide';
 import { OverviewMap } from './overviewMap';
 import { buttonRow } from './panels/controls';
@@ -117,7 +118,10 @@ export class Hud {
     this.syncRate();
     const cloud = $<HTMLInputElement>('cloud-slider');
     cloud.value = String(g.env.cloudCover);
-    cloud.oninput = () => (g.env.cloudCover = Number(cloud.value));
+    cloud.oninput = () => g.setCloudCover(Number(cloud.value));
+    const weather = $<HTMLSelectElement>('weather-select');
+    weather.value = g.env.weather;
+    weather.onchange = () => g.setWeather(weather.value as Weather);
 
     $('btn-save').onclick = () => g.save();
     $('btn-export').onclick = () => g.exportMap();
@@ -434,6 +438,11 @@ export class Hud {
     document.querySelectorAll<HTMLButtonElement>('[data-rate]').forEach((b) => {
       b.setAttribute('aria-pressed', String(Math.abs(Number(b.dataset.rate) - this.game.env.timeScale) < 1e-6));
     });
+  }
+
+  syncWeather() {
+    $<HTMLSelectElement>('weather-select').value = this.game.env.weather;
+    $<HTMLInputElement>('cloud-slider').value = String(this.game.env.cloudCover);
   }
 
   syncMode() {

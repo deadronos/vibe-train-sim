@@ -53,6 +53,7 @@ npm run dev
 
 - Alpine, plains, desert and island landscapes, each from a seed, with ballast-graded embankments, noise-blended shores and depth-tinted water with shoreline foam, river flow and reflections
 - Day and night cycle with atmospheric sky, clouds, stars, moon and image-based lighting
+- Weather presets (Clear, Overcast, Rain, Snow and Mist) with 3D rain and snow around the camera, wet puddles, fresh snowfall on flatter ground, moving cloud shadows, height-based valley mist, storm lightning with thunder, rain audio, and cab windscreen droplets and wipers
 - Sun shadows, bloom, lit windows, platform lamps and a train headlight
 
 **Phones and tablets**
